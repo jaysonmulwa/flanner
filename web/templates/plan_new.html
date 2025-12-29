@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}New Plan File - {{ project.name }} - MCP Plan Manager{% endblock %}
+
+{% block content %}
+<div class="form-page">
+    <header class="page-header">
+        <div>
+            <h1><i class="fas fa-plus-circle"></i> Create New Plan File</h1>
+            <p class="page-subtitle">in <a href="/projects/{{ project.id }}">{{ project.name }}</a></p>
+        </div>
+        <a href="/projects/{{ project.id }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Project
+        </a>
+    </header>
+
+    <div class="form-container">
+        <form method="POST" action="/projects/{{ project.id }}/plans/new" class="form">
+            <div class="form-group">
+                <label for="name">Plan Name <span class="required">*</span></label>
+                <input
+                    type="text"
+                    id="name"
+                    name="name"
+                    class="form-control"
+                    value="{{ name or '' }}"
+                    required
+                    placeholder="architecture"
+                >
+                <small class="form-help">
+                    <i class="fas fa-info-circle"></i>
+                    Name without extension (e.g., "architecture", "api-design", "requirements")
+                </small>
+            </div>
+
+            <div class="form-group">
+                <label for="description">Description</label>
+                <textarea
+                    id="description"
+                    name="description"
+                    class="form-control"
+                    rows="2"
+                    placeholder="Brief description of this plan..."
+                >{{ description or '' }}</textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="content">Content <span class="required">*</span></label>
+                <textarea
+                    id="content"
+                    name="content"
+                    class="form-control markdown-editor"
+                    rows="20"
+                    required
+                    placeholder="# Plan Title
+
+## Overview
+
+Write your plan content here in Markdown...
+
+## Sections
+
+- Feature 1
+- Feature 2"
+                >{{ content or '' }}</textarea>
+                <small class="form-help">
+                    <i class="fas fa-markdown"></i>
+                    Supports Markdown formatting. Frontmatter will be added automatically.
+                </small>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save"></i> Create Plan File
+                </button>
+                <a href="/projects/{{ project.id }}" class="btn btn-secondary">
+                    <i class="fas fa-times"></i> Cancel
+                </a>
+            </div>
+        </form>
+
+        <div class="info-box">
+            <h3><i class="fas fa-lightbulb"></i> Plan File Features</h3>
+            <ul>
+                <li><i class="fas fa-check"></i> Automatic version tracking (v1, v2, v3...)</li>
+                <li><i class="fas fa-check"></i> YAML frontmatter automatically added</li>
+                <li><i class="fas fa-check"></i> Full version history with diffs</li>
+                <li><i class="fas fa-check"></i> Git-ignored (won't be committed)</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}

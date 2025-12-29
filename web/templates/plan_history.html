@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}History - {{ plan_file.name }} - {{ project.name }} - MCP Plan Manager{% endblock %}
+
+{% block content %}
+<div class="plan-history">
+    <header class="page-header">
+        <div>
+            <h1><i class="fas fa-history"></i> Version History</h1>
+            <p class="page-subtitle">
+                {{ plan_file.name }}
+                in <a href="/projects/{{ project.id }}">{{ project.name }}</a>
+            </p>
+        </div>
+        <div class="header-actions">
+            <a href="/plans/{{ plan_file.id }}" class="btn btn-primary">
+                <i class="fas fa-eye"></i> View Latest
+            </a>
+            <a href="/plans/{{ plan_file.id }}/edit" class="btn btn-secondary">
+                <i class="fas fa-edit"></i> Edit
+            </a>
+        </div>
+    </header>
+
+    <!-- Stats -->
+    <div class="stats-bar">
+        <div class="stat-item">
+            <i class="fas fa-code-branch"></i>
+            <strong>{{ versions|length }}</strong> Version(s)
+        </div>
+        <div class="stat-item">
+            <i class="fas fa-user"></i>
+            Contributors: {{ versions|map(attribute='created_by')|unique|list|length }}
+        </div>
+        <div class="stat-item">
+            <i class="fas fa-calendar"></i>
+            First Created: {{ versions[-1].created_at.strftime('%Y-%m-%d') if versions }}
+        </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="timeline">
+        {% for version in versions %}
+        <div class="timeline-item {% if version.version == plan_file.current_version %}timeline-current{% endif %}">
+            <div class="timeline-marker">
+                <div class="timeline-dot"></div>
+                {% if not loop.last %}
+                <div class="timeline-line"></div>
+                {% endif %}
+            </div>
+
+            <div class="timeline-content">
+                <div class="timeline-header">
+                    <div class="timeline-version">
+                        <h3>
+                            <a href="/plans/{{ plan_file.id }}?version={{ version.version }}">
+                                Version {{ version.version }}
+                            </a>
+                            {% if version.version == plan_file.current_version %}
+                            <span class="badge badge-success">Current</span>
+                            {% endif %}
+                        </h3>
+                    </div>
+                    <div class="timeline-date">
+                        {{ version.created_at.strftime('%Y-%m-%d %H:%M') if version.created_at }}
+                    </div>
+                </div>
+
+                <div class="timeline-meta">
+                    <span class="meta-badge">
+                        <i class="fas fa-user"></i>
+                        {{ version.created_by }}
+                    </span>
+                    <span class="meta-badge">
+                        <i class="fas fa-clock"></i>
+                        {{ version.created_at|relative_time if version.created_at }}
+                    </span>
+                    <span class="meta-badge">
+                        <i class="fas fa-fingerprint"></i>
+                        {{ version.content_hash[:8] }}...
+                    </span>
+                </div>
+
+                {% if version.notes %}
+                <div class="timeline-notes">
+                    <i class="fas fa-comment-alt"></i>
+                    {{ version.notes }}
+                </div>
+                {% else %}
+                <div class="timeline-notes text-muted">
+                    <i class="fas fa-comment-slash"></i>
+                    No notes for this version
+                </div>
+                {% endif %}
+
+                <div class="timeline-actions">
+                    <a href="/plans/{{ plan_file.id }}?version={{ version.version }}" class="btn btn-sm btn-primary">
+                        <i class="fas fa-eye"></i> View
+                    </a>
+                    <a href="#" class="btn btn-sm btn-secondary" title="File path">
+                        <i class="fas fa-folder-open"></i> {{ version.file_path|basename }}
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if not versions %}
+    <div class="empty-state">
+        <i class="fas fa-history"></i>
+        <h3>No Version History</h3>
+        <p>This shouldn't happen. There should always be at least one version.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

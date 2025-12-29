@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}New Project - MCP Plan Manager{% endblock %}
+
+{% block content %}
+<div class="form-page">
+    <header class="page-header">
+        <h1><i class="fas fa-plus-circle"></i> Create New Project</h1>
+        <a href="/projects" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Projects
+        </a>
+    </header>
+
+    <div class="form-container">
+        <form method="POST" action="/projects/new" class="form">
+            <div class="form-group">
+                <label for="name">Project Name <span class="required">*</span></label>
+                <input
+                    type="text"
+                    id="name"
+                    name="name"
+                    class="form-control"
+                    value="{{ name or '' }}"
+                    required
+                    placeholder="my-awesome-project"
+                >
+                <small class="form-help">A unique name for your project (lowercase, hyphens allowed)</small>
+            </div>
+
+            <div class="form-group">
+                <label for="description">Description</label>
+                <textarea
+                    id="description"
+                    name="description"
+                    class="form-control"
+                    rows="3"
+                    placeholder="Brief description of your project..."
+                >{{ description or '' }}</textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="project_root">Project Root Path</label>
+                <input
+                    type="text"
+                    id="project_root"
+                    name="project_root"
+                    class="form-control"
+                    value="{{ project_root or '' }}"
+                    placeholder="Leave empty to auto-detect from current directory"
+                >
+                <small class="form-help">
+                    <i class="fas fa-info-circle"></i>
+                    Absolute path to your project root (where .git is located). Auto-detected if empty.
+                </small>
+            </div>
+
+            <div class="form-group">
+                <label for="plan_directory">Plan Directory</label>
+                <input
+                    type="text"
+                    id="plan_directory"
+                    name="plan_directory"
+                    class="form-control"
+                    value="{{ plan_directory or '.plans' }}"
+                    placeholder=".plans"
+                >
+                <small class="form-help">
+                    <i class="fas fa-folder"></i>
+                    Relative path within project where plan files will be stored (default: .plans)
+                </small>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save"></i> Create Project
+                </button>
+                <a href="/projects" class="btn btn-secondary">
+                    <i class="fas fa-times"></i> Cancel
+                </a>
+            </div>
+        </form>
+
+        <div class="info-box">
+            <h3><i class="fas fa-lightbulb"></i> What happens when you create a project?</h3>
+            <ul>
+                <li><i class="fas fa-check"></i> A project entry is created in the database</li>
+                <li><i class="fas fa-check"></i> The plan directory is created in your project root</li>
+                <li><i class="fas fa-check"></i> The plan directory is added to <code>.gitignore</code></li>
+                <li><i class="fas fa-check"></i> You can start creating plan files immediately</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}

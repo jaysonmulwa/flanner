@@ -1,0 +1,3 @@
+#!/bin/bash
+# Flanner CLI wrapper for Linux/Mac
+python -m src.cli "$@"

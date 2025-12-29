@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ plan_file.name }} - {{ project.name }} - MCP Plan Manager{% endblock %}
+
+{% block content %}
+<div class="form-page">
+    <header class="page-header">
+        <div>
+            <h1><i class="fas fa-edit"></i> Edit Plan File</h1>
+            <p class="page-subtitle">
+                {{ plan_file.name }} v{{ plan_file.current_version }}
+                in <a href="/projects/{{ project.id }}">{{ project.name }}</a>
+            </p>
+        </div>
+        <a href="/plans/{{ plan_file.id }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to View
+        </a>
+    </header>
+
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        <strong>Note:</strong> Saving will create a new version (v{{ plan_file.current_version + 1 }}).
+        Previous versions are preserved and can be viewed in the history.
+    </div>
+
+    <div class="form-container">
+        <form method="POST" action="/plans/{{ plan_file.id }}/edit" class="form">
+            <div class="form-group">
+                <label for="content">Content <span class="required">*</span></label>
+                <textarea
+                    id="content"
+                    name="content"
+                    class="form-control markdown-editor"
+                    rows="25"
+                    required
+                >{{ content }}</textarea>
+                <small class="form-help">
+                    <i class="fas fa-markdown"></i>
+                    Edit in Markdown format. Frontmatter will be updated automatically.
+                </small>
+            </div>
+
+            <div class="form-group">
+                <label for="notes">Version Notes</label>
+                <textarea
+                    id="notes"
+                    name="notes"
+                    class="form-control"
+                    rows="3"
+                    placeholder="What changed in this version? (optional)"
+                ></textarea>
+                <small class="form-help">
+                    <i class="fas fa-sticky-note"></i>
+                    Add notes about what you changed in this version (changelog)
+                </small>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save"></i> Save (Create v{{ plan_file.current_version + 1 }})
+                </button>
+                <a href="/plans/{{ plan_file.id }}" class="btn btn-secondary">
+                    <i class="fas fa-times"></i> Cancel
+                </a>
+            </div>
+        </form>
+
+        <div class="info-box">
+            <h3><i class="fas fa-code-branch"></i> Version Information</h3>
+            <div class="version-info-grid">
+                <div>
+                    <strong>Current Version:</strong> v{{ version.version }}
+                </div>
+                <div>
+                    <strong>Created By:</strong> {{ version.created_by }}
+                </div>
+                <div>
+                    <strong>Last Updated:</strong> {{ version.created_at|relative_time if version.created_at }}
+                </div>
+                <div>
+                    <strong>New Version Will Be:</strong> v{{ plan_file.current_version + 1 }}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

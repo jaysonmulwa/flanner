@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - MCP Plan Manager{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <header class="page-header">
+        <h1><i class="fas fa-chart-line"></i> Dashboard</h1>
+        <a href="/projects/new" class="btn btn-primary">
+            <i class="fas fa-plus"></i> New Project
+        </a>
+    </header>
+
+    <!-- Stats Cards -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">
+                <i class="fas fa-project-diagram"></i>
+            </div>
+            <div class="stat-info">
+                <div class="stat-value">{{ total_projects }}</div>
+                <div class="stat-label">Total Projects</div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">
+                <i class="fas fa-file-alt"></i>
+            </div>
+            <div class="stat-info">
+                <div class="stat-value">{{ total_plans }}</div>
+                <div class="stat-label">Plan Files</div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">
+                <i class="fas fa-code-branch"></i>
+            </div>
+            <div class="stat-info">
+                <div class="stat-value">{{ recent_activity|length }}</div>
+                <div class="stat-label">Recent Updates</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Projects Overview -->
+    <section class="content-section">
+        <h2><i class="fas fa-folder"></i> Projects</h2>
+        {% if projects %}
+        <div class="projects-grid">
+            {% for project in projects %}
+            <div class="project-card">
+                <div class="project-header">
+                    <h3>{{ project.name }}</h3>
+                    <span class="badge">{{ project.plan_files|length }} files</span>
+                </div>
+                <p class="project-description">
+                    {{ project.description or 'No description' }}
+                </p>
+                <div class="project-meta">
+                    <span class="meta-item">
+                        <i class="fas fa-folder"></i>
+                        {{ project.plan_directory }}
+                    </span>
+                    <span class="meta-item">
+                        <i class="fas fa-calendar"></i>
+                        {{ project.created_at.strftime('%Y-%m-%d') if project.created_at }}
+                    </span>
+                </div>
+                <div class="project-actions">
+                    <a href="/projects/{{ project.id }}" class="btn btn-sm btn-primary">
+                        <i class="fas fa-eye"></i> View
+                    </a>
+                    <a href="/projects/{{ project.id }}/plans/new" class="btn btn-sm btn-secondary">
+                        <i class="fas fa-plus"></i> New Plan
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <i class="fas fa-inbox"></i>
+            <h3>No Projects Yet</h3>
+            <p>Get started by creating your first project.</p>
+            <a href="/projects/new" class="btn btn-primary">
+                <i class="fas fa-plus"></i> Create Project
+            </a>
+        </div>
+        {% endif %}
+    </section>
+
+    <!-- Recent Activity -->
+    {% if recent_activity %}
+    <section class="content-section">
+        <h2><i class="fas fa-clock"></i> Recent Activity</h2>
+        <div class="activity-list">
+            {% for item in recent_activity %}
+            <div class="activity-item">
+                <div class="activity-icon">
+                    <i class="fas fa-file-alt"></i>
+                </div>
+                <div class="activity-content">
+                    <div class="activity-title">
+                        <a href="/plans/{{ item.plan_file.id }}">{{ item.plan_file.name }}</a>
+                        <span class="activity-version">v{{ item.plan_file.current_version }}</span>
+                    </div>
+                    <div class="activity-meta">
+                        <span>in <a href="/projects/{{ item.project.id }}">{{ item.project.name }}</a></span>
+                        <span class="activity-time">{{ item.updated_at|relative_time if item.updated_at }}</span>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+</div>
+{% endblock %}

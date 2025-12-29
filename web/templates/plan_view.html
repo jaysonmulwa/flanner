@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}{{ plan_file.name }} - {{ project.name }} - MCP Plan Manager{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<style>
+    .markdown-content {
+        line-height: 1.6;
+        color: #333;
+    }
+    .markdown-content h1,
+    .markdown-content h2,
+    .markdown-content h3 {
+        margin-top: 1.5em;
+        margin-bottom: 0.5em;
+    }
+    .markdown-content code {
+        background: #f4f4f4;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: 'Courier New', monospace;
+    }
+    .markdown-content pre {
+        background: #1e1e1e;
+        padding: 1em;
+        border-radius: 5px;
+        overflow-x: auto;
+    }
+    .markdown-content pre code {
+        background: none;
+        padding: 0;
+        color: #d4d4d4;
+    }
+    .markdown-content table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 1em 0;
+    }
+    .markdown-content table th,
+    .markdown-content table td {
+        border: 1px solid #ddd;
+        padding: 8px 12px;
+        text-align: left;
+    }
+    .markdown-content table th {
+        background: #f4f4f4;
+        font-weight: 600;
+    }
+    .markdown-content blockquote {
+        border-left: 4px solid #ddd;
+        padding-left: 1em;
+        margin-left: 0;
+        color: #666;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="plan-view">
+    <header class="page-header">
+        <div>
+            <h1><i class="fas fa-file-alt"></i> {{ plan_file.name }}</h1>
+            <p class="page-subtitle">
+                in <a href="/projects/{{ project.id }}">{{ project.name }}</a>
+            </p>
+        </div>
+        <div class="header-actions">
+            <a href="/plans/{{ plan_file.id }}/edit" class="btn btn-primary">
+                <i class="fas fa-edit"></i> Edit
+            </a>
+            <a href="/plans/{{ plan_file.id }}/history" class="btn btn-secondary">
+                <i class="fas fa-history"></i> History
+            </a>
+        </div>
+    </header>
+
+    <!-- Version Info -->
+    <div class="version-bar">
+        <div class="version-info">
+            <span class="version-label">Version:</span>
+            <select id="version-selector" class="version-select" onchange="changeVersion(this.value)">
+                {% for v in all_versions %}
+                <option value="{{ v.version }}" {% if v.version == version.version %}selected{% endif %}>
+                    v{{ v.version }}
+                    {% if v.version == plan_file.current_version %}(latest){% endif %}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="version-meta">
+            <span class="meta-item">
+                <i class="fas fa-user"></i>
+                {{ version.created_by }}
+            </span>
+            <span class="meta-item">
+                <i class="fas fa-clock"></i>
+                {{ version.created_at|relative_time if version.created_at }}
+            </span>
+            {% if version.notes %}
+            <span class="meta-item" title="{{ version.notes }}">
+                <i class="fas fa-comment"></i>
+                {{ version.notes[:50] }}{% if version.notes|length > 50 %}...{% endif %}
+            </span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Frontmatter (collapsible) -->
+    <details class="frontmatter-details">
+        <summary><i class="fas fa-code"></i> View Frontmatter (YAML)</summary>
+        <pre class="frontmatter-code"><code>---
+{% for key, value in frontmatter.items() %}{{ key }}: {{ value }}
+{% endfor %}---</code></pre>
+    </details>
+
+    <!-- Main Content -->
+    <div class="content-section">
+        <div class="markdown-content">
+            {{ content|markdown|safe }}
+        </div>
+    </div>
+
+    <!-- File Path Info -->
+    <div class="file-info">
+        <span class="info-label">File Location:</span>
+        <code>{{ version.file_path }}</code>
+    </div>
+</div>
+
+<script>
+function changeVersion(versionNum) {
+    window.location.href = '/plans/{{ plan_file.id }}?version=' + versionNum;
+}
+</script>
+{% endblock %}

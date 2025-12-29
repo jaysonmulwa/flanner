@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - MCP Plan Manager{% endblock %}
+
+{% block content %}
+<div class="project-detail">
+    <header class="page-header">
+        <div>
+            <h1><i class="fas fa-project-diagram"></i> {{ project.name }}</h1>
+            <p class="page-subtitle">{{ project.description or 'No description' }}</p>
+        </div>
+        <a href="/projects/{{ project.id }}/plans/new" class="btn btn-primary">
+            <i class="fas fa-plus"></i> New Plan File
+        </a>
+    </header>
+
+    <!-- Project Info -->
+    <div class="info-grid">
+        <div class="info-card">
+            <div class="info-label">Project Root</div>
+            <div class="info-value"><code>{{ project.project_root or 'Not set' }}</code></div>
+        </div>
+        <div class="info-card">
+            <div class="info-label">Plan Directory</div>
+            <div class="info-value"><code>{{ project.plan_directory }}</code></div>
+        </div>
+        <div class="info-card">
+            <div class="info-label">Auto .gitignore</div>
+            <div class="info-value">
+                {% if project.auto_gitignore %}
+                <span class="badge badge-success"><i class="fas fa-check"></i> Enabled</span>
+                {% else %}
+                <span class="badge badge-warning"><i class="fas fa-times"></i> Disabled</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-card">
+            <div class="info-label">Total Plan Files</div>
+            <div class="info-value"><strong>{{ plan_files|length }}</strong></div>
+        </div>
+    </div>
+
+    <!-- Plan Files -->
+    <section class="content-section">
+        <h2><i class="fas fa-file-alt"></i> Plan Files</h2>
+
+        {% if plan_files %}
+        <div class="plan-files-list">
+            {% for plan_file in plan_files %}
+            <div class="plan-file-card">
+                <div class="plan-file-header">
+                    <h3>
+                        <a href="/plans/{{ plan_file.id }}">{{ plan_file.name }}</a>
+                    </h3>
+                    <span class="version-badge">v{{ plan_file.current_version }}</span>
+                </div>
+
+                {% if plan_file.description %}
+                <p class="plan-file-description">{{ plan_file.description }}</p>
+                {% endif %}
+
+                <div class="plan-file-meta">
+                    <span class="meta-item">
+                        <i class="fas fa-code-branch"></i>
+                        {{ plan_file.versions|length if plan_file.versions else plan_file.current_version }} version(s)
+                    </span>
+                    <span class="meta-item">
+                        <i class="fas fa-clock"></i>
+                        Updated {{ plan_file.updated_at|relative_time if plan_file.updated_at else 'never' }}
+                    </span>
+                    <span class="meta-item">
+                        <i class="fas fa-calendar"></i>
+                        Created {{ plan_file.created_at.strftime('%Y-%m-%d') if plan_file.created_at else 'unknown' }}
+                    </span>
+                </div>
+
+                <div class="plan-file-actions">
+                    <a href="/plans/{{ plan_file.id }}" class="btn btn-sm btn-primary">
+                        <i class="fas fa-eye"></i> View
+                    </a>
+                    <a href="/plans/{{ plan_file.id }}/edit" class="btn btn-sm btn-secondary">
+                        <i class="fas fa-edit"></i> Edit
+                    </a>
+                    <a href="/plans/{{ plan_file.id }}/history" class="btn btn-sm btn-info">
+                        <i class="fas fa-history"></i> History
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <i class="fas fa-file-alt"></i>
+            <h3>No Plan Files Yet</h3>
+            <p>Create your first plan file for this project.</p>
+            <a href="/projects/{{ project.id }}/plans/new" class="btn btn-primary">
+                <i class="fas fa-plus"></i> Create Plan File
+            </a>
+        </div>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}
