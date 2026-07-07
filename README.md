@@ -8,17 +8,11 @@ A comprehensive plan file management system that integrates with Claude Code and
 # Clone or download this repository
 cd flanner
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Install flanner command (optional but recommended)
+# Install (provides the 'flanner' command)
 pip install -e .
 
-# Now you can use 'flanner' directly
 flanner --help
 ```
-
-**Note:** Without installation, use `python -m src.cli` instead of `flanner`.
 
 ## Features
 
@@ -39,7 +33,7 @@ flanner --help
 cd flanner
 python -m venv venv
 venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 **Linux/Mac:**
@@ -47,7 +41,7 @@ pip install -r requirements.txt
 cd flanner
 python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### 2. Initialize Git Repository (if not already done)
@@ -321,7 +315,7 @@ The web interface includes:
 
 ```
 flanner/
-├── src/
+├── flanner/
 │   ├── server.py           # MCP Server
 │   ├── cli.py              # CLI tool
 │   ├── web.py              # Web server
@@ -330,41 +324,18 @@ flanner/
 │   ├── storage.py          # File operations
 │   ├── git_integration.py  # Git operations
 │   ├── frontmatter.py      # Frontmatter handling
-│   └── utils.py            # Utilities
-├── web/
-│   ├── static/             # CSS/JS
-│   └── templates/          # HTML templates
-├── tests/                  # Tests
-└── requirements.txt        # Dependencies
+│   ├── utils.py            # Utilities
+│   └── web/                # Templates and static assets
+├── tests/                  # Pytest suite
+├── docs/                   # Guides (installation, Jira, versioning, web UI)
+└── pyproject.toml          # Packaging and dependencies
 ```
 
 ## Development
 
-### Run Manual Tests
-
-Test the MCP server functionality:
-
 ```bash
-python test_server.py
-```
-
-This will:
-- Create a test database
-- Create a test project
-- Create a test plan file with UUIDs
-- Verify frontmatter is correctly generated
-- Show you the generated file content
-
-### Run Unit Tests (when available)
-
-```bash
-pytest tests/
-```
-
-### Code Formatting
-
-```bash
-black src/ tests/
+pip install -e ".[dev]"
+pytest
 ```
 
 ### Database Location
@@ -402,4 +373,4 @@ MIT
 
 ## Contributing
 
-Contributions welcome! Please read the implementation plan in `IMPLEMENTATION_PLAN.md` for architecture details.
+Contributions welcome! See the guides in [docs/](docs/) for architecture and usage details.

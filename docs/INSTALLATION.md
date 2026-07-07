@@ -10,7 +10,7 @@ cd path\to\flanner
 flanner --help
 
 # Or use Python directly
-python -m src.cli --help
+python -m flanner.cli --help
 ```
 
 ## Proper Installation (Recommended)
@@ -47,7 +47,7 @@ flanner --help
 Add to your `.bashrc` or `.zshrc`:
 
 ```bash
-alias flanner='python /path/to/flanner/src/cli.py'
+alias flanner='python /path/to/flanner/flanner/cli.py'
 ```
 
 Then reload your shell:
@@ -112,10 +112,10 @@ All commands now use `flanner` prefix:
 
 | Old Command | New Command |
 |-------------|-------------|
-| `python -m src.cli init` | `flanner init` |
-| `python -m src.cli status` | `flanner status` |
-| `python -m src.cli sync` | `flanner sync` |
-| `python -m src.cli list` | `flanner list` |
-| `python -m src.cli web` | `flanner web` |
+| `python -m flanner.cli init` | `flanner init` |
+| `python -m flanner.cli status` | `flanner status` |
+| `python -m flanner.cli sync` | `flanner sync` |
+| `python -m flanner.cli list` | `flanner list` |
+| `python -m flanner.cli web` | `flanner web` |
 
 See `flanner --help` for full command list.

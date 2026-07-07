@@ -4,7 +4,7 @@
 
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+pip install -e .
 
 # Install flanner command (recommended)
 pip install -e .
@@ -151,7 +151,7 @@ your-project/
 ├── .plans/              # Plan files (git-ignored)
 │   ├── architecture.md
 │   └── api-design.md
-├── src/
+├── flanner/
 └── ...
 ```
 
@@ -178,7 +178,7 @@ Your plan content here...
 ### Command not found
 ```bash
 # Use Python module instead
-python -m src.cli --help
+python -m flanner.cli --help
 
 # Or install properly
 pip install -e .

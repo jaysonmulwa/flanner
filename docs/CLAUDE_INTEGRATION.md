@@ -169,7 +169,7 @@ C:\Users\YourName\AppData\Roaming\Claude\claude_desktop_config.json
   "mcpServers": {
     "flanner-manager": {
       "command": "python",
-      "args": ["-m", "src.server"],
+      "args": ["-m", "flanner.server"],
       "cwd": "C:\\path\\to\\mcp-cli",
       "env": {}
     }
@@ -182,7 +182,7 @@ C:\Users\YourName\AppData\Roaming\Claude\claude_desktop_config.json
 ### Scenario 1: First Installation
 ```bash
 # Install and initialize
-pip install -r requirements.txt
+pip install -e .
 flanner init
 
 # ✓ MCP server automatically registered
@@ -270,7 +270,7 @@ flanner register --type cloud \
 ### Issue: "Configuration path is different"
 
 **Solution:**
-Edit `src/claude_integration.py` and add your path to `possible_paths`:
+Edit `flanner/claude_integration.py` and add your path to `possible_paths`:
 ```python
 if system == "Windows":
     possible_paths = [

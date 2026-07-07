@@ -10,7 +10,7 @@ The Flanner now includes a fully functional web interface built with FastAPI, fe
 
 All components of the web interface have been successfully implemented:
 
-1. **FastAPI Web Server** (`src/web.py` - 632 lines)
+1. **FastAPI Web Server** (`flanner/web.py` - 632 lines)
    - 15+ routes for all pages
    - RESTful API endpoints
    - Markdown rendering with syntax highlighting
@@ -41,7 +41,7 @@ All components of the web interface have been successfully implemented:
 
 ### 1. Install Dependencies
 
-All required dependencies are already in `requirements.txt`:
+All required dependencies are installed with the package:
 - FastAPI
 - Uvicorn
 - Jinja2
@@ -50,7 +50,7 @@ All required dependencies are already in `requirements.txt`:
 
 ```bash
 # Already installed if you ran:
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### 2. Launch the Web Interface
