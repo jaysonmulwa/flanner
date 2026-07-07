@@ -117,7 +117,7 @@ def get_local_server_config() -> Dict[str, Any]:
 
     return {
         "command": "python",
-        "args": ["-m", "src.server"],
+        "args": ["-m", "flanner.server"],
         "cwd": str(project_dir),
         "env": {
             # Add any environment variables if needed

@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flanner"
+version = "0.1.0"
+description = "Plan file management for AI assistants via MCP"
+authors = [{ name = "Jayson Mulwa", email = "jayson.mulwa@gmail.com" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+    "sqlalchemy>=2.0",
+    "python-frontmatter>=1.0",
+    "pyyaml>=6.0",
+    "fastapi>=0.104",
+    "uvicorn>=0.24",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.6",
+    "markdown>=3.5",
+    "pygments>=2.17",
+    "pydantic>=2.5",
+    "mcp>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "httpx>=0.25",
+]
+
+[project.scripts]
+flanner = "flanner.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["flanner*"]
+
+[tool.setuptools.package-data]
+flanner = ["web/templates/*.html", "web/static/**/*"]

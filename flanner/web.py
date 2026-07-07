@@ -37,11 +37,11 @@ from .git_integration import find_git_root, update_gitignore, validate_git_repo
 app = FastAPI(
     title="Flanner",
     description="Manage plan files with automatic versioning",
-    version="1.0.0"
+    version="0.1.0"
 )
 
 # Get paths
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
@@ -121,7 +121,7 @@ async def dashboard(request: Request):
     recent_activity.sort(key=lambda x: x['updated_at'] if x['updated_at'] else datetime.min, reverse=True)
     recent_activity = recent_activity[:10]  # Top 10
 
-    return templates.TemplateResponse("dashboard.html", {
+    return templates.TemplateResponse(request, "dashboard.html", {
         "request": request,
         "projects": projects,
         "total_projects": total_projects,
@@ -138,7 +138,7 @@ async def projects_list(request: Request):
 
     projects = db_list_projects(session)
 
-    return templates.TemplateResponse("projects.html", {
+    return templates.TemplateResponse(request, "projects.html", {
         "request": request,
         "projects": projects
     })
@@ -147,7 +147,7 @@ async def projects_list(request: Request):
 @app.get("/projects/new", response_class=HTMLResponse)
 async def new_project_form(request: Request):
     """Show create project form"""
-    return templates.TemplateResponse("project_new.html", {
+    return templates.TemplateResponse(request, "project_new.html", {
         "request": request
     })
 
@@ -168,14 +168,14 @@ async def create_project_post(
     if not project_root or project_root.strip() == "":
         project_root = find_git_root(os.getcwd())
         if not project_root:
-            return templates.TemplateResponse("project_new.html", {
+            return templates.TemplateResponse(request, "project_new.html", {
                 "request": request,
                 "error": "Could not find git repository. Please specify project root manually."
             })
 
     # Validate git repository
     if not validate_git_repo(project_root):
-        return templates.TemplateResponse("project_new.html", {
+        return templates.TemplateResponse(request, "project_new.html", {
             "request": request,
             "error": f"{project_root} is not a valid git repository"
         })
@@ -201,7 +201,7 @@ async def create_project_post(
         return RedirectResponse(url=f"/projects/{project.id}", status_code=303)
 
     except ValueError as e:
-        return templates.TemplateResponse("project_new.html", {
+        return templates.TemplateResponse(request, "project_new.html", {
             "request": request,
             "error": str(e),
             "name": name,
@@ -228,7 +228,7 @@ async def project_detail(request: Request, project_id: str):
 
     plan_files = db_list_plan_files(session, project_uuid)
 
-    return templates.TemplateResponse("project_detail.html", {
+    return templates.TemplateResponse(request, "project_detail.html", {
         "request": request,
         "project": project,
         "plan_files": plan_files
@@ -272,7 +272,7 @@ async def new_plan_form(request: Request, project_id: str):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    return templates.TemplateResponse("plan_new.html", {
+    return templates.TemplateResponse(request, "plan_new.html", {
         "request": request,
         "project": project
     })
@@ -309,7 +309,7 @@ async def create_plan_post(
             auto_version=True
         )
     except ValueError as e:
-        return templates.TemplateResponse("plan_new.html", {
+        return templates.TemplateResponse(request, "plan_new.html", {
             "request": request,
             "project": project,
             "error": str(e),
@@ -390,7 +390,7 @@ async def plan_view(request: Request, plan_file_id: str, version: Optional[int] 
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found at {version_obj.file_path}")
 
-    return templates.TemplateResponse("plan_view.html", {
+    return templates.TemplateResponse(request, "plan_view.html", {
         "request": request,
         "project": project,
         "plan_file": plan_file,
@@ -430,7 +430,7 @@ async def plan_edit(request: Request, plan_file_id: str):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found")
 
-    return templates.TemplateResponse("plan_edit.html", {
+    return templates.TemplateResponse(request, "plan_edit.html", {
         "request": request,
         "project": project,
         "plan_file": plan_file,
@@ -539,7 +539,7 @@ async def plan_history(request: Request, plan_file_id: str):
     # Get all versions
     versions = list_versions(session, plan_file_uuid)
 
-    return templates.TemplateResponse("plan_history.html", {
+    return templates.TemplateResponse(request, "plan_history.html", {
         "request": request,
         "project": project,
         "plan_file": plan_file,

@@ -146,19 +146,18 @@ def start(port):
 
     console.print("Add to your Claude Code MCP settings:\n", style="white")
 
-    src_path = Path(__file__).parent.parent / "src"
     console.print(f"""{{
   "mcpServers": {{
     "plan-manager": {{
       "command": "python",
-      "args": ["-m", "src.server"],
+      "args": ["-m", "flanner.server"],
       "cwd": "{Path.cwd()}"
     }}
   }}
 }}""", style="yellow")
 
     console.print("\nOr run the server directly:", style="white")
-    console.print("  python -m src.server\n", style="yellow")
+    console.print("  python -m flanner.server\n", style="yellow")
 
 
 @cli.command()
