@@ -56,3 +56,8 @@ Thumbs.db
 
 # MCP Plan Manager
 .plans/
+
+# Local artifacts
+*.db
+log.txt
+.claude/
