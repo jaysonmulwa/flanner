@@ -4,11 +4,11 @@ Frontmatter handling for Flanner
 Provides YAML frontmatter generation and parsing for plan files.
 """
 
+from datetime import datetime
+from uuid import UUID
+
 import frontmatter
 import yaml
-from datetime import datetime
-from typing import Dict, Tuple, Optional
-from uuid import UUID
 
 
 def generate_frontmatter(
@@ -18,7 +18,7 @@ def generate_frontmatter(
     plan_name: str,
     version: int,
     created_by: str,
-    created_at: Optional[datetime] = None
+    created_at: datetime | None = None,
 ) -> str:
     """
     Generate YAML frontmatter for a plan file.
@@ -40,15 +40,15 @@ def generate_frontmatter(
 
     # Create frontmatter dictionary
     fm_data = {
-        'mcp_plan_file': True,
-        'plan_manager_version': '1.0',
-        'project_id': str(project_id),  # Convert UUID to string
-        'project_name': project_name,
-        'plan_file_id': str(plan_file_id),  # Convert UUID to string
-        'plan_name': plan_name,
-        'version': version,
-        'created_at': created_at.isoformat() + 'Z',
-        'created_by': created_by
+        "mcp_plan_file": True,
+        "plan_manager_version": "1.0",
+        "project_id": str(project_id),  # Convert UUID to string
+        "project_name": project_name,
+        "plan_file_id": str(plan_file_id),  # Convert UUID to string
+        "plan_name": plan_name,
+        "version": version,
+        "created_at": created_at.isoformat() + "Z",
+        "created_by": created_by,
     }
 
     # Generate YAML
@@ -58,7 +58,7 @@ def generate_frontmatter(
     return f"---\n{yaml_str}---"
 
 
-def parse_frontmatter(content: str) -> Tuple[Dict, str]:
+def parse_frontmatter(content: str) -> tuple[dict, str]:
     """
     Parse frontmatter from markdown content.
 
@@ -72,12 +72,12 @@ def parse_frontmatter(content: str) -> Tuple[Dict, str]:
     try:
         post = frontmatter.loads(content)
         return (dict(post.metadata), post.content)
-    except:
+    except (yaml.YAMLError, ValueError):
         # No frontmatter or invalid format
         return ({}, content)
 
 
-def validate_frontmatter(fm_data: Dict) -> bool:
+def validate_frontmatter(fm_data: dict) -> bool:
     """
     Validate that frontmatter has required fields.
 
@@ -88,12 +88,12 @@ def validate_frontmatter(fm_data: Dict) -> bool:
         True if valid, False otherwise
     """
     required_fields = [
-        'mcp_plan_file',
-        'project_id',
-        'plan_file_id',
-        'plan_name',
-        'version',
-        'created_by'
+        "mcp_plan_file",
+        "project_id",
+        "plan_file_id",
+        "plan_name",
+        "version",
+        "created_by",
     ]
 
     for field in required_fields:
@@ -101,7 +101,7 @@ def validate_frontmatter(fm_data: Dict) -> bool:
             return False
 
     # Check that mcp_plan_file is True
-    if fm_data.get('mcp_plan_file') is not True:
+    if fm_data.get("mcp_plan_file") is not True:
         return False
 
     return True
@@ -118,10 +118,10 @@ def is_mcp_plan_file(content: str) -> bool:
         True if this is an MCP plan file
     """
     fm_data, _ = parse_frontmatter(content)
-    return fm_data.get('mcp_plan_file') is True
+    return fm_data.get("mcp_plan_file") is True
 
 
-def update_frontmatter(content: str, updates: Dict) -> str:
+def update_frontmatter(content: str, updates: dict) -> str:
     """
     Update frontmatter fields in content.
 
@@ -142,10 +142,7 @@ def update_frontmatter(content: str, updates: Dict) -> str:
     return frontmatter.dumps(post)
 
 
-def create_plan_file_content(
-    frontmatter_str: str,
-    body: str
-) -> str:
+def create_plan_file_content(frontmatter_str: str, body: str) -> str:
     """
     Combine frontmatter and body into complete plan file content.
 
@@ -157,14 +154,14 @@ def create_plan_file_content(
         Complete file content
     """
     # Ensure frontmatter ends with newline
-    if not frontmatter_str.endswith('\n'):
-        frontmatter_str += '\n'
+    if not frontmatter_str.endswith("\n"):
+        frontmatter_str += "\n"
 
     # Combine
-    return frontmatter_str + '\n' + body
+    return frontmatter_str + "\n" + body
 
 
-def extract_metadata_from_frontmatter(fm_data: Dict) -> Dict:
+def extract_metadata_from_frontmatter(fm_data: dict) -> dict:
     """
     Extract specific metadata fields from frontmatter.
 
@@ -175,14 +172,14 @@ def extract_metadata_from_frontmatter(fm_data: Dict) -> Dict:
         Dictionary with extracted metadata
     """
     return {
-        'project_id': fm_data.get('project_id'),
-        'project_name': fm_data.get('project_name'),
-        'plan_file_id': fm_data.get('plan_file_id'),
-        'plan_name': fm_data.get('plan_name'),
-        'version': fm_data.get('version'),
-        'created_by': fm_data.get('created_by'),
-        'created_at': fm_data.get('created_at'),
-        'plan_manager_version': fm_data.get('plan_manager_version', '1.0')
+        "project_id": fm_data.get("project_id"),
+        "project_name": fm_data.get("project_name"),
+        "plan_file_id": fm_data.get("plan_file_id"),
+        "plan_name": fm_data.get("plan_name"),
+        "version": fm_data.get("version"),
+        "created_by": fm_data.get("created_by"),
+        "created_at": fm_data.get("created_at"),
+        "plan_manager_version": fm_data.get("plan_manager_version", "1.0"),
     }
 
 
@@ -198,13 +195,13 @@ def increment_version_in_frontmatter(content: str) -> str:
     """
     fm_data, body = parse_frontmatter(content)
 
-    if 'version' in fm_data:
-        fm_data['version'] = fm_data['version'] + 1
+    if "version" in fm_data:
+        fm_data["version"] = fm_data["version"] + 1
     else:
-        fm_data['version'] = 1
+        fm_data["version"] = 1
 
     # Update created_at
-    fm_data['created_at'] = datetime.utcnow().isoformat() + 'Z'
+    fm_data["created_at"] = datetime.utcnow().isoformat() + "Z"
 
     post = frontmatter.Post(body, **fm_data)
     return frontmatter.dumps(post)

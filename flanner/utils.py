@@ -6,7 +6,6 @@ import hashlib
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 
 def hash_content(content: str) -> str:
@@ -33,13 +32,13 @@ def sanitize_filename(name: str) -> str:
         Sanitized filename
     """
     # Remove invalid characters
-    sanitized = re.sub(r'[<>:"/\\|?*]', '', name)
+    sanitized = re.sub(r'[<>:"/\\|?*]', "", name)
 
     # Replace spaces with underscores
-    sanitized = sanitized.replace(' ', '_')
+    sanitized = sanitized.replace(" ", "_")
 
     # Remove leading/trailing dots and spaces
-    sanitized = sanitized.strip('. ')
+    sanitized = sanitized.strip(". ")
 
     # Ensure it's not empty
     if not sanitized:
@@ -69,7 +68,7 @@ def validate_path(path: str) -> bool:
     return True
 
 
-def format_datetime(dt: Optional[datetime], format_str: str = "%Y-%m-%d %H:%M:%S") -> str:
+def format_datetime(dt: datetime | None, format_str: str = "%Y-%m-%d %H:%M:%S") -> str:
     """
     Format datetime object as string.
 
@@ -147,13 +146,13 @@ def get_file_size_formatted(file_path: str) -> str:
         size = Path(file_path).stat().st_size
 
         # Format size
-        for unit in ['B', 'KB', 'MB', 'GB']:
+        for unit in ["B", "KB", "MB", "GB"]:
             if size < 1024.0:
                 return f"{size:.1f} {unit}"
             size /= 1024.0
 
         return f"{size:.1f} TB"
-    except:
+    except OSError:
         return "Unknown"
 
 
@@ -172,10 +171,10 @@ def truncate_string(text: str, max_length: int = 100, suffix: str = "...") -> st
     if len(text) <= max_length:
         return text
 
-    return text[:max_length - len(suffix)] + suffix
+    return text[: max_length - len(suffix)] + suffix
 
 
-def extract_markdown_title(content: str) -> Optional[str]:
+def extract_markdown_title(content: str) -> str | None:
     """
     Extract the first markdown header from content.
 
@@ -186,7 +185,7 @@ def extract_markdown_title(content: str) -> Optional[str]:
         Title string or None
     """
     # Look for # Header
-    match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
+    match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
     if match:
         return match.group(1).strip()
 

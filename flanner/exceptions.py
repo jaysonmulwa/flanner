@@ -1,0 +1,51 @@
+"""Structured exception hierarchy.
+
+Every error flanner raises is a FlannerError subclass, so callers can
+catch the whole family or a specific failure mode.
+"""
+
+
+class FlannerError(Exception):
+    """Base class for all flanner errors."""
+
+
+class DatabaseError(FlannerError):
+    """Database is unavailable, uninitialized, or an operation failed."""
+
+
+class NotFoundError(DatabaseError, ValueError):
+    """A requested project, plan file, or version does not exist.
+
+    Subclasses ValueError so pre-hierarchy `except ValueError` callers
+    keep working (same pattern as json.JSONDecodeError).
+    """
+
+
+class DuplicateError(DatabaseError, ValueError):
+    """An entity with the same identity already exists.
+
+    Subclasses ValueError for backward compatibility; see NotFoundError.
+    """
+
+
+class StorageError(FlannerError):
+    """Reading or writing a plan file on disk failed."""
+
+
+class PlanFileNotFoundError(StorageError, FileNotFoundError):
+    """A plan file is missing on disk.
+
+    Subclasses FileNotFoundError for backward compatibility.
+    """
+
+
+class GitError(FlannerError):
+    """A git operation failed or the directory is not a git repository."""
+
+
+class ConfigError(FlannerError):
+    """Configuration is missing or invalid (Claude config, Jira config)."""
+
+
+class JiraError(FlannerError):
+    """A Jira URL or linkage is invalid."""

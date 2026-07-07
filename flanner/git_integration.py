@@ -5,12 +5,11 @@ Provides git repository detection and .gitignore management.
 """
 
 import os
-from pathlib import Path
-from typing import Optional
 import subprocess
+from pathlib import Path
 
 
-def find_git_root(start_path: Optional[str] = None) -> Optional[str]:
+def find_git_root(start_path: str | None = None) -> str | None:
     """
     Find the git repository root by looking for .git directory.
 
@@ -82,7 +81,7 @@ def read_gitignore(repo_root: str) -> list[str]:
     if not os.path.exists(gitignore_path):
         return []
 
-    with open(gitignore_path, 'r', encoding='utf-8') as f:
+    with open(gitignore_path, encoding="utf-8") as f:
         return f.readlines()
 
 
@@ -100,23 +99,23 @@ def is_pattern_in_gitignore(repo_root: str, pattern: str) -> bool:
     lines = read_gitignore(repo_root)
 
     # Normalize pattern (remove trailing slashes for comparison)
-    normalized_pattern = pattern.rstrip('/')
+    normalized_pattern = pattern.rstrip("/")
 
     for line in lines:
         line = line.strip()
         # Skip comments and empty lines
-        if not line or line.startswith('#'):
+        if not line or line.startswith("#"):
             continue
 
         # Check if this line matches the pattern
-        normalized_line = line.rstrip('/')
+        normalized_line = line.rstrip("/")
         if normalized_line == normalized_pattern:
             return True
 
     return False
 
 
-def update_gitignore(repo_root: str, pattern: str, comment: Optional[str] = None) -> bool:
+def update_gitignore(repo_root: str, pattern: str, comment: str | None = None) -> bool:
     """
     Add a pattern to .gitignore if it's not already there.
 
@@ -136,18 +135,18 @@ def update_gitignore(repo_root: str, pattern: str, comment: Optional[str] = None
 
     # Read existing content
     if os.path.exists(gitignore_path):
-        with open(gitignore_path, 'r', encoding='utf-8') as f:
+        with open(gitignore_path, encoding="utf-8") as f:
             content = f.read()
     else:
         content = ""
 
     # Ensure file ends with newline
-    if content and not content.endswith('\n'):
-        content += '\n'
+    if content and not content.endswith("\n"):
+        content += "\n"
 
     # Add section separator if file is not empty
     if content:
-        content += '\n'
+        content += "\n"
 
     # Add comment if provided
     if comment:
@@ -159,7 +158,7 @@ def update_gitignore(repo_root: str, pattern: str, comment: Optional[str] = None
     content += f"{pattern}\n"
 
     # Write back
-    with open(gitignore_path, 'w', encoding='utf-8') as f:
+    with open(gitignore_path, "w", encoding="utf-8") as f:
         f.write(content)
 
     return True
@@ -184,7 +183,7 @@ def remove_from_gitignore(repo_root: str, pattern: str) -> bool:
     lines = read_gitignore(repo_root)
 
     # Normalize pattern
-    normalized_pattern = pattern.rstrip('/')
+    normalized_pattern = pattern.rstrip("/")
 
     # Filter out the pattern
     new_lines = []
@@ -192,7 +191,7 @@ def remove_from_gitignore(repo_root: str, pattern: str) -> bool:
 
     for line in lines:
         stripped = line.strip()
-        normalized_line = stripped.rstrip('/')
+        normalized_line = stripped.rstrip("/")
 
         # Keep line if it's not the pattern
         if normalized_line != normalized_pattern:
@@ -204,7 +203,7 @@ def remove_from_gitignore(repo_root: str, pattern: str) -> bool:
         return False
 
     # Write back
-    with open(gitignore_path, 'w', encoding='utf-8') as f:
+    with open(gitignore_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
 
     return True
@@ -223,16 +222,18 @@ def is_path_ignored(repo_root: str, path: str) -> bool:
     """
     try:
         # Use git check-ignore command
-        result = subprocess.run(
-            ['git', 'check-ignore', path],
+        result = subprocess.run(  # noqa: S603,S607 - fixed git command, no user input in argv[0]
+            ["git", "check-ignore", path],  # noqa: S607
             cwd=repo_root,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=10,
         )
 
         # Exit code 0 means path is ignored
         return result.returncode == 0
-    except:
+    except (OSError, subprocess.SubprocessError):
+        # git missing, timed out, or failed to spawn
         # Fallback: check .gitignore file manually
         return _check_gitignore_manually(repo_root, path)
 
@@ -253,34 +254,34 @@ def _check_gitignore_manually(repo_root: str, path: str) -> bool:
     lines = read_gitignore(repo_root)
 
     # Normalize path
-    path = path.strip('/')
+    path = path.strip("/")
 
     for line in lines:
         pattern = line.strip()
 
         # Skip comments and empty lines
-        if not pattern or pattern.startswith('#'):
+        if not pattern or pattern.startswith("#"):
             continue
 
         # Simple pattern matching (not full gitignore spec)
-        pattern = pattern.rstrip('/')
+        pattern = pattern.rstrip("/")
 
         # Exact match
         if pattern == path:
             return True
 
         # Directory prefix match
-        if pattern.endswith('/') and path.startswith(pattern):
+        if pattern.endswith("/") and path.startswith(pattern):
             return True
 
         # Path starts with pattern
-        if path.startswith(pattern + '/'):
+        if path.startswith(pattern + "/"):
             return True
 
     return False
 
 
-def get_git_status() -> Optional[str]:
+def get_git_status() -> str | None:
     """
     Get git status of current repository.
 
@@ -288,14 +289,15 @@ def get_git_status() -> Optional[str]:
         Git status output or None if not in a git repository
     """
     try:
-        result = subprocess.run(
-            ['git', 'status', '--short'],
+        result = subprocess.run(  # noqa: S603,S607 - fixed git command, no user input in argv[0]
+            ["git", "status", "--short"],  # noqa: S607
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            timeout=10,
         )
         return result.stdout
-    except:
+    except (OSError, subprocess.SubprocessError):
         return None
 
 

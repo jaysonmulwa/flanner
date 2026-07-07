@@ -6,11 +6,9 @@ Provides validation and URL generation for JIRA integration.
 
 import re
 from urllib.parse import urlparse
-from typing import Optional
-
 
 # JIRA issue key pattern: PROJECT-123
-JIRA_ISSUE_KEY_PATTERN = r'^[A-Z][A-Z0-9]*-[0-9]+$'
+JIRA_ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9]*-[0-9]+$"
 
 
 def is_valid_jira_issue_key(issue_key: str) -> bool:
@@ -53,10 +51,7 @@ def is_valid_jira_url(url: str) -> bool:
 
     try:
         result = urlparse(url.strip())
-        return all([
-            result.scheme in ['http', 'https'],
-            result.netloc
-        ])
+        return all([result.scheme in ["http", "https"], result.netloc])
     except Exception:
         return False
 
@@ -71,7 +66,7 @@ def normalize_jira_url(url: str) -> str:
     Returns:
         Normalized URL
     """
-    return url.strip().rstrip('/')
+    return url.strip().rstrip("/")
 
 
 def generate_jira_issue_url(jira_base_url: str, issue_key: str) -> str:
@@ -102,7 +97,7 @@ def format_jira_issue_key(issue_key: str) -> str:
     return issue_key.strip().upper()
 
 
-def extract_project_key(issue_key: str) -> Optional[str]:
+def extract_project_key(issue_key: str) -> str | None:
     """
     Extract project key from JIRA issue key.
 
@@ -115,13 +110,13 @@ def extract_project_key(issue_key: str) -> Optional[str]:
     if not is_valid_jira_issue_key(issue_key):
         return None
 
-    parts = issue_key.split('-')
+    parts = issue_key.split("-")
     if len(parts) >= 2:
         return parts[0]
     return None
 
 
-def extract_issue_number(issue_key: str) -> Optional[int]:
+def extract_issue_number(issue_key: str) -> int | None:
     """
     Extract issue number from JIRA issue key.
 
@@ -134,7 +129,7 @@ def extract_issue_number(issue_key: str) -> Optional[int]:
     if not is_valid_jira_issue_key(issue_key):
         return None
 
-    parts = issue_key.split('-')
+    parts = issue_key.split("-")
     if len(parts) >= 2:
         try:
             return int(parts[1])

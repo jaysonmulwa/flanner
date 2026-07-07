@@ -4,16 +4,22 @@ Database layer for Flanner
 Provides SQLAlchemy models and database operations.
 """
 
+import logging
+import os
+import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-import uuid
-from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship, Session
-from sqlalchemy.types import TypeDecorator, CHAR
+
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-import os
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import Session, relationship, sessionmaker
+from sqlalchemy.types import CHAR, TypeDecorator
+
+from .exceptions import DatabaseError, DuplicateError, NotFoundError
+
+logger = logging.getLogger(__name__)
 
 Base = declarative_base()
 
@@ -24,11 +30,12 @@ class GUID(TypeDecorator):
     Uses PostgreSQL's UUID type on PostgreSQL, otherwise uses
     CHAR(32), storing as stringified hex values.
     """
+
     impl = CHAR
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
-        if dialect.name == 'postgresql':
+        if dialect.name == "postgresql":
             return dialect.type_descriptor(PG_UUID())
         else:
             return dialect.type_descriptor(CHAR(36))
@@ -36,7 +43,7 @@ class GUID(TypeDecorator):
     def process_bind_param(self, value, dialect):
         if value is None:
             return value
-        elif dialect.name == 'postgresql':
+        elif dialect.name == "postgresql":
             return str(value)
         else:
             if not isinstance(value, uuid.UUID):
@@ -55,6 +62,7 @@ class GUID(TypeDecorator):
 
 class ProjectModel(Base):
     """Project model - represents a project with plan files"""
+
     __tablename__ = "projects"
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
@@ -67,7 +75,9 @@ class ProjectModel(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    plan_files = relationship("PlanFileModel", back_populates="project", cascade="all, delete-orphan")
+    plan_files = relationship(
+        "PlanFileModel", back_populates="project", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Project(id={self.id}, name='{self.name}')>"
@@ -75,6 +85,7 @@ class ProjectModel(Base):
 
 class PlanFileModel(Base):
     """Plan file model - represents a plan file with multiple versions"""
+
     __tablename__ = "plan_files"
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
@@ -88,7 +99,9 @@ class PlanFileModel(Base):
 
     # Relationships
     project = relationship("ProjectModel", back_populates="plan_files")
-    versions = relationship("VersionModel", back_populates="plan_file", cascade="all, delete-orphan")
+    versions = relationship(
+        "VersionModel", back_populates="plan_file", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<PlanFile(id={self.id}, name='{self.name}', version={self.current_version})>"
@@ -96,6 +109,7 @@ class PlanFileModel(Base):
 
 class VersionModel(Base):
     """Version model - represents a specific version of a plan file"""
+
     __tablename__ = "versions"
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
@@ -116,6 +130,7 @@ class VersionModel(Base):
 
 class JiraConfigModel(Base):
     """JIRA configuration model - stores JIRA settings per project"""
+
     __tablename__ = "jira_config"
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
@@ -129,11 +144,14 @@ class JiraConfigModel(Base):
     project = relationship("ProjectModel", backref="jira_config", uselist=False)
 
     def __repr__(self):
-        return f"<JiraConfig(id={self.id}, project_id={self.project_id}, jira_url='{self.jira_url}')>"
+        return (
+            f"<JiraConfig(id={self.id}, project_id={self.project_id}, jira_url='{self.jira_url}')>"
+        )
 
 
 class JiraLinkModel(Base):
     """JIRA link model - links plan files to JIRA issues"""
+
     __tablename__ = "jira_links"
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
@@ -148,7 +166,10 @@ class JiraLinkModel(Base):
     plan_file = relationship("PlanFileModel", backref="jira_links")
 
     def __repr__(self):
-        return f"<JiraLink(id={self.id}, plan_file_id={self.plan_file_id}, issue_key='{self.jira_issue_key}')>"
+        return (
+            f"<JiraLink(id={self.id}, plan_file_id={self.plan_file_id}, "
+            f"issue_key='{self.jira_issue_key}')>"
+        )
 
 
 # Database session management
@@ -156,7 +177,7 @@ _engine = None
 _SessionLocal = None
 
 
-def init_database(db_path: Optional[str] = None) -> None:
+def init_database(db_path: str | None = None) -> None:
     """
     Initialize the database and create tables.
 
@@ -184,7 +205,7 @@ def init_database(db_path: Optional[str] = None) -> None:
     # Create session factory
     _SessionLocal = sessionmaker(bind=_engine, autocommit=False, autoflush=False)
 
-    print(f"Database initialized at: {db_path}")
+    logger.info("Database initialized at: %s", db_path)
 
 
 def get_session() -> Session:
@@ -198,12 +219,12 @@ def get_session() -> Session:
         RuntimeError: If database hasn't been initialized
     """
     if _SessionLocal is None:
-        raise RuntimeError("Database not initialized. Call init_database() first.")
+        raise DatabaseError("Database not initialized. Call init_database() first.")
 
     return _SessionLocal()
 
 
-def get_db_path() -> Optional[str]:
+def get_db_path() -> str | None:
     """Get the current database path"""
     if _engine is None:
         return None
@@ -212,13 +233,23 @@ def get_db_path() -> Optional[str]:
 
 # CRUD Operations
 
+
+def _commit(session: Session) -> None:
+    """Commit, rolling back on failure so the session stays usable."""
+    try:
+        session.commit()
+    except SQLAlchemyError as e:
+        session.rollback()
+        raise DatabaseError(f"Database write failed: {e}") from e
+
+
 def create_project(
     session: Session,
     name: str,
     description: str = "",
-    project_root: Optional[str] = None,
+    project_root: str | None = None,
     plan_directory: str = ".plans",
-    auto_gitignore: bool = True
+    auto_gitignore: bool = True,
 ) -> ProjectModel:
     """
     Create a new project.
@@ -240,28 +271,28 @@ def create_project(
     # Check if project exists
     existing = session.query(ProjectModel).filter_by(name=name).first()
     if existing:
-        raise ValueError(f"Project '{name}' already exists")
+        raise DuplicateError(f"Project '{name}' already exists")
 
     project = ProjectModel(
         name=name,
         description=description,
         project_root=project_root,
         plan_directory=plan_directory,
-        auto_gitignore=auto_gitignore
+        auto_gitignore=auto_gitignore,
     )
     session.add(project)
-    session.commit()
+    _commit(session)
     session.refresh(project)
 
     return project
 
 
-def get_project(session: Session, project_id: uuid.UUID) -> Optional[ProjectModel]:
+def get_project(session: Session, project_id: uuid.UUID) -> ProjectModel | None:
     """Get project by ID"""
     return session.query(ProjectModel).filter_by(id=project_id).first()
 
 
-def get_project_by_name(session: Session, name: str) -> Optional[ProjectModel]:
+def get_project_by_name(session: Session, name: str) -> ProjectModel | None:
     """Get project by name"""
     return session.query(ProjectModel).filter_by(name=name).first()
 
@@ -274,11 +305,11 @@ def list_projects(session: Session) -> list[ProjectModel]:
 def update_project(
     session: Session,
     project_id: uuid.UUID,
-    project_root: Optional[str] = None,
-    plan_directory: Optional[str] = None,
-    auto_gitignore: Optional[bool] = None,
-    description: Optional[str] = None
-) -> Optional[ProjectModel]:
+    project_root: str | None = None,
+    plan_directory: str | None = None,
+    auto_gitignore: bool | None = None,
+    description: str | None = None,
+) -> ProjectModel | None:
     """Update project configuration"""
     project = session.query(ProjectModel).filter_by(id=project_id).first()
     if not project:
@@ -294,7 +325,7 @@ def update_project(
         project.description = description
 
     project.updated_at = datetime.utcnow()
-    session.commit()
+    _commit(session)
     session.refresh(project)
 
     return project
@@ -305,7 +336,7 @@ def create_plan_file(
     project_id: uuid.UUID,
     name: str,
     description: str = "",
-    auto_version: bool = True
+    auto_version: bool = True,
 ) -> PlanFileModel:
     """
     Create a new plan file.
@@ -326,39 +357,40 @@ def create_plan_file(
     # Check if project exists
     project = session.query(ProjectModel).filter_by(id=project_id).first()
     if not project:
-        raise ValueError(f"Project with ID {project_id} not found")
+        raise NotFoundError(f"Project with ID {project_id} not found")
 
     # Check if plan file already exists
-    existing = session.query(PlanFileModel).filter_by(
-        project_id=project_id, name=name
-    ).first()
+    existing = session.query(PlanFileModel).filter_by(project_id=project_id, name=name).first()
     if existing:
-        raise ValueError(f"Plan file '{name}' already exists in project '{project.name}'")
+        raise DuplicateError(f"Plan file '{name}' already exists in project '{project.name}'")
 
     plan_file = PlanFileModel(
         project_id=project_id,
         name=name,
         description=description,
         current_version=1,
-        auto_version=auto_version
+        auto_version=auto_version,
     )
     session.add(plan_file)
-    session.commit()
+    _commit(session)
     session.refresh(plan_file)
 
     return plan_file
 
 
-def get_plan_file(session: Session, plan_file_id: uuid.UUID) -> Optional[PlanFileModel]:
+def get_plan_file(session: Session, plan_file_id: uuid.UUID) -> PlanFileModel | None:
     """Get plan file by ID"""
     return session.query(PlanFileModel).filter_by(id=plan_file_id).first()
 
 
 def list_plan_files(session: Session, project_id: uuid.UUID) -> list[PlanFileModel]:
     """List all plan files for a project"""
-    return session.query(PlanFileModel).filter_by(project_id=project_id).order_by(
-        PlanFileModel.created_at.desc()
-    ).all()
+    return (
+        session.query(PlanFileModel)
+        .filter_by(project_id=project_id)
+        .order_by(PlanFileModel.created_at.desc())
+        .all()
+    )
 
 
 def create_version(
@@ -368,7 +400,7 @@ def create_version(
     file_path: str,
     content_hash: str,
     created_by: str = "user",
-    notes: str = ""
+    notes: str = "",
 ) -> VersionModel:
     """
     Create a new version of a plan file.
@@ -391,20 +423,18 @@ def create_version(
         file_path=file_path,
         content_hash=content_hash,
         created_by=created_by,
-        notes=notes
+        notes=notes,
     )
     session.add(version_model)
-    session.commit()
+    _commit(session)
     session.refresh(version_model)
 
     return version_model
 
 
 def get_version(
-    session: Session,
-    plan_file_id: uuid.UUID,
-    version: Optional[int] = None
-) -> Optional[VersionModel]:
+    session: Session, plan_file_id: uuid.UUID, version: int | None = None
+) -> VersionModel | None:
     """
     Get a specific version or the latest version.
 
@@ -426,9 +456,12 @@ def get_version(
 
 def list_versions(session: Session, plan_file_id: uuid.UUID) -> list[VersionModel]:
     """List all versions of a plan file"""
-    return session.query(VersionModel).filter_by(plan_file_id=plan_file_id).order_by(
-        VersionModel.version.desc()
-    ).all()
+    return (
+        session.query(VersionModel)
+        .filter_by(plan_file_id=plan_file_id)
+        .order_by(VersionModel.version.desc())
+        .all()
+    )
 
 
 def delete_project(session: Session, project_id: uuid.UUID) -> bool:
@@ -447,12 +480,12 @@ def delete_project(session: Session, project_id: uuid.UUID) -> bool:
         return False
 
     session.delete(project)
-    session.commit()
+    _commit(session)
 
     return True
 
 
-def get_project_by_root(session: Session, project_root: str) -> Optional[ProjectModel]:
+def get_project_by_root(session: Session, project_root: str) -> ProjectModel | None:
     """
     Get project by its project_root path.
 
@@ -463,7 +496,6 @@ def get_project_by_root(session: Session, project_root: str) -> Optional[Project
     Returns:
         ProjectModel or None if not found
     """
-    import os
     normalized_root = os.path.normpath(project_root)
 
     # Query all projects and compare normalized paths
@@ -478,11 +510,9 @@ def get_project_by_root(session: Session, project_root: str) -> Optional[Project
 
 # JIRA Configuration Operations
 
+
 def create_jira_config(
-    session: Session,
-    project_id: uuid.UUID,
-    jira_url: str,
-    jira_project_key: Optional[str] = None
+    session: Session, project_id: uuid.UUID, jira_url: str, jira_project_key: str | None = None
 ) -> JiraConfigModel:
     """
     Create or update JIRA configuration for a project.
@@ -502,7 +532,7 @@ def create_jira_config(
     # Check if project exists
     project = session.query(ProjectModel).filter_by(id=project_id).first()
     if not project:
-        raise ValueError(f"Project with ID {project_id} not found")
+        raise NotFoundError(f"Project with ID {project_id} not found")
 
     # Check if config already exists
     existing = session.query(JiraConfigModel).filter_by(project_id=project_id).first()
@@ -512,23 +542,21 @@ def create_jira_config(
         if jira_project_key is not None:
             existing.jira_project_key = jira_project_key
         existing.updated_at = datetime.utcnow()
-        session.commit()
+        _commit(session)
         session.refresh(existing)
         return existing
     else:
         # Create new config
         jira_config = JiraConfigModel(
-            project_id=project_id,
-            jira_url=jira_url,
-            jira_project_key=jira_project_key
+            project_id=project_id, jira_url=jira_url, jira_project_key=jira_project_key
         )
         session.add(jira_config)
-        session.commit()
+        _commit(session)
         session.refresh(jira_config)
         return jira_config
 
 
-def get_jira_config(session: Session, project_id: uuid.UUID) -> Optional[JiraConfigModel]:
+def get_jira_config(session: Session, project_id: uuid.UUID) -> JiraConfigModel | None:
     """Get JIRA configuration for a project"""
     return session.query(JiraConfigModel).filter_by(project_id=project_id).first()
 
@@ -549,19 +577,20 @@ def delete_jira_config(session: Session, project_id: uuid.UUID) -> bool:
         return False
 
     session.delete(config)
-    session.commit()
+    _commit(session)
     return True
 
 
 # JIRA Link Operations
 
+
 def create_jira_link(
     session: Session,
     plan_file_id: uuid.UUID,
     jira_issue_key: str,
-    jira_issue_type: Optional[str] = None,
-    notes: Optional[str] = None,
-    created_by: str = "user"
+    jira_issue_type: str | None = None,
+    notes: str | None = None,
+    created_by: str = "user",
 ) -> JiraLinkModel:
     """
     Create a JIRA link for a plan file.
@@ -583,27 +612,26 @@ def create_jira_link(
     # Check if plan file exists
     plan_file = session.query(PlanFileModel).filter_by(id=plan_file_id).first()
     if not plan_file:
-        raise ValueError(f"Plan file with ID {plan_file_id} not found")
+        raise NotFoundError(f"Plan file with ID {plan_file_id} not found")
 
     # Check if link already exists
-    existing = session.query(JiraLinkModel).filter_by(
-        plan_file_id=plan_file_id,
-        jira_issue_key=jira_issue_key
-    ).first()
+    existing = (
+        session.query(JiraLinkModel)
+        .filter_by(plan_file_id=plan_file_id, jira_issue_key=jira_issue_key)
+        .first()
+    )
     if existing:
-        raise ValueError(
-            f"Plan file is already linked to {jira_issue_key}"
-        )
+        raise DuplicateError(f"Plan file is already linked to {jira_issue_key}")
 
     jira_link = JiraLinkModel(
         plan_file_id=plan_file_id,
         jira_issue_key=jira_issue_key,
         jira_issue_type=jira_issue_type,
         notes=notes,
-        created_by=created_by
+        created_by=created_by,
     )
     session.add(jira_link)
-    session.commit()
+    _commit(session)
     session.refresh(jira_link)
 
     return jira_link
@@ -611,12 +639,15 @@ def create_jira_link(
 
 def get_jira_links(session: Session, plan_file_id: uuid.UUID) -> list[JiraLinkModel]:
     """Get all JIRA links for a plan file"""
-    return session.query(JiraLinkModel).filter_by(plan_file_id=plan_file_id).order_by(
-        JiraLinkModel.created_at.desc()
-    ).all()
+    return (
+        session.query(JiraLinkModel)
+        .filter_by(plan_file_id=plan_file_id)
+        .order_by(JiraLinkModel.created_at.desc())
+        .all()
+    )
 
 
-def get_jira_link(session: Session, link_id: uuid.UUID) -> Optional[JiraLinkModel]:
+def get_jira_link(session: Session, link_id: uuid.UUID) -> JiraLinkModel | None:
     """Get a specific JIRA link by ID"""
     return session.query(JiraLinkModel).filter_by(id=link_id).first()
 
@@ -624,9 +655,9 @@ def get_jira_link(session: Session, link_id: uuid.UUID) -> Optional[JiraLinkMode
 def update_jira_link(
     session: Session,
     link_id: uuid.UUID,
-    jira_issue_type: Optional[str] = None,
-    notes: Optional[str] = None
-) -> Optional[JiraLinkModel]:
+    jira_issue_type: str | None = None,
+    notes: str | None = None,
+) -> JiraLinkModel | None:
     """
     Update a JIRA link.
 
@@ -648,7 +679,7 @@ def update_jira_link(
     if notes is not None:
         link.notes = notes
 
-    session.commit()
+    _commit(session)
     session.refresh(link)
     return link
 
@@ -669,14 +700,12 @@ def delete_jira_link(session: Session, link_id: uuid.UUID) -> bool:
         return False
 
     session.delete(link)
-    session.commit()
+    _commit(session)
     return True
 
 
 def delete_jira_link_by_key(
-    session: Session,
-    plan_file_id: uuid.UUID,
-    jira_issue_key: str
+    session: Session, plan_file_id: uuid.UUID, jira_issue_key: str
 ) -> bool:
     """
     Delete a JIRA link by plan file ID and issue key.
@@ -689,15 +718,16 @@ def delete_jira_link_by_key(
     Returns:
         True if deleted, False if link not found
     """
-    link = session.query(JiraLinkModel).filter_by(
-        plan_file_id=plan_file_id,
-        jira_issue_key=jira_issue_key
-    ).first()
+    link = (
+        session.query(JiraLinkModel)
+        .filter_by(plan_file_id=plan_file_id, jira_issue_key=jira_issue_key)
+        .first()
+    )
     if not link:
         return False
 
     session.delete(link)
-    session.commit()
+    _commit(session)
     return True
 
 
@@ -718,7 +748,7 @@ def delete_all_jira_links(session: Session, plan_file_id: uuid.UUID) -> int:
     for link in links:
         session.delete(link)
 
-    session.commit()
+    _commit(session)
     return count
 
 
@@ -740,15 +770,17 @@ def list_all_jira_links(session: Session, project_id: uuid.UUID) -> list[dict]:
     for plan_file in plan_files:
         links = session.query(JiraLinkModel).filter_by(plan_file_id=plan_file.id).all()
         for link in links:
-            results.append({
-                "plan_file_id": plan_file.id,
-                "plan_file_name": plan_file.name,
-                "jira_link_id": link.id,
-                "jira_issue_key": link.jira_issue_key,
-                "jira_issue_type": link.jira_issue_type,
-                "notes": link.notes,
-                "created_at": link.created_at,
-                "created_by": link.created_by
-            })
+            results.append(
+                {
+                    "plan_file_id": plan_file.id,
+                    "plan_file_name": plan_file.name,
+                    "jira_link_id": link.id,
+                    "jira_issue_key": link.jira_issue_key,
+                    "jira_issue_type": link.jira_issue_type,
+                    "notes": link.notes,
+                    "created_at": link.created_at,
+                    "created_by": link.created_by,
+                }
+            )
 
     return results

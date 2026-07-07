@@ -1,9 +1,9 @@
 """Database layer tests, including the idempotent-init lookup."""
 
 from flanner.database import (
-    get_session,
     create_project,
     get_project_by_root,
+    get_session,
     list_projects,
 )
 

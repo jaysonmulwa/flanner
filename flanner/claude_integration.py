@@ -5,13 +5,15 @@ Handles automatic registration of MCP server with Claude Code.
 """
 
 import json
-import os
-from pathlib import Path
-from typing import Optional, Dict, Any
+import logging
 import platform
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
-def get_claude_config_path() -> Optional[Path]:
+def get_claude_config_path() -> Path | None:
     """
     Get the path to Claude Desktop configuration file.
 
@@ -50,7 +52,7 @@ def get_claude_config_path() -> Optional[Path]:
     return possible_paths[0] if possible_paths else None
 
 
-def read_claude_config() -> Dict[str, Any]:
+def read_claude_config() -> dict[str, Any]:
     """
     Read Claude Code MCP settings.
 
@@ -63,7 +65,7 @@ def read_claude_config() -> Dict[str, Any]:
         return {"mcpServers": {}}
 
     try:
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
 
         # Ensure mcpServers key exists
@@ -72,11 +74,11 @@ def read_claude_config() -> Dict[str, Any]:
 
         return config
     except Exception as e:
-        print(f"Warning: Could not read Claude config: {e}")
+        logger.warning("Could not read Claude config: %s", e)
         return {"mcpServers": {}}
 
 
-def write_claude_config(config: Dict[str, Any]) -> bool:
+def write_claude_config(config: dict[str, Any]) -> bool:
     """
     Write Claude Code MCP settings.
 
@@ -96,16 +98,16 @@ def write_claude_config(config: Dict[str, Any]) -> bool:
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Write config with pretty formatting
-        with open(config_path, 'w', encoding='utf-8') as f:
+        with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
 
         return True
     except Exception as e:
-        print(f"Error: Could not write Claude config: {e}")
+        logger.error("Could not write Claude config: %s", e)
         return False
 
 
-def get_local_server_config() -> Dict[str, Any]:
+def get_local_server_config() -> dict[str, Any]:
     """
     Get the configuration for local MCP server.
 
@@ -121,11 +123,11 @@ def get_local_server_config() -> Dict[str, Any]:
         "cwd": str(project_dir),
         "env": {
             # Add any environment variables if needed
-        }
+        },
     }
 
 
-def get_cloud_server_config(server_url: str, api_key: Optional[str] = None) -> Dict[str, Any]:
+def get_cloud_server_config(server_url: str, api_key: str | None = None) -> dict[str, Any]:
     """
     Get the configuration for cloud-based MCP server (future use).
 
@@ -161,7 +163,7 @@ def is_server_registered(server_name: str = "flanner") -> bool:
     return server_name in config.get("mcpServers", {})
 
 
-def get_server_config_from_claude(server_name: str = "flanner") -> Optional[Dict[str, Any]]:
+def get_server_config_from_claude(server_name: str = "flanner") -> dict[str, Any] | None:
     """
     Get the current server configuration from Claude Code.
 
@@ -178,9 +180,9 @@ def get_server_config_from_claude(server_name: str = "flanner") -> Optional[Dict
 def register_mcp_server(
     server_name: str = "flanner",
     server_type: str = "local",
-    server_url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    force: bool = False
+    server_url: str | None = None,
+    api_key: str | None = None,
+    force: bool = False,
 ) -> tuple[bool, str]:
     """
     Register MCP server with Claude Code.
@@ -248,7 +250,7 @@ def unregister_mcp_server(server_name: str = "flanner") -> tuple[bool, str]:
         return False, "Failed to write Claude Code configuration"
 
 
-def verify_server_config() -> tuple[bool, str, Optional[Dict[str, Any]]]:
+def verify_server_config() -> tuple[bool, str, dict[str, Any] | None]:
     """
     Verify that the registered MCP server configuration is correct.
 
@@ -272,7 +274,7 @@ def verify_server_config() -> tuple[bool, str, Optional[Dict[str, Any]]]:
         return False, "MCP server configuration has changed", current_config
 
 
-def get_claude_config_info() -> Dict[str, Any]:
+def get_claude_config_info() -> dict[str, Any]:
     """
     Get information about Claude Code configuration.
 
@@ -286,7 +288,7 @@ def get_claude_config_info() -> Dict[str, Any]:
         "config_exists": config_path.exists() if config_path else False,
         "server_registered": is_server_registered(),
         "total_servers": 0,
-        "our_server_config": None
+        "our_server_config": None,
     }
 
     if config_path and config_path.exists():
@@ -324,7 +326,7 @@ def auto_register_on_init() -> tuple[bool, str]:
         return register_mcp_server()
 
 
-def check_server_status() -> Dict[str, Any]:
+def check_server_status() -> dict[str, Any]:
     """
     Check the status of MCP server registration.
     This is called during 'mcp-plan status' command.
@@ -337,7 +339,7 @@ def check_server_status() -> Dict[str, Any]:
         "config_valid": False,
         "config_path": None,
         "message": "",
-        "action_needed": None
+        "action_needed": None,
     }
 
     config_path = get_claude_config_path()
@@ -370,19 +372,14 @@ def print_registration_instructions():
     """
     Print manual registration instructions for Claude Code.
     """
-    project_dir = Path(__file__).resolve().parent.parent
     server_config = get_local_server_config()
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("CLAUDE CODE MCP SERVER CONFIGURATION")
-    print("="*60)
+    print("=" * 60)
     print("\nTo manually add the MCP server to Claude Code:")
-    print(f"\n1. Open Claude Code settings")
-    print(f"2. Add the following to your MCP settings:\n")
-    print(json.dumps({
-        "mcpServers": {
-            "flanner": server_config
-        }
-    }, indent=2))
-    print(f"\n3. Restart Claude Code")
-    print("="*60 + "\n")
+    print("\n1. Open Claude Code settings")
+    print("2. Add the following to your MCP settings:\n")
+    print(json.dumps({"mcpServers": {"flanner": server_config}}, indent=2))
+    print("\n3. Restart Claude Code")
+    print("=" * 60 + "\n")

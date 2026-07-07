@@ -4,11 +4,14 @@ Storage layer for Flanner
 Handles file system operations for plan files.
 """
 
+import logging
 import os
 from pathlib import Path
-from typing import Tuple, Dict, Optional
+
+from .exceptions import PlanFileNotFoundError
 from .frontmatter import parse_frontmatter
-from .utils import ensure_directory_exists
+
+logger = logging.getLogger(__name__)
 
 
 def init_storage(base_path: str) -> None:
@@ -21,14 +24,11 @@ def init_storage(base_path: str) -> None:
     base = Path(base_path)
     base.mkdir(parents=True, exist_ok=True)
 
-    print(f"Storage initialized at: {base_path}")
+    logger.info("Storage initialized at: %s", base_path)
 
 
 def save_plan_file_with_frontmatter(
-    project_root: str,
-    plan_directory: str,
-    file_name: str,
-    content: str
+    project_root: str, plan_directory: str, file_name: str, content: str
 ) -> str:
     """
     Save plan file to project's plan directory.
@@ -49,13 +49,13 @@ def save_plan_file_with_frontmatter(
     file_path = full_plan_path / file_name
 
     # Write file
-    with open(file_path, 'w', encoding='utf-8') as f:
+    with open(file_path, "w", encoding="utf-8") as f:
         f.write(content)
 
     return str(file_path)
 
 
-def load_plan_file(file_path: str) -> Tuple[Dict, str]:
+def load_plan_file(file_path: str) -> tuple[dict, str]:
     """
     Load plan file and return frontmatter and content.
 
@@ -69,9 +69,9 @@ def load_plan_file(file_path: str) -> Tuple[Dict, str]:
         FileNotFoundError: If file doesn't exist
     """
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Plan file not found: {file_path}")
+        raise PlanFileNotFoundError(f"Plan file not found: {file_path}")
 
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     return parse_frontmatter(content)
@@ -91,17 +91,13 @@ def load_plan_file_full(file_path: str) -> str:
         FileNotFoundError: If file doesn't exist
     """
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Plan file not found: {file_path}")
+        raise PlanFileNotFoundError(f"Plan file not found: {file_path}")
 
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, encoding="utf-8") as f:
         return f.read()
 
 
-def generate_file_path(
-    project_root: str,
-    plan_directory: str,
-    file_name: str
-) -> str:
+def generate_file_path(project_root: str, plan_directory: str, file_name: str) -> str:
     """
     Generate absolute path for a plan file.
 
@@ -150,7 +146,7 @@ def list_plan_files_in_directory(directory: str) -> list[str]:
     return [f.name for f in path.glob("*.md")]
 
 
-def get_file_stats(file_path: str) -> Optional[Dict]:
+def get_file_stats(file_path: str) -> dict | None:
     """
     Get file statistics.
 
@@ -166,10 +162,10 @@ def get_file_stats(file_path: str) -> Optional[Dict]:
     stat = os.stat(file_path)
 
     return {
-        'size': stat.st_size,
-        'created': stat.st_ctime,
-        'modified': stat.st_mtime,
-        'accessed': stat.st_atime
+        "size": stat.st_size,
+        "created": stat.st_ctime,
+        "modified": stat.st_mtime,
+        "accessed": stat.st_atime,
     }
 
 
@@ -188,16 +184,16 @@ def backup_plan_file(file_path: str, backup_suffix: str = ".backup") -> str:
         FileNotFoundError: If original file doesn't exist
     """
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"File not found: {file_path}")
+        raise PlanFileNotFoundError(f"File not found: {file_path}")
 
     backup_path = file_path + backup_suffix
 
     # Read original
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     # Write backup
-    with open(backup_path, 'w', encoding='utf-8') as f:
+    with open(backup_path, "w", encoding="utf-8") as f:
         f.write(content)
 
     return backup_path
@@ -234,7 +230,7 @@ def move_plan_file(old_path: str, new_path: str) -> bool:
         FileNotFoundError: If old file doesn't exist
     """
     if not os.path.exists(old_path):
-        raise FileNotFoundError(f"File not found: {old_path}")
+        raise PlanFileNotFoundError(f"File not found: {old_path}")
 
     # Ensure destination directory exists
     dest_dir = Path(new_path).parent

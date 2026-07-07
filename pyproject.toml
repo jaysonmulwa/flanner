@@ -35,6 +35,16 @@ dev = [
 [project.scripts]
 flanner = "flanner.cli:cli"
 
+[tool.ruff]
+line-length = 99
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+[tool.ruff.lint.per-file-ignores]
+# assert and hardcoded tmp paths are fine in tests
+"tests/*" = ["S101", "S108", "S603", "S607"]
+
 [tool.setuptools.packages.find]
 include = ["flanner*"]
 
