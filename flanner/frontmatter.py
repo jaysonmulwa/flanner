@@ -5,6 +5,7 @@ Provides YAML frontmatter generation and parsing for plan files.
 """
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 import frontmatter
@@ -58,7 +59,7 @@ def generate_frontmatter(
     return f"---\n{yaml_str}---"
 
 
-def parse_frontmatter(content: str) -> tuple[dict, str]:
+def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     """
     Parse frontmatter from markdown content.
 
@@ -77,7 +78,7 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
         return ({}, content)
 
 
-def validate_frontmatter(fm_data: dict) -> bool:
+def validate_frontmatter(fm_data: dict[str, Any]) -> bool:
     """
     Validate that frontmatter has required fields.
 
@@ -121,7 +122,7 @@ def is_mcp_plan_file(content: str) -> bool:
     return fm_data.get("mcp_plan_file") is True
 
 
-def update_frontmatter(content: str, updates: dict) -> str:
+def update_frontmatter(content: str, updates: dict[str, Any]) -> str:
     """
     Update frontmatter fields in content.
 
@@ -161,7 +162,7 @@ def create_plan_file_content(frontmatter_str: str, body: str) -> str:
     return frontmatter_str + "\n" + body
 
 
-def extract_metadata_from_frontmatter(fm_data: dict) -> dict:
+def extract_metadata_from_frontmatter(fm_data: dict[str, Any]) -> dict[str, Any]:
     """
     Extract specific metadata fields from frontmatter.
 

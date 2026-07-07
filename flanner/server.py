@@ -6,6 +6,7 @@ Exposes plan file management tools to Claude Code and other AI assistants.
 
 import os
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
@@ -42,7 +43,7 @@ mcp = FastMCP("flanner")
 
 
 # Initialize database (will be called when tools are used)
-def ensure_database():
+def ensure_database() -> None:
     """Ensure database is initialized"""
     try:
         get_session()  # Test if session exists
@@ -55,7 +56,7 @@ def ensure_database():
 
 
 @mcp.tool()
-def get_plan_config(project_id: str = None) -> dict:
+def get_plan_config(project_id: str | None = None) -> dict[str, Any]:
     """
     Get plan file configuration - tells Claude where and how to create plan files.
 
@@ -106,7 +107,7 @@ def get_plan_config(project_id: str = None) -> dict:
 
 
 @mcp.tool()
-def list_projects() -> list[dict]:
+def list_projects() -> list[dict[str, Any]]:
     """
     List all projects with their configuration.
 
@@ -132,8 +133,11 @@ def list_projects() -> list[dict]:
 
 @mcp.tool()
 def create_project_tool(
-    name: str, description: str = "", project_root: str = None, plan_directory: str = ".plans"
-) -> dict:
+    name: str,
+    description: str = "",
+    project_root: str | None = None,
+    plan_directory: str = ".plans",
+) -> dict[str, Any]:
     """
     Create a new project with git integration.
 
@@ -199,11 +203,11 @@ def create_project_tool(
 @mcp.tool()
 def configure_project_tool(
     project_id: str,
-    project_root: str = None,
-    plan_directory: str = None,
-    auto_gitignore: bool = None,
-    description: str = None,
-) -> dict:
+    project_root: str | None = None,
+    plan_directory: str | None = None,
+    auto_gitignore: bool | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
     """
     Update project configuration.
 
@@ -232,8 +236,8 @@ def configure_project_tool(
 
     old_plan_dir = project.plan_directory
 
-    # Update project
-    updated_project = update_project(
+    # Update project (returns the same identity-mapped instance as `project`, refreshed)
+    update_project(
         session,
         project_uuid,
         project_root=project_root,
@@ -243,29 +247,27 @@ def configure_project_tool(
     )
 
     # If plan directory changed and auto_gitignore is enabled, update .gitignore
-    if plan_directory and plan_directory != old_plan_dir and updated_project.auto_gitignore:
-        if updated_project.project_root:
+    if plan_directory and plan_directory != old_plan_dir and project.auto_gitignore:
+        if project.project_root:
             from .git_integration import update_plan_directory_in_gitignore
 
             old_pattern = old_plan_dir.rstrip("/") + "/"
             new_pattern = plan_directory.rstrip("/") + "/"
-            update_plan_directory_in_gitignore(
-                updated_project.project_root, old_pattern, new_pattern
-            )
+            update_plan_directory_in_gitignore(project.project_root, old_pattern, new_pattern)
 
     return {
-        "id": str(updated_project.id),  # Convert UUID to string
-        "name": updated_project.name,
-        "description": updated_project.description,
-        "project_root": updated_project.project_root,
-        "plan_directory": updated_project.plan_directory,
-        "auto_gitignore": updated_project.auto_gitignore,
+        "id": str(project.id),  # Convert UUID to string
+        "name": project.name,
+        "description": project.description,
+        "project_root": project.project_root,
+        "plan_directory": project.plan_directory,
+        "auto_gitignore": project.auto_gitignore,
         "message": "Project configuration updated successfully",
     }
 
 
 @mcp.tool()
-def delete_project_tool(project_id: str) -> dict:
+def delete_project_tool(project_id: str) -> dict[str, Any]:
     """
     Delete a project and all associated plan files and versions from the database.
 
@@ -320,7 +322,7 @@ def delete_project_tool(project_id: str) -> dict:
 
 
 @mcp.tool()
-def list_plan_files_tool(project_id: str) -> list[dict]:
+def list_plan_files_tool(project_id: str) -> list[dict[str, Any]]:
     """
     List all plan files for a project.
 
@@ -356,7 +358,7 @@ def list_plan_files_tool(project_id: str) -> list[dict]:
 @mcp.tool()
 def create_plan_file_tool(
     project_id: str, name: str, content: str, description: str = "", created_by: str = "claude"
-) -> dict:
+) -> dict[str, Any]:
     """
     Create a new plan file (v1) with proper frontmatter.
 
@@ -385,6 +387,13 @@ def create_plan_file_tool(
     project = get_project(session, project_uuid)
     if not project:
         return {"error": True, "message": f"Project with ID {project_id} not found"}
+
+    if not project.project_root:
+        # Previously crashed with TypeError; surface the config problem instead
+        return {
+            "error": True,
+            "message": f"Project '{project.name}' has no project_root configured",
+        }
 
     # Create plan file record in database
     try:
@@ -443,7 +452,7 @@ def create_plan_file_tool(
 @mcp.tool()
 def update_plan_file_tool(
     plan_file_id: str, content: str, notes: str = "", created_by: str = "claude"
-) -> dict:
+) -> dict[str, Any] | None:
     """
     Update a plan file (creates new version if content changed).
 
@@ -473,6 +482,13 @@ def update_plan_file_tool(
     project = get_project(session, plan_file.project_id)
     if not project:
         return {"error": True, "message": "Project not found"}
+
+    if not project.project_root:
+        # Previously crashed with TypeError; surface the config problem instead
+        return {
+            "error": True,
+            "message": f"Project '{project.name}' has no project_root configured",
+        }
 
     # Get latest version
     latest_version = get_version(session, plan_file_uuid)
@@ -542,9 +558,12 @@ def update_plan_file_tool(
             "message": f"Created version {new_version_num} at {file_path}",
         }
 
+    # auto_version disabled: preserve historical behavior of returning None
+    return None
+
 
 @mcp.tool()
-def get_plan_file_tool(plan_file_id: str, version: int = None) -> dict:
+def get_plan_file_tool(plan_file_id: str, version: int | None = None) -> dict[str, Any]:
     """
     Get plan file content (specific version or latest).
 
@@ -600,7 +619,7 @@ def get_plan_file_tool(plan_file_id: str, version: int = None) -> dict:
 
 
 @mcp.tool()
-def get_plan_history_tool(plan_file_id: str) -> dict:
+def get_plan_history_tool(plan_file_id: str) -> dict[str, Any]:
     """
     Get version history of a plan file.
 
@@ -653,7 +672,9 @@ def get_plan_history_tool(plan_file_id: str) -> dict:
 
 
 @mcp.tool()
-def configure_jira_tool(project_id: str, jira_url: str, jira_project_key: str = None) -> dict:
+def configure_jira_tool(
+    project_id: str, jira_url: str, jira_project_key: str | None = None
+) -> dict[str, Any]:
     """
     Configure JIRA integration for a project.
 
@@ -706,8 +727,8 @@ def configure_jira_tool(project_id: str, jira_url: str, jira_project_key: str = 
 
 @mcp.tool()
 def link_plan_to_jira_tool(
-    plan_file_id: str, jira_issue_key: str, issue_type: str = None, notes: str = None
-) -> dict:
+    plan_file_id: str, jira_issue_key: str, issue_type: str | None = None, notes: str | None = None
+) -> dict[str, Any]:
     """
     Link a plan file to a JIRA issue.
 
@@ -775,7 +796,7 @@ def link_plan_to_jira_tool(
 
 
 @mcp.tool()
-def get_jira_links_tool(plan_file_id: str) -> dict:
+def get_jira_links_tool(plan_file_id: str) -> dict[str, Any]:
     """
     Get all JIRA links for a plan file.
 
@@ -829,7 +850,7 @@ def get_jira_links_tool(plan_file_id: str) -> dict:
 
 
 @mcp.tool()
-def list_jira_links_tool(project_id: str) -> dict:
+def list_jira_links_tool(project_id: str) -> dict[str, Any]:
     """
     List all JIRA links for all plan files in a project.
 
@@ -885,7 +906,7 @@ def list_jira_links_tool(project_id: str) -> dict:
 
 
 @mcp.tool()
-def unlink_jira_issue_tool(plan_file_id: str, jira_issue_key: str = None) -> dict:
+def unlink_jira_issue_tool(plan_file_id: str, jira_issue_key: str | None = None) -> dict[str, Any]:
     """
     Unlink a JIRA issue from a plan file.
 
@@ -936,7 +957,7 @@ def unlink_jira_issue_tool(plan_file_id: str, jira_issue_key: str = None) -> dic
 
 
 @mcp.tool()
-def get_jira_config_tool(project_id: str) -> dict:
+def get_jira_config_tool(project_id: str) -> dict[str, Any]:
     """
     Get JIRA configuration for a project.
 

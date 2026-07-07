@@ -143,7 +143,7 @@ def get_file_size_formatted(file_path: str) -> str:
         Formatted file size (e.g., "1.5 KB")
     """
     try:
-        size = Path(file_path).stat().st_size
+        size: float = Path(file_path).stat().st_size
 
         # Format size
         for unit in ["B", "KB", "MB", "GB"]:

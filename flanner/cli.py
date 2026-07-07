@@ -14,8 +14,15 @@ import click
 from rich.console import Console
 from rich.table import Table
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-from .database import delete_project, get_project_by_name, get_session, init_database
+from .database import (
+    ProjectModel,
+    delete_project,
+    get_project_by_name,
+    get_session,
+    init_database,
+)
 from .database import list_projects as db_list_projects
 from .exceptions import FlannerError
 from .git_integration import find_git_root, update_gitignore
@@ -53,7 +60,9 @@ def cli(verbose: bool, quiet: bool) -> None:
 @click.option(
     "--force-new-project", is_flag=True, help="Force create new project even if one exists"
 )
-def init(project_root, plan_dir, skip_claude, force_new_project):
+def init(
+    project_root: str | None, plan_dir: str, skip_claude: bool, force_new_project: bool
+) -> None:
     """Initialize Flanner"""
     mcp_dir = get_mcp_dir()
 
@@ -147,7 +156,7 @@ def init(project_root, plan_dir, skip_claude, force_new_project):
     default=lambda: int(os.environ.get("FLANNER_WEB_PORT", "8080")),
     help="Web server port (env: FLANNER_WEB_PORT)",
 )
-def start(port):
+def start(port: int) -> None:
     """Start the MCP server"""
     pid_file = get_pid_file()
 
@@ -192,7 +201,7 @@ def start(port):
 
 
 @cli.command()
-def stop():
+def stop() -> None:
     """Stop the MCP server"""
     pid_file = get_pid_file()
 
@@ -213,7 +222,7 @@ def stop():
 
 
 @cli.command()
-def status():
+def status() -> None:
     """Show server status"""
     pid_file = get_pid_file()
     mcp_dir = get_mcp_dir()
@@ -289,7 +298,7 @@ def status():
     default="table",
     help="Output format",
 )
-def list(project, output):
+def list(project: str | None, output: str) -> None:
     """List all projects or plan files"""
     import json as json_module
 
@@ -383,7 +392,9 @@ def list(project, output):
 @click.option("--project-root", default=None, help="New project root path")
 @click.option("--plan-dir", default=None, help="New plan directory")
 @click.option("--auto-gitignore", default=None, type=bool, help="Enable/disable auto .gitignore")
-def config(project_name, project_root, plan_dir, auto_gitignore):
+def config(
+    project_name: str, project_root: str | None, plan_dir: str | None, auto_gitignore: bool | None
+) -> None:
     """Configure a project's settings"""
     mcp_dir = get_mcp_dir()
     db_path = mcp_dir / "data.db"
@@ -405,7 +416,8 @@ def config(project_name, project_root, plan_dir, auto_gitignore):
     from .server import configure_project_tool
 
     result = configure_project_tool(
-        project_id=project.id,
+        # str(): the tool expects a string UUID; passing the raw uuid.UUID crashed in UUID()
+        project_id=str(project.id),
         project_root=project_root,
         plan_directory=plan_dir,
         auto_gitignore=auto_gitignore,
@@ -423,7 +435,7 @@ def config(project_name, project_root, plan_dir, auto_gitignore):
 
 @cli.command()
 @click.argument("project_name")
-def setup_gitignore(project_name):
+def setup_gitignore(project_name: str) -> None:
     """Manually update .gitignore for a project"""
     mcp_dir = get_mcp_dir()
     db_path = mcp_dir / "data.db"
@@ -458,7 +470,7 @@ def setup_gitignore(project_name):
 @cli.command()
 @click.argument("project_name")
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
-def delete(project_name, force):
+def delete(project_name: str, force: bool) -> None:
     """Delete a project and all its plan files"""
     mcp_dir = get_mcp_dir()
     db_path = mcp_dir / "data.db"
@@ -511,7 +523,7 @@ def delete(project_name, force):
 )
 @click.option("--host", default="127.0.0.1", help="Web server host")
 @click.option("--open-browser", is_flag=True, help="Open browser automatically")
-def web(port, host, open_browser):
+def web(port: int, host: str, open_browser: bool) -> None:
     """Launch web interface"""
     mcp_dir = get_mcp_dir()
     db_path = mcp_dir / "data.db"
@@ -552,7 +564,7 @@ def web(port, host, open_browser):
 @click.option("--type", "server_type", default="local", help="Server type: local or cloud")
 @click.option("--url", default=None, help="Server URL (for cloud type)")
 @click.option("--api-key", default=None, help="API key (for cloud type)")
-def register(force, server_type, url, api_key):
+def register(force: bool, server_type: str, url: str | None, api_key: str | None) -> None:
     """Register MCP server with Claude Code"""
     console.print("\n[MCP] Registering MCP server with Claude Code...\n", style="cyan")
 
@@ -596,7 +608,7 @@ def register(force, server_type, url, api_key):
 
 
 @cli.command()
-def unregister():
+def unregister() -> None:
     """Unregister MCP server from Claude Code"""
     console.print("\n[MCP] Unregistering MCP server from Claude Code...\n", style="cyan")
 
@@ -617,7 +629,7 @@ def unregister():
 
 
 @cli.command()
-def claude_info():
+def claude_info() -> None:
     """Show Claude Code integration information"""
     console.print("\n" + "=" * 60, style="cyan")
     console.print("CLAUDE CODE INTEGRATION INFO", style="cyan bold")
@@ -645,7 +657,7 @@ def claude_info():
         print_registration_instructions()
 
 
-def _sync_file(session, proj, file_path, dry_run):
+def _sync_file(session: Session, proj: ProjectModel, file_path: Path, dry_run: bool) -> str:
     """Import one plan file into the database. Returns 'imported', 'skipped', or 'error'."""
     from datetime import datetime
     from uuid import UUID
@@ -748,10 +760,17 @@ def _sync_file(session, proj, file_path, dry_run):
     return "imported"
 
 
-def _sync_project(session, proj, dry_run, totals):
+def _sync_project(
+    session: Session, proj: ProjectModel, dry_run: bool, totals: dict[str, int]
+) -> None:
     """Sync every plan file in one project's plan directory."""
     console.print(f"\nProject: {proj.name}", style="cyan bold")
     console.print(f"Plan directory: {proj.project_root}/{proj.plan_directory}", style="white")
+
+    if not proj.project_root:
+        # Previously crashed with TypeError; skip the misconfigured project instead
+        console.print("  Project has no project_root configured", style="yellow")
+        return
 
     plan_dir = Path(proj.project_root) / proj.plan_directory
     if not plan_dir.exists():
@@ -782,7 +801,7 @@ def _sync_project(session, proj, dry_run, totals):
 @click.option(
     "--dry-run", is_flag=True, help="Show what would be imported without actually importing"
 )
-def sync(project, dry_run):
+def sync(project: str | None, dry_run: bool) -> None:
     """Scan .plans directory and import existing plan files into database"""
     console.print("\n" + "=" * 60, style="cyan")
     console.print("SYNC PLAN FILES", style="cyan bold")
@@ -834,7 +853,7 @@ def sync(project, dry_run):
 
 
 @cli.group()
-def jira():
+def jira() -> None:
     """JIRA integration commands"""
     pass
 
@@ -843,7 +862,7 @@ def jira():
 @click.argument("project_name")
 @click.option("--url", required=True, help="JIRA base URL (e.g., https://company.atlassian.net)")
 @click.option("--project-key", default=None, help="Default JIRA project key (e.g., PROJ)")
-def jira_config(project_name, url, project_key):
+def jira_config(project_name: str, url: str, project_key: str | None) -> None:
     """Configure JIRA integration for a project"""
     from .database import create_jira_config
     from .jira_utils import is_valid_jira_url, normalize_jira_url
@@ -859,7 +878,7 @@ def jira_config(project_name, url, project_key):
     if not is_valid_jira_url(url):
         console.print(f"ERROR Invalid JIRA URL format: {url}", style="red")
         console.print("  Expected format: https://company.atlassian.net", style="yellow")
-        return
+        raise SystemExit(1)
 
     init_database(str(db_path))
     session = get_session()
@@ -893,7 +912,9 @@ def jira_config(project_name, url, project_key):
 @click.option(
     "--project", default=None, help="Project name (uses current directory if not specified)"
 )
-def jira_link(plan_name, issue, issue_type, notes, project):
+def jira_link(
+    plan_name: str, issue: str, issue_type: str | None, notes: str | None, project: str | None
+) -> None:
     """Link a plan file to a JIRA issue"""
     from .database import create_jira_link, get_jira_config
     from .jira_utils import format_jira_issue_key, generate_jira_issue_url, is_valid_jira_issue_key
@@ -912,7 +933,7 @@ def jira_link(plan_name, issue, issue_type, notes, project):
         console.print(
             "  Expected format: PROJECT-123 (uppercase letters, dash, numbers)", style="yellow"
         )
-        return
+        raise SystemExit(1)
 
     init_database(str(db_path))
     session = get_session()
@@ -948,7 +969,7 @@ def jira_link(plan_name, issue, issue_type, notes, project):
         console.print(
             f"  Available plans: {', '.join([p.name for p in proj.plan_files])}", style="yellow"
         )
-        return
+        raise SystemExit(1)
 
     # Create link
     try:
@@ -980,7 +1001,7 @@ def jira_link(plan_name, issue, issue_type, notes, project):
 )
 @click.option("--all", "unlink_all", is_flag=True, help="Unlink all JIRA issues")
 @click.option("--project", default=None, help="Project name")
-def jira_unlink(plan_name, issue, unlink_all, project):
+def jira_unlink(plan_name: str, issue: str | None, unlink_all: bool, project: str | None) -> None:
     """Unlink a plan file from JIRA issue(s)"""
     from .database import delete_all_jira_links, delete_jira_link_by_key
     from .jira_utils import format_jira_issue_key
@@ -1046,7 +1067,7 @@ def jira_unlink(plan_name, issue, unlink_all, project):
 
 @jira.command("links")
 @click.option("--project", default=None, help="Project name (shows all projects if not specified)")
-def jira_links(project):
+def jira_links(project: str | None) -> None:
     """List all JIRA links"""
     from .database import get_jira_config, list_all_jira_links
 
@@ -1108,7 +1129,7 @@ def jira_links(project):
 @jira.command("show")
 @click.argument("plan_name")
 @click.option("--project", default=None, help="Project name")
-def jira_show(plan_name, project):
+def jira_show(plan_name: str, project: str | None) -> None:
     """Show detailed JIRA links for a plan file"""
     from .database import get_jira_config, get_jira_links
     from .jira_utils import generate_jira_issue_url
@@ -1175,8 +1196,9 @@ def jira_show(plan_name, project):
         if link.notes:
             console.print(f"    Notes: {link.notes}", style="white")
 
+        linked_at = link.created_at.strftime("%Y-%m-%d %H:%M") if link.created_at else "N/A"
         console.print(
-            f"    Linked: {link.created_at.strftime('%Y-%m-%d %H:%M')} by {link.created_by}",
+            f"    Linked: {linked_at} by {link.created_by}",
             style="dim",
         )
         console.print()

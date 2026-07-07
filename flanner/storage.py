@@ -7,6 +7,7 @@ Handles file system operations for plan files.
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from .exceptions import PlanFileNotFoundError
 from .frontmatter import parse_frontmatter
@@ -55,7 +56,7 @@ def save_plan_file_with_frontmatter(
     return str(file_path)
 
 
-def load_plan_file(file_path: str) -> tuple[dict, str]:
+def load_plan_file(file_path: str) -> tuple[dict[str, Any], str]:
     """
     Load plan file and return frontmatter and content.
 
@@ -146,7 +147,7 @@ def list_plan_files_in_directory(directory: str) -> list[str]:
     return [f.name for f in path.glob("*.md")]
 
 
-def get_file_stats(file_path: str) -> dict | None:
+def get_file_stats(file_path: str) -> dict[str, Any] | None:
     """
     Get file statistics.
 

@@ -9,23 +9,38 @@ import os
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import Boolean, DateTime, Dialect, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    mapped_column,
+    relationship,
+    sessionmaker,
+)
 from sqlalchemy.pool import NullPool
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session, relationship, sessionmaker
-from sqlalchemy.types import CHAR, TypeDecorator
+from sqlalchemy.types import CHAR, TypeDecorator, TypeEngine
 
 from .exceptions import DatabaseError, DuplicateError, NotFoundError
 
 logger = logging.getLogger(__name__)
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    """Declarative base for all flanner models."""
 
 
-class GUID(TypeDecorator):
+# Bump when the table layout changes incompatibly; stamped into SQLite's
+# PRAGMA user_version so future releases can detect and migrate old files.
+SCHEMA_VERSION = 1
+
+
+class GUID(TypeDecorator[uuid.UUID]):
     """Platform-independent GUID type.
 
     Uses PostgreSQL's UUID type on PostgreSQL, otherwise uses
@@ -35,13 +50,13 @@ class GUID(TypeDecorator):
     impl = CHAR
     cache_ok = True
 
-    def load_dialect_impl(self, dialect):
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
         if dialect.name == "postgresql":
             return dialect.type_descriptor(PG_UUID())
         else:
             return dialect.type_descriptor(CHAR(36))
 
-    def process_bind_param(self, value, dialect):
+    def process_bind_param(self, value: uuid.UUID | str | None, dialect: Dialect) -> str | None:
         if value is None:
             return value
         elif dialect.name == "postgresql":
@@ -52,13 +67,13 @@ class GUID(TypeDecorator):
             else:
                 return str(value)
 
-    def process_result_value(self, value, dialect):
+    def process_result_value(self, value: Any, dialect: Dialect) -> uuid.UUID | None:
         if value is None:
+            return None
+        elif isinstance(value, uuid.UUID):
             return value
         else:
-            if not isinstance(value, uuid.UUID):
-                value = uuid.UUID(value)
-            return value
+            return uuid.UUID(value)
 
 
 class ProjectModel(Base):
@@ -66,21 +81,27 @@ class ProjectModel(Base):
 
     __tablename__ = "projects"
 
-    id = Column(GUID, primary_key=True, default=uuid.uuid4)
-    name = Column(String, unique=True, nullable=False, index=True)
-    description = Column(Text)
-    project_root = Column(String)  # Absolute path to project root (where .git is)
-    plan_directory = Column(String, default=".plans")  # Relative path within project
-    auto_gitignore = Column(Boolean, default=True)  # Auto-update .gitignore
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    # Absolute path to project root (where .git is)
+    project_root: Mapped[str | None] = mapped_column(String)
+    # Relative path within project (nullable=True preserves the pre-2.0 column DDL;
+    # the Python-side default always populates it for ORM-created rows)
+    plan_directory: Mapped[str] = mapped_column(String, default=".plans", nullable=True)
+    # Auto-update .gitignore
+    auto_gitignore: Mapped[bool] = mapped_column(Boolean, default=True, nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
     # Relationships
-    plan_files = relationship(
+    plan_files: Mapped[list["PlanFileModel"]] = relationship(
         "PlanFileModel", back_populates="project", cascade="all, delete-orphan"
     )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Project(id={self.id}, name='{self.name}')>"
 
 
@@ -89,22 +110,28 @@ class PlanFileModel(Base):
 
     __tablename__ = "plan_files"
 
-    id = Column(GUID, primary_key=True, default=uuid.uuid4)
-    project_id = Column(GUID, ForeignKey("projects.id"), nullable=False, index=True)
-    name = Column(String, nullable=False)  # Plan name (without .md extension)
-    description = Column(Text)
-    current_version = Column(Integer, default=1)
-    auto_version = Column(Boolean, default=True)  # Auto-increment version on update
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        GUID, ForeignKey("projects.id"), nullable=False, index=True
+    )
+    # Plan name (without .md extension)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    current_version: Mapped[int] = mapped_column(Integer, default=1, nullable=True)
+    # Auto-increment version on update
+    auto_version: Mapped[bool] = mapped_column(Boolean, default=True, nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
     # Relationships
-    project = relationship("ProjectModel", back_populates="plan_files")
-    versions = relationship(
+    project: Mapped["ProjectModel"] = relationship("ProjectModel", back_populates="plan_files")
+    versions: Mapped[list["VersionModel"]] = relationship(
         "VersionModel", back_populates="plan_file", cascade="all, delete-orphan"
     )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<PlanFile(id={self.id}, name='{self.name}', version={self.current_version})>"
 
 
@@ -113,19 +140,25 @@ class VersionModel(Base):
 
     __tablename__ = "versions"
 
-    id = Column(GUID, primary_key=True, default=uuid.uuid4)
-    plan_file_id = Column(GUID, ForeignKey("plan_files.id"), nullable=False, index=True)
-    version = Column(Integer, nullable=False)
-    file_path = Column(String, nullable=False)  # Absolute path to the markdown file
-    content_hash = Column(String)  # SHA256 hash for change detection
-    created_by = Column(String, default="user")  # 'user', 'claude', 'codex', etc.
-    created_at = Column(DateTime, default=datetime.utcnow)
-    notes = Column(Text)  # Version notes/changelog
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    plan_file_id: Mapped[uuid.UUID] = mapped_column(
+        GUID, ForeignKey("plan_files.id"), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Absolute path to the markdown file
+    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    # SHA256 hash for change detection
+    content_hash: Mapped[str | None] = mapped_column(String)
+    # 'user', 'claude', 'codex', etc.
+    created_by: Mapped[str] = mapped_column(String, default="user", nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    # Version notes/changelog
+    notes: Mapped[str | None] = mapped_column(Text)
 
     # Relationships
-    plan_file = relationship("PlanFileModel", back_populates="versions")
+    plan_file: Mapped["PlanFileModel"] = relationship("PlanFileModel", back_populates="versions")
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Version(id={self.id}, version={self.version}, created_by='{self.created_by}')>"
 
 
@@ -134,17 +167,25 @@ class JiraConfigModel(Base):
 
     __tablename__ = "jira_config"
 
-    id = Column(GUID, primary_key=True, default=uuid.uuid4)
-    project_id = Column(GUID, ForeignKey("projects.id"), unique=True, nullable=False, index=True)
-    jira_url = Column(String, nullable=False)  # Base URL (e.g., https://company.atlassian.net)
-    jira_project_key = Column(String)  # Default JIRA project key (e.g., PROJ)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        GUID, ForeignKey("projects.id"), unique=True, nullable=False, index=True
+    )
+    # Base URL (e.g., https://company.atlassian.net)
+    jira_url: Mapped[str] = mapped_column(String, nullable=False)
+    # Default JIRA project key (e.g., PROJ)
+    jira_project_key: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
     # Relationships
-    project = relationship("ProjectModel", backref="jira_config", uselist=False)
+    project: Mapped["ProjectModel"] = relationship(
+        "ProjectModel", backref="jira_config", uselist=False
+    )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"<JiraConfig(id={self.id}, project_id={self.project_id}, jira_url='{self.jira_url}')>"
         )
@@ -155,18 +196,24 @@ class JiraLinkModel(Base):
 
     __tablename__ = "jira_links"
 
-    id = Column(GUID, primary_key=True, default=uuid.uuid4)
-    plan_file_id = Column(GUID, ForeignKey("plan_files.id"), nullable=False, index=True)
-    jira_issue_key = Column(String, nullable=False)  # e.g., PROJ-123
-    jira_issue_type = Column(String)  # Epic, Story, Task, Sub-task, etc.
-    notes = Column(Text)  # User notes about the link
-    created_at = Column(DateTime, default=datetime.utcnow)
-    created_by = Column(String, default="user")  # Who created the link
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    plan_file_id: Mapped[uuid.UUID] = mapped_column(
+        GUID, ForeignKey("plan_files.id"), nullable=False, index=True
+    )
+    # e.g., PROJ-123
+    jira_issue_key: Mapped[str] = mapped_column(String, nullable=False)
+    # Epic, Story, Task, Sub-task, etc.
+    jira_issue_type: Mapped[str | None] = mapped_column(String)
+    # User notes about the link
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    # Who created the link
+    created_by: Mapped[str] = mapped_column(String, default="user", nullable=True)
 
     # Relationships
-    plan_file = relationship("PlanFileModel", backref="jira_links")
+    plan_file: Mapped["PlanFileModel"] = relationship("PlanFileModel", backref="jira_links")
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"<JiraLink(id={self.id}, plan_file_id={self.plan_file_id}, "
             f"issue_key='{self.jira_issue_key}')>"
@@ -174,8 +221,8 @@ class JiraLinkModel(Base):
 
 
 # Database session management
-_engine = None
-_SessionLocal = None
+_engine: Engine | None = None
+_SessionLocal: sessionmaker[Session] | None = None
 
 
 def init_database(db_path: str | None = None) -> None:
@@ -208,6 +255,19 @@ def init_database(db_path: str | None = None) -> None:
 
     # Create tables
     Base.metadata.create_all(_engine)
+
+    # Stamp/verify schema version (0 means pre-versioning or fresh file)
+    with _engine.connect() as conn:
+        found = conn.exec_driver_sql("PRAGMA user_version").scalar() or 0
+        if found > SCHEMA_VERSION:
+            raise DatabaseError(
+                f"Database schema v{found} is newer than this flanner supports "
+                f"(v{SCHEMA_VERSION}). Upgrade flanner."
+            )
+        if found < SCHEMA_VERSION:
+            # v0 -> v1: first stamped release, tables created by create_all above
+            conn.exec_driver_sql(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            conn.commit()
 
     # Create session factory
     _SessionLocal = sessionmaker(bind=_engine, autocommit=False, autoflush=False)
@@ -759,7 +819,7 @@ def delete_all_jira_links(session: Session, plan_file_id: uuid.UUID) -> int:
     return count
 
 
-def list_all_jira_links(session: Session, project_id: uuid.UUID) -> list[dict]:
+def list_all_jira_links(session: Session, project_id: uuid.UUID) -> list[dict[str, Any]]:
     """
     List all JIRA links for all plan files in a project.
 
@@ -773,7 +833,7 @@ def list_all_jira_links(session: Session, project_id: uuid.UUID) -> list[dict]:
     # Get all plan files for the project
     plan_files = session.query(PlanFileModel).filter_by(project_id=project_id).all()
 
-    results = []
+    results: list[dict[str, Any]] = []
     for plan_file in plan_files:
         links = session.query(JiraLinkModel).filter_by(plan_file_id=plan_file.id).all()
         for link in links:

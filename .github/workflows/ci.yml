@@ -10,11 +10,39 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
-      - run: pytest -v
+      - name: Lint
+        run: |
+          ruff check flanner/ tests/ benchmarks/
+          ruff format --check flanner/ tests/ benchmarks/
+      - name: Type check
+        run: mypy --strict flanner/
+      - name: Tests with coverage gate
+        run: pytest --cov=flanner --cov-fail-under=80 -q
+      - name: Audit dependencies
+        run: pip-audit --skip-editable
+        continue-on-error: false
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build
+      - name: Install from wheel in clean venv and smoke test
+        run: |
+          python -m venv smoke
+          smoke/bin/pip install dist/*.whl
+          smoke/bin/flanner --version
+          smoke/bin/python -c "import flanner.server, flanner.web, flanner.cli"

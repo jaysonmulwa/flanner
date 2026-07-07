@@ -66,7 +66,7 @@ def read_claude_config() -> dict[str, Any]:
 
     try:
         with open(config_path, encoding="utf-8") as f:
-            config = json.load(f)
+            config: dict[str, Any] = json.load(f)
 
         # Ensure mcpServers key exists
         if "mcpServers" not in config:
@@ -174,7 +174,8 @@ def get_server_config_from_claude(server_name: str = "flanner") -> dict[str, Any
         Server configuration or None if not found
     """
     config = read_claude_config()
-    return config.get("mcpServers", {}).get(server_name)
+    server_config: dict[str, Any] | None = config.get("mcpServers", {}).get(server_name)
+    return server_config
 
 
 def register_mcp_server(
@@ -368,7 +369,7 @@ def check_server_status() -> dict[str, Any]:
     return status
 
 
-def print_registration_instructions():
+def print_registration_instructions() -> None:
     """
     Print manual registration instructions for Claude Code.
     """

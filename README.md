@@ -62,15 +62,15 @@ flanner init
 - Detects your git repository root
 - Creates a `.plans/` directory
 - Updates your `.gitignore` to exclude plan files
-- Initializes the database at `~/.flanners/data.db`
+- Initializes the database at `~/.flanner/data.db`
 - **Automatically registers MCP server with Claude Code**
 - **Skips project creation if one already exists for this directory**
 - Prompts you to create a project (only if needed)
 
 **Example output:**
 ```
-✓ Initialized MCP Plan Manager at C:\Users\YourName\.flanners
-✓ Database created at C:\Users\YourName\.flanners\data.db
+✓ Initialized MCP Plan Manager at C:\Users\YourName\.flanner
+✓ Database created at C:\Users\YourName\.flanner\data.db
 ✓ Detected git repository at: C:\Users\YourName\mcp_examples\flanner
 Enter project name [flanner]: my-project
 ✓ Created project: my-project
@@ -89,24 +89,21 @@ flanner status
 Should show:
 ```
 ============================================================
-MCP PLAN MANAGER STATUS
+FLANNER STATUS
 ============================================================
 
 Server Status: Stopped
-Database: C:\Users\YourName\.flanners\data.db
+Database: C:\Users\YourName\.flanner\data.db
 Projects: 1
 Total Plan Files: 0
 ```
 
-### 5. Test Creating a Plan File
-
-You can test the MCP server directly:
+### 5. Run the Test Suite (optional)
 
 ```bash
-python test_server.py
+pip install -e ".[dev]"
+pytest
 ```
-
-This will create a test plan file and verify UUIDs are working correctly.
 
 ### 6. Configure Claude Code (Automatic)
 
@@ -320,7 +317,6 @@ flanner/
 │   ├── cli.py              # CLI tool
 │   ├── web.py              # Web server
 │   ├── database.py         # Database operations
-│   ├── models.py           # Pydantic models
 │   ├── storage.py          # File operations
 │   ├── git_integration.py  # Git operations
 │   ├── frontmatter.py      # Frontmatter handling
@@ -330,6 +326,19 @@ flanner/
 ├── docs/                   # Guides (installation, Jira, versioning, web UI)
 └── pyproject.toml          # Packaging and dependencies
 ```
+
+## Architecture
+
+Layering is enforced by `tests/test_architecture.py`:
+
+- **foundation** (`exceptions`, `utils`, `frontmatter`, `git_integration`, `jira_utils`) imports nothing else from the package
+- **data** (`database`, `storage`) sits on the foundation only
+- **composition roots** (`server` for MCP, `web`, `cli`) wire everything together and never import each other (except `cli`, which launches both)
+
+Design decisions are recorded in [docs/adr/](docs/adr/).
+
+**Security note:** the web UI has no authentication and binds `127.0.0.1` by
+default. Do not expose it beyond localhost.
 
 ## Development
 
@@ -352,8 +361,8 @@ Windows 11, Python 3.12, SQLite on NVMe:
 ### Database Location
 
 The database is stored at:
-- **Windows**: `C:\Users\YourName\.flanners\data.db`
-- **Linux/Mac**: `~/.flanners/data.db`
+- **Windows**: `C:\Users\YourName\.flanner\data.db`
+- **Linux/Mac**: `~/.flanner/data.db`
 
 ### Plan Files Location
 

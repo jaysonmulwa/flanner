@@ -1,0 +1,359 @@
+"""MCP server tool tests: direct function calls, success and error dicts."""
+
+import os
+
+import pytest
+
+import flanner.database as fdb
+from flanner.database import create_plan_file as db_create_plan_file
+from flanner.database import create_project, create_version, get_session
+from flanner.server import (
+    configure_jira_tool,
+    configure_project_tool,
+    create_plan_file_tool,
+    create_project_tool,
+    delete_project_tool,
+    ensure_database,
+    get_jira_config_tool,
+    get_jira_links_tool,
+    get_plan_config,
+    get_plan_file_tool,
+    get_plan_history_tool,
+    link_plan_to_jira_tool,
+    list_jira_links_tool,
+    list_plan_files_tool,
+    unlink_jira_issue_tool,
+)
+
+BAD_UUID = "not-a-uuid"
+MISSING_UUID = "00000000-0000-0000-0000-000000000000"
+JIRA_URL = "https://x.atlassian.net"
+
+
+@pytest.fixture
+def project(db, git_repo):
+    """A project backed by a real git repo. Returns the tool result dict."""
+    result = create_project_tool(name="proj", project_root=str(git_repo))
+    assert not result.get("error"), result.get("message")
+    return result
+
+
+@pytest.fixture
+def plan(project):
+    """A v1 plan file in the project."""
+    result = create_plan_file_tool(project_id=project["id"], name="myplan", content="# Plan v1\n")
+    assert not result.get("error"), result.get("message")
+    return result
+
+
+# --- config ---
+
+
+def test_get_plan_config_with_project(project):
+    config = get_plan_config(project["id"])
+    assert config["project_root"] == project["project_root"]
+    assert config["naming_convention"] == "{plan_name}_v{version}.md"
+
+
+def test_get_plan_config_invalid_uuid(db):
+    assert get_plan_config(BAD_UUID)["error"] is True
+
+
+def test_get_plan_config_missing_project_returns_defaults(db):
+    config = get_plan_config(MISSING_UUID)
+    assert config["plan_directory"] == ".plans"
+
+
+# --- project management ---
+
+
+def test_create_project_not_a_git_repo(db, tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    result = create_project_tool(name="x", project_root=str(plain))
+    assert result["error"] is True
+    assert "not a valid git repository" in result["message"]
+
+
+def test_create_project_duplicate_name(project, git_repo):
+    result = create_project_tool(name="proj", project_root=str(git_repo))
+    assert result["error"] is True
+    assert "already exists" in result["message"]
+
+
+def test_create_project_no_root_no_git(db, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = create_project_tool(name="x")
+    assert result["error"] is True
+    assert "Could not find git repository" in result["message"]
+
+
+def test_configure_project(project, git_repo):
+    result = configure_project_tool(
+        project_id=project["id"],
+        plan_directory="docs/plans",
+        description="new desc",
+        auto_gitignore=True,
+    )
+    assert not result.get("error"), result.get("message")
+    assert result["plan_directory"] == "docs/plans"
+    assert result["description"] == "new desc"
+    # gitignore was rewritten for the new directory
+    gitignore = (git_repo / ".gitignore").read_text()
+    assert "docs/plans/" in gitignore
+
+
+def test_configure_project_errors(db):
+    assert configure_project_tool(project_id=BAD_UUID)["error"] is True
+    assert configure_project_tool(project_id=MISSING_UUID)["error"] is True
+
+
+def test_delete_project(plan, project):
+    result = delete_project_tool(project["id"])
+    assert result["success"] is True
+    assert result["plan_files_deleted"] == 1
+    assert "NOT deleted" in result["message"]
+
+
+def test_delete_project_errors(db):
+    assert delete_project_tool(BAD_UUID)["error"] is True
+    assert delete_project_tool(MISSING_UUID)["error"] is True
+
+
+# --- plan files ---
+
+
+def test_list_plan_files_invalid_uuid(db):
+    result = list_plan_files_tool(BAD_UUID)
+    assert result[0]["error"] is True
+
+
+def test_create_plan_file_errors(db, project):
+    assert create_plan_file_tool(project_id=BAD_UUID, name="p", content="c")["error"] is True
+    assert create_plan_file_tool(project_id=MISSING_UUID, name="p", content="c")["error"] is True
+
+    # Duplicate plan name in same project
+    assert not create_plan_file_tool(project_id=project["id"], name="p", content="c").get("error")
+    dup = create_plan_file_tool(project_id=project["id"], name="p", content="c")
+    assert dup["error"] is True
+
+
+def test_create_plan_file_no_project_root(db):
+    session = get_session()
+    rootless = create_project(session, name="rootless")
+    result = create_plan_file_tool(project_id=str(rootless.id), name="p", content="c")
+    assert result["error"] is True
+    assert "no project_root" in result["message"]
+
+
+def test_update_plan_file_new_version(plan):
+    from flanner.server import update_plan_file_tool
+
+    result = update_plan_file_tool(plan["id"], "# Plan v2\n", notes="second")
+    assert result["version"] == 2
+    assert os.path.exists(result["file_path"])
+    assert result["file_path"].replace("\\", "/").endswith("myplan_v2.md")
+
+
+def test_update_plan_file_no_changes(plan):
+    from flanner.server import update_plan_file_tool
+
+    result = update_plan_file_tool(plan["id"], "# Plan v1\n")
+    assert "No changes detected" in result["message"]
+    assert result["version"] == 1
+
+
+def test_update_plan_file_auto_version_off_returns_none(db, project, git_repo):
+    from flanner.server import update_plan_file_tool
+
+    session = get_session()
+    projects = fdb.list_projects(session)
+    pf = db_create_plan_file(session, projects[0].id, "manual", auto_version=False)
+    create_version(session, pf.id, 1, str(git_repo / ".plans" / "manual_v1.md"), "hash1")
+
+    result = update_plan_file_tool(str(pf.id), "different content")
+    assert result is None
+
+
+def test_update_plan_file_errors(db, project):
+    from flanner.server import update_plan_file_tool
+
+    assert update_plan_file_tool(BAD_UUID, "c")["error"] is True
+    assert update_plan_file_tool(MISSING_UUID, "c")["error"] is True
+
+    # Plan exists but has no versions
+    session = get_session()
+    projects = fdb.list_projects(session)
+    pf = db_create_plan_file(session, projects[0].id, "empty")
+    result = update_plan_file_tool(str(pf.id), "c")
+    assert result["error"] is True
+    assert "No versions" in result["message"]
+
+
+def test_update_plan_file_no_project_root(db, git_repo):
+    from flanner.server import update_plan_file_tool
+
+    session = get_session()
+    rootless = create_project(session, name="rootless2")
+    pf = db_create_plan_file(session, rootless.id, "p")
+    create_version(session, pf.id, 1, str(git_repo / "x.md"), "hash1")
+    result = update_plan_file_tool(str(pf.id), "new content")
+    assert result["error"] is True
+    assert "no project_root" in result["message"]
+
+
+def test_get_plan_file_latest_and_specific(plan):
+    from flanner.server import update_plan_file_tool
+
+    update_plan_file_tool(plan["id"], "# Plan v2\n")
+
+    latest = get_plan_file_tool(plan["id"])
+    assert latest["version"]["version"] == 2
+    assert "# Plan v2" in latest["content"]
+    assert latest["frontmatter"]["mcp_plan_file"] is True
+
+    v1 = get_plan_file_tool(plan["id"], version=1)
+    assert v1["version"]["version"] == 1
+    assert "# Plan v1" in v1["content"]
+
+
+def test_get_plan_file_errors(db, plan):
+    assert get_plan_file_tool(BAD_UUID)["error"] is True
+    assert get_plan_file_tool(MISSING_UUID)["error"] is True
+    assert get_plan_file_tool(plan["id"], version=99)["error"] is True
+
+    # Version record exists but file removed from disk
+    os.remove(plan["file_path"])
+    result = get_plan_file_tool(plan["id"])
+    assert result["error"] is True
+    assert "File not found" in result["message"]
+
+
+def test_get_plan_history(plan):
+    from flanner.server import update_plan_file_tool
+
+    update_plan_file_tool(plan["id"], "# Plan v2\n")
+    result = get_plan_history_tool(plan["id"])
+    assert result["total_versions"] == 2
+    assert [v["version"] for v in result["versions"]] == [2, 1]
+
+
+def test_get_plan_history_errors(db):
+    assert get_plan_history_tool(BAD_UUID)["error"] is True
+    assert get_plan_history_tool(MISSING_UUID)["error"] is True
+
+
+# --- jira tools ---
+
+
+def test_configure_jira(project):
+    result = configure_jira_tool(project["id"], JIRA_URL + "/", jira_project_key="PROJ")
+    assert not result.get("error"), result.get("message")
+    assert result["jira_url"] == JIRA_URL  # trailing slash normalized
+    assert result["jira_project_key"] == "PROJ"
+
+    # Reconfigure updates in place
+    result = configure_jira_tool(project["id"], "https://y.atlassian.net")
+    assert result["jira_url"] == "https://y.atlassian.net"
+
+
+def test_configure_jira_errors(db, project):
+    assert configure_jira_tool(project["id"], "not-a-url")["error"] is True
+    assert configure_jira_tool(BAD_UUID, JIRA_URL)["error"] is True
+    assert configure_jira_tool(MISSING_UUID, JIRA_URL)["error"] is True
+
+
+def test_link_plan_to_jira_without_config(plan):
+    result = link_plan_to_jira_tool(plan["id"], "proj-1", issue_type="Epic", notes="n")
+    assert not result.get("error"), result.get("message")
+    assert result["jira_issue_key"] == "PROJ-1"  # formatted to uppercase
+    assert result["jira_url"] is None  # no jira config yet
+
+
+def test_link_plan_to_jira_with_config_and_duplicate(project, plan):
+    configure_jira_tool(project["id"], JIRA_URL)
+    result = link_plan_to_jira_tool(plan["id"], "PROJ-2")
+    assert result["jira_url"] == f"{JIRA_URL}/browse/PROJ-2"
+
+    dup = link_plan_to_jira_tool(plan["id"], "PROJ-2")
+    assert dup["error"] is True
+    assert "already linked" in dup["message"]
+
+
+def test_link_plan_to_jira_errors(db, plan):
+    assert link_plan_to_jira_tool(plan["id"], "bad key")["error"] is True
+    assert link_plan_to_jira_tool(BAD_UUID, "PROJ-1")["error"] is True
+    assert link_plan_to_jira_tool(MISSING_UUID, "PROJ-1")["error"] is True
+
+
+def test_get_jira_links(project, plan):
+    configure_jira_tool(project["id"], JIRA_URL)
+    link_plan_to_jira_tool(plan["id"], "PROJ-1")
+    result = get_jira_links_tool(plan["id"])
+    assert result["total_links"] == 1
+    assert result["links"][0]["jira_url"] == f"{JIRA_URL}/browse/PROJ-1"
+
+
+def test_get_jira_links_errors(db):
+    assert get_jira_links_tool(BAD_UUID)["error"] is True
+    assert get_jira_links_tool(MISSING_UUID)["error"] is True
+
+
+def test_list_jira_links(project, plan):
+    configure_jira_tool(project["id"], JIRA_URL)
+    link_plan_to_jira_tool(plan["id"], "PROJ-1")
+    result = list_jira_links_tool(project["id"])
+    assert result["total_links"] == 1
+    assert result["links"][0]["plan_file_name"] == "myplan"
+    assert result["links"][0]["jira_url"] == f"{JIRA_URL}/browse/PROJ-1"
+
+
+def test_list_jira_links_errors(db):
+    assert list_jira_links_tool(BAD_UUID)["error"] is True
+    assert list_jira_links_tool(MISSING_UUID)["error"] is True
+
+
+def test_unlink_jira_issue_specific(plan):
+    link_plan_to_jira_tool(plan["id"], "PROJ-1")
+    missing = unlink_jira_issue_tool(plan["id"], "PROJ-9")
+    assert missing["error"] is True
+
+    result = unlink_jira_issue_tool(plan["id"], "PROJ-1")
+    assert result["success"] is True
+
+
+def test_unlink_jira_issue_all(plan):
+    link_plan_to_jira_tool(plan["id"], "PROJ-1")
+    link_plan_to_jira_tool(plan["id"], "PROJ-2")
+    result = unlink_jira_issue_tool(plan["id"])
+    assert result["success"] is True
+    assert result["count"] == 2
+
+
+def test_unlink_jira_issue_errors(db):
+    assert unlink_jira_issue_tool(BAD_UUID)["error"] is True
+    assert unlink_jira_issue_tool(MISSING_UUID)["error"] is True
+
+
+def test_get_jira_config_tool(project):
+    result = get_jira_config_tool(project["id"])
+    assert result["configured"] is False
+
+    configure_jira_tool(project["id"], JIRA_URL)
+    result = get_jira_config_tool(project["id"])
+    assert result["configured"] is True
+    assert result["jira_url"] == JIRA_URL
+
+
+def test_get_jira_config_tool_errors(db):
+    assert get_jira_config_tool(BAD_UUID)["error"] is True
+    assert get_jira_config_tool(MISSING_UUID)["error"] is True
+
+
+def test_ensure_database_initializes_when_missing(tmp_path, monkeypatch):
+    home = tmp_path / "fresh-home"
+    monkeypatch.setenv("FLANNER_HOME", str(home))
+    monkeypatch.delenv("FLANNER_DB_PATH", raising=False)
+    monkeypatch.setattr(fdb, "_SessionLocal", None)
+    ensure_database()
+    assert (home / "data.db").exists()

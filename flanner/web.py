@@ -7,11 +7,12 @@ Provides a browser-based UI for viewing and managing plan files.
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import markdown
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -54,7 +55,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 # Ensure database is initialized
-def ensure_db():
+def ensure_db() -> None:
     """Ensure database is initialized"""
     try:
         get_session()
@@ -64,7 +65,7 @@ def ensure_db():
 
 
 # Template filters
-def markdown_filter(text):
+def markdown_filter(text: str | None) -> str:
     """Convert markdown to HTML"""
     if not text:
         return ""
@@ -81,6 +82,7 @@ def markdown_filter(text):
 # Add custom filters to Jinja2
 templates.env.filters["markdown"] = markdown_filter
 templates.env.filters["relative_time"] = format_relative_time
+templates.env.filters["basename"] = lambda p: Path(p).name
 
 
 # =============================================================================
@@ -89,7 +91,7 @@ templates.env.filters["relative_time"] = format_relative_time
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
+async def dashboard(request: Request) -> HTMLResponse:
     """Dashboard - show all projects"""
     ensure_db()
     session = get_session()
@@ -101,7 +103,7 @@ async def dashboard(request: Request):
     total_plans = sum(len(p.plan_files) for p in projects)
 
     # Get recent activity (last updated plan files)
-    recent_activity = []
+    recent_activity: list[dict[str, Any]] = []
     for project in projects:
         for plan_file in project.plan_files:
             recent_activity.append(
@@ -128,7 +130,7 @@ async def dashboard(request: Request):
 
 
 @app.get("/projects", response_class=HTMLResponse)
-async def projects_list(request: Request):
+async def projects_list(request: Request) -> HTMLResponse:
     """List all projects"""
     ensure_db()
     session = get_session()
@@ -141,7 +143,7 @@ async def projects_list(request: Request):
 
 
 @app.get("/projects/new", response_class=HTMLResponse)
-async def new_project_form(request: Request):
+async def new_project_form(request: Request) -> HTMLResponse:
     """Show create project form"""
     return templates.TemplateResponse(request, "project_new.html", {"request": request})
 
@@ -151,9 +153,9 @@ async def create_project_post(
     request: Request,
     name: str = Form(...),
     description: str = Form(""),
-    project_root: str = Form(None),
+    project_root: str | None = Form(None),
     plan_directory: str = Form(".plans"),
-):
+) -> Response:
     """Create a new project"""
     ensure_db()
     session = get_session()
@@ -217,7 +219,7 @@ async def create_project_post(
 
 
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
-async def project_detail(request: Request, project_id: str):
+async def project_detail(request: Request, project_id: str) -> HTMLResponse:
     """Show project detail with all plan files"""
     ensure_db()
     session = get_session()
@@ -241,7 +243,7 @@ async def project_detail(request: Request, project_id: str):
 
 
 @app.post("/projects/{project_id}/delete")
-async def delete_project_post(project_id: str):
+async def delete_project_post(project_id: str) -> RedirectResponse:
     """Delete a project and all associated plan files"""
     ensure_db()
     session = get_session()
@@ -263,7 +265,7 @@ async def delete_project_post(project_id: str):
 
 
 @app.get("/projects/{project_id}/plans/new", response_class=HTMLResponse)
-async def new_plan_form(request: Request, project_id: str):
+async def new_plan_form(request: Request, project_id: str) -> HTMLResponse:
     """Show create plan file form"""
     ensure_db()
     session = get_session()
@@ -289,7 +291,7 @@ async def create_plan_post(
     name: str = Form(...),
     description: str = Form(""),
     content: str = Form(...),
-):
+) -> Response:
     """Create a new plan file"""
     ensure_db()
     session = get_session()
@@ -302,6 +304,10 @@ async def create_plan_post(
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.project_root:
+        # Previously crashed with TypeError (HTTP 500); surface the config problem instead
+        raise HTTPException(status_code=400, detail="Project has no project_root configured")
 
     # Create plan file in database
     try:
@@ -363,7 +369,9 @@ async def create_plan_post(
 
 
 @app.get("/plans/{plan_file_id}", response_class=HTMLResponse)
-async def plan_view(request: Request, plan_file_id: str, version: int | None = None):
+async def plan_view(
+    request: Request, plan_file_id: str, version: int | None = None
+) -> HTMLResponse:
     """View a plan file (specific version or latest)"""
     ensure_db()
     session = get_session()
@@ -414,7 +422,7 @@ async def plan_view(request: Request, plan_file_id: str, version: int | None = N
 
 
 @app.get("/plans/{plan_file_id}/edit", response_class=HTMLResponse)
-async def plan_edit(request: Request, plan_file_id: str):
+async def plan_edit(request: Request, plan_file_id: str) -> HTMLResponse:
     """Edit a plan file (creates new version)"""
     ensure_db()
     session = get_session()
@@ -458,7 +466,7 @@ async def plan_edit(request: Request, plan_file_id: str):
 @app.post("/plans/{plan_file_id}/edit")
 async def plan_update(
     request: Request, plan_file_id: str, content: str = Form(...), notes: str = Form("")
-):
+) -> RedirectResponse:
     """Update a plan file (creates new version)"""
     ensure_db()
     session = get_session()
@@ -474,9 +482,18 @@ async def plan_update(
 
     # Get project
     project = get_project(session, plan_file.project_id)
+    if not project:
+        # Previously crashed with AttributeError (HTTP 500); explicit 404 instead
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not project.project_root:
+        # Previously crashed with TypeError (HTTP 500); surface the config problem instead
+        raise HTTPException(status_code=400, detail="Project has no project_root configured")
 
     # Get latest version
     latest_version = get_version(session, plan_file_uuid)
+    if not latest_version:
+        # Previously crashed with AttributeError (HTTP 500); explicit 404 instead
+        raise HTTPException(status_code=404, detail="No versions found")
 
     # Check if content changed
     new_hash = hash_content(content)
@@ -532,7 +549,7 @@ async def plan_update(
 
 
 @app.get("/plans/{plan_file_id}/history", response_class=HTMLResponse)
-async def plan_history(request: Request, plan_file_id: str):
+async def plan_history(request: Request, plan_file_id: str) -> HTMLResponse:
     """View version history of a plan file"""
     ensure_db()
     session = get_session()
@@ -565,7 +582,7 @@ async def plan_history(request: Request, plan_file_id: str):
 
 
 @app.get("/api/projects")
-async def api_list_projects():
+async def api_list_projects() -> list[dict[str, Any]]:
     """API: List all projects"""
     ensure_db()
     session = get_session()
@@ -587,7 +604,7 @@ async def api_list_projects():
 
 
 @app.get("/api/projects/{project_id}/plans")
-async def api_list_plan_files(project_id: str):
+async def api_list_plan_files(project_id: str) -> list[dict[str, Any]]:
     """API: List plan files for a project"""
     ensure_db()
     session = get_session()
@@ -611,7 +628,7 @@ async def api_list_plan_files(project_id: str):
 
 
 @app.get("/api/plans/{plan_file_id}")
-async def api_get_plan(plan_file_id: str, version: int | None = None):
+async def api_get_plan(plan_file_id: str, version: int | None = None) -> dict[str, Any]:
     """API: Get plan file content"""
     ensure_db()
     session = get_session()
@@ -655,7 +672,7 @@ async def api_get_plan(plan_file_id: str, version: int | None = None):
 
 
 @app.delete("/api/projects/{project_id}")
-async def api_delete_project(project_id: str):
+async def api_delete_project(project_id: str) -> dict[str, Any]:
     """API: Delete a project"""
     ensure_db()
     session = get_session()
