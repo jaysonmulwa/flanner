@@ -59,8 +59,8 @@ def ensure_db():
     try:
         get_session()
     except DatabaseError:
-        db_path = os.path.expanduser("~/.flanner/data.db")
-        init_database(db_path)
+        # path resolution is env-aware in init_database
+        init_database()
 
 
 # Template filters

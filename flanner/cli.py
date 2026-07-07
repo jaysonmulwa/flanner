@@ -25,8 +25,8 @@ console = Console()
 
 
 def get_mcp_dir() -> Path:
-    """Get Flanner data directory"""
-    return Path.home() / ".flanner"
+    """Get Flanner data directory (override with FLANNER_HOME)"""
+    return Path(os.environ.get("FLANNER_HOME", Path.home() / ".flanner"))
 
 
 def get_pid_file() -> Path:
@@ -35,6 +35,7 @@ def get_pid_file() -> Path:
 
 
 @click.group()
+@click.version_option(package_name="flanner")
 @click.option("--verbose", is_flag=True, help="Show debug output")
 @click.option("--quiet", is_flag=True, help="Only show errors")
 def cli(verbose: bool, quiet: bool) -> None:
@@ -141,7 +142,11 @@ def init(project_root, plan_dir, skip_claude, force_new_project):
 
 
 @cli.command()
-@click.option("--port", default=8080, help="Web server port")
+@click.option(
+    "--port",
+    default=lambda: int(os.environ.get("FLANNER_WEB_PORT", "8080")),
+    help="Web server port (env: FLANNER_WEB_PORT)",
+)
 def start(port):
     """Start the MCP server"""
     pid_file = get_pid_file()
@@ -278,14 +283,22 @@ def status():
 
 @cli.command()
 @click.option("--project", default=None, help="Project name")
-def list(project):
+@click.option(
+    "--output",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+def list(project, output):
     """List all projects or plan files"""
+    import json as json_module
+
     mcp_dir = get_mcp_dir()
     db_path = mcp_dir / "data.db"
 
     if not db_path.exists():
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        return
+        raise SystemExit(1)
 
     init_database(str(db_path))
     session = get_session()
@@ -295,7 +308,7 @@ def list(project):
         proj = get_project_by_name(session, project)
         if not proj:
             console.print(f"ERROR Project '{project}' not found", style="red")
-            return
+            raise SystemExit(1)
 
         console.print(f"\nPlan files for project: {project}\n", style="cyan bold")
 
@@ -321,6 +334,23 @@ def list(project):
     else:
         # List all projects
         projects = db_list_projects(session)
+
+        if output == "json":
+            click.echo(
+                json_module.dumps(
+                    [
+                        {
+                            "id": str(p.id),
+                            "name": p.name,
+                            "plan_directory": p.plan_directory,
+                            "plan_files": len(p.plan_files),
+                            "created_at": p.created_at.isoformat() if p.created_at else None,
+                        }
+                        for p in projects
+                    ]
+                )
+            )
+            return
 
         if not projects:
             console.print("No projects yet. Run 'flanner init' to create one.", style="yellow")
@@ -360,7 +390,7 @@ def config(project_name, project_root, plan_dir, auto_gitignore):
 
     if not db_path.exists():
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        return
+        raise SystemExit(1)
 
     init_database(str(db_path))
     session = get_session()
@@ -369,7 +399,7 @@ def config(project_name, project_root, plan_dir, auto_gitignore):
     project = get_project_by_name(session, project_name)
     if not project:
         console.print(f"ERROR Project '{project_name}' not found", style="red")
-        return
+        raise SystemExit(1)
 
     # Use server tool to update
     from .server import configure_project_tool
@@ -400,7 +430,7 @@ def setup_gitignore(project_name):
 
     if not db_path.exists():
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        return
+        raise SystemExit(1)
 
     init_database(str(db_path))
     session = get_session()
@@ -409,11 +439,11 @@ def setup_gitignore(project_name):
     project = get_project_by_name(session, project_name)
     if not project:
         console.print(f"ERROR Project '{project_name}' not found", style="red")
-        return
+        raise SystemExit(1)
 
     if not project.project_root:
         console.print("ERROR Project has no project_root configured", style="red")
-        return
+        raise SystemExit(1)
 
     # Update .gitignore
     pattern = project.plan_directory.rstrip("/") + "/"
@@ -435,7 +465,7 @@ def delete(project_name, force):
 
     if not db_path.exists():
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        return
+        raise SystemExit(1)
 
     init_database(str(db_path))
     session = get_session()
@@ -444,7 +474,7 @@ def delete(project_name, force):
     project = get_project_by_name(session, project_name)
     if not project:
         console.print(f"ERROR Project '{project_name}' not found", style="red")
-        return
+        raise SystemExit(1)
 
     # Show project info
     console.print("\nProject to delete:", style="yellow")
@@ -474,7 +504,11 @@ def delete(project_name, force):
 
 
 @cli.command()
-@click.option("--port", default=8080, help="Web server port")
+@click.option(
+    "--port",
+    default=lambda: int(os.environ.get("FLANNER_WEB_PORT", "8080")),
+    help="Web server port (env: FLANNER_WEB_PORT)",
+)
 @click.option("--host", default="127.0.0.1", help="Web server host")
 @click.option("--open-browser", is_flag=True, help="Open browser automatically")
 def web(port, host, open_browser):
@@ -484,7 +518,7 @@ def web(port, host, open_browser):
 
     if not db_path.exists():
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        return
+        raise SystemExit(1)
 
     console.print("\n🚀 Starting Flanner Web Interface...\n", style="cyan bold")
     console.print(f"  Server:    http://{host}:{port}", style="green")
@@ -534,7 +568,7 @@ def register(force, server_type, url, api_key):
     # Validate cloud server parameters
     if server_type == "cloud" and not url:
         console.print("ERROR Cloud server requires --url parameter", style="red")
-        return
+        raise SystemExit(1)
 
     # Register server
     success, message = register_mcp_server(
@@ -611,6 +645,136 @@ def claude_info():
         print_registration_instructions()
 
 
+def _sync_file(session, proj, file_path, dry_run):
+    """Import one plan file into the database. Returns 'imported', 'skipped', or 'error'."""
+    from datetime import datetime
+    from uuid import UUID
+
+    from .database import PlanFileModel, VersionModel, get_plan_file, get_version
+    from .frontmatter import parse_frontmatter, validate_frontmatter
+    from .utils import hash_content
+
+    file_name = file_path.name
+    with open(file_path, encoding="utf-8") as f:
+        content = f.read()
+    fm_data, body = parse_frontmatter(content)
+
+    if not fm_data.get("mcp_plan_file"):
+        console.print(f"  SKIP {file_name} - Not an MCP plan file", style="yellow")
+        return "skipped"
+    if not validate_frontmatter(fm_data):
+        console.print(f"  ERROR {file_name} - Invalid frontmatter", style="red")
+        return "error"
+
+    plan_file_id = UUID(fm_data["plan_file_id"])
+    plan_name = fm_data["plan_name"]
+    version = fm_data["version"]
+    created_by = fm_data.get("created_by", "unknown")
+
+    existing = get_plan_file(session, plan_file_id)
+    if existing:
+        old_version = existing.current_version
+        if version <= old_version:
+            console.print(
+                f"  SKIP {file_name} - Version {version} already in database "
+                f"(current: v{old_version})",
+                style="white",
+            )
+            return "skipped"
+        if dry_run:
+            console.print(
+                f"  WOULD UPDATE {file_name} (plan: {plan_name}, v{old_version} -> v{version})",
+                style="green",
+            )
+            return "imported"
+        if get_version(session, plan_file_id, version):
+            console.print(f"  SKIP {file_name} - Version {version} already exists", style="white")
+            return "skipped"
+
+        session.add(
+            VersionModel(
+                plan_file_id=plan_file_id,
+                version=version,
+                file_path=str(file_path),
+                content_hash=hash_content(body),
+                created_by=created_by,
+                created_at=datetime.utcnow(),
+                notes=f"Imported version {version}",
+            )
+        )
+        existing.current_version = version
+        existing.updated_at = datetime.utcnow()
+        session.commit()
+        console.print(
+            f"  OK UPDATED {file_name} (plan: {plan_name}, v{old_version} -> v{version})",
+            style="green",
+        )
+        return "imported"
+
+    if dry_run:
+        console.print(
+            f"  WOULD IMPORT {file_name} (plan: {plan_name}, version: {version})", style="green"
+        )
+        return "imported"
+
+    # Create PlanFileModel directly (it has a specific UUID from frontmatter)
+    session.add(
+        PlanFileModel(
+            id=plan_file_id,
+            project_id=proj.id,
+            name=plan_name,
+            description=f"Imported from {file_name}",
+            current_version=version,
+            auto_version=True,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+    )
+    session.add(
+        VersionModel(
+            plan_file_id=plan_file_id,
+            version=version,
+            file_path=str(file_path),
+            content_hash=hash_content(body),
+            created_by=created_by,
+            created_at=datetime.utcnow(),
+            notes=f"Imported version {version}",
+        )
+    )
+    session.commit()
+    console.print(
+        f"  OK IMPORTED {file_name} (plan: {plan_name}, version: {version})", style="green"
+    )
+    return "imported"
+
+
+def _sync_project(session, proj, dry_run, totals):
+    """Sync every plan file in one project's plan directory."""
+    console.print(f"\nProject: {proj.name}", style="cyan bold")
+    console.print(f"Plan directory: {proj.project_root}/{proj.plan_directory}", style="white")
+
+    plan_dir = Path(proj.project_root) / proj.plan_directory
+    if not plan_dir.exists():
+        console.print("  Plan directory doesn't exist yet", style="yellow")
+        return
+
+    md_files = sorted(plan_dir.glob("*.md"))
+    if not md_files:
+        console.print("  No plan files found", style="yellow")
+        return
+
+    console.print(f"  Found {len(md_files)} file(s)\n", style="white")
+    for file_path in md_files:
+        totals["scanned"] += 1
+        try:
+            outcome = _sync_file(session, proj, file_path, dry_run)
+        except Exception as e:
+            session.rollback()
+            console.print(f"  ERROR {file_path.name} - {e}", style="red")
+            outcome = "error"
+        totals[outcome] += 1
+
+
 @cli.command()
 @click.option(
     "--project", default=None, help="Project name to sync (syncs all projects if not specified)"
@@ -620,14 +784,6 @@ def claude_info():
 )
 def sync(project, dry_run):
     """Scan .plans directory and import existing plan files into database"""
-    from datetime import datetime
-    from pathlib import Path
-    from uuid import UUID
-
-    from .database import PlanFileModel, VersionModel, get_plan_file
-    from .frontmatter import parse_frontmatter, validate_frontmatter
-    from .utils import hash_content
-
     console.print("\n" + "=" * 60, style="cyan")
     console.print("SYNC PLAN FILES", style="cyan bold")
     console.print("=" * 60 + "\n", style="cyan")
@@ -635,26 +791,21 @@ def sync(project, dry_run):
     if dry_run:
         console.print("[DRY RUN MODE - No changes will be made]\n", style="yellow")
 
-    # Initialize database and storage
     mcp_dir = get_mcp_dir()
     db_path = mcp_dir / "data.db"
-
     if not db_path.exists():
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        return
+        raise SystemExit(1)
 
     init_database(str(db_path))
     init_storage(str(mcp_dir))
     session = get_session()
 
-    # Get projects to sync
-    from .database import list_projects as db_list_projects
-
     if project:
         project_model = get_project_by_name(session, project)
         if not project_model:
             console.print(f"ERROR Project '{project}' not found", style="red")
-            return
+            raise SystemExit(1)
         projects = [project_model]
     else:
         projects = db_list_projects(session)
@@ -665,180 +816,20 @@ def sync(project, dry_run):
         )
         return
 
-    total_scanned = 0
-    total_imported = 0
-    total_skipped = 0
-    total_errors = 0
-
+    totals = {"scanned": 0, "imported": 0, "skipped": 0, "error": 0}
     for proj in projects:
-        console.print(f"\nProject: {proj.name}", style="cyan bold")
-        console.print(f"Plan directory: {proj.project_root}/{proj.plan_directory}", style="white")
+        _sync_project(session, proj, dry_run, totals)
 
-        # Get plan directory path
-        plan_dir = Path(proj.project_root) / proj.plan_directory
-
-        if not plan_dir.exists():
-            console.print("  Plan directory doesn't exist yet", style="yellow")
-            continue
-
-        # Scan for .md files
-        md_files = [f for f in plan_dir.glob("*.md")]
-
-        if not md_files:
-            console.print("  No plan files found", style="yellow")
-            continue
-
-        console.print(f"  Found {len(md_files)} file(s)\n", style="white")
-
-        for file_path in md_files:
-            total_scanned += 1
-            file_name = file_path.name
-
-            try:
-                # Read file content
-                with open(file_path, encoding="utf-8") as f:
-                    content = f.read()
-
-                # Parse frontmatter
-                fm_data, body = parse_frontmatter(content)
-
-                if not fm_data.get("mcp_plan_file"):
-                    console.print(f"  SKIP {file_name} - Not an MCP plan file", style="yellow")
-                    total_skipped += 1
-                    continue
-
-                # Validate frontmatter
-                if not validate_frontmatter(fm_data):
-                    console.print(f"  ERROR {file_name} - Invalid frontmatter", style="red")
-                    total_errors += 1
-                    continue
-
-                # Extract metadata
-                plan_file_id = UUID(fm_data["plan_file_id"])
-                plan_name = fm_data["plan_name"]
-                version = fm_data["version"]
-                created_by = fm_data.get("created_by", "unknown")
-
-                # Check if plan file exists in database
-                existing_plan_file = get_plan_file(session, plan_file_id)
-
-                if existing_plan_file:
-                    # Plan file exists - check if this is a new version
-                    if version <= existing_plan_file.current_version:
-                        console.print(
-                            f"  SKIP {file_name} - Version {version} already in database "
-                            f"(current: v{existing_plan_file.current_version})",
-                            style="white",
-                        )
-                        total_skipped += 1
-                        continue
-
-                    # This is a newer version - import it
-                    if dry_run:
-                        console.print(
-                            f"  WOULD UPDATE {file_name} (plan: {plan_name}, "
-                            f"v{existing_plan_file.current_version} -> v{version})",
-                            style="green",
-                        )
-                        total_imported += 1
-                    else:
-                        # Check if this specific version already exists
-                        from .database import get_version
-
-                        existing_version = get_version(session, plan_file_id, version)
-
-                        if existing_version:
-                            console.print(
-                                f"  SKIP {file_name} - Version {version} already exists",
-                                style="white",
-                            )
-                            total_skipped += 1
-                            continue
-
-                        # Create new version record
-                        content_hash = hash_content(body)
-                        version_record = VersionModel(
-                            plan_file_id=plan_file_id,
-                            version=version,
-                            file_path=str(file_path),
-                            content_hash=content_hash,
-                            created_by=created_by,
-                            created_at=datetime.utcnow(),
-                            notes=f"Imported version {version}",
-                        )
-                        session.add(version_record)
-
-                        # Update plan file's current_version
-                        existing_plan_file.current_version = version
-                        existing_plan_file.updated_at = datetime.utcnow()
-
-                        session.commit()
-
-                        console.print(
-                            f"  OK UPDATED {file_name} (plan: {plan_name}, "
-                            f"v{existing_plan_file.current_version} -> v{version})",
-                            style="green",
-                        )
-                        total_imported += 1
-                else:
-                    # New plan file - import it
-                    if dry_run:
-                        console.print(
-                            f"  WOULD IMPORT {file_name} (plan: {plan_name}, version: {version})",
-                            style="green",
-                        )
-                        total_imported += 1
-                    else:
-                        # Create PlanFileModel directly
-                        # (it has a specific UUID from frontmatter)
-                        plan_file = PlanFileModel(
-                            id=plan_file_id,
-                            project_id=proj.id,
-                            name=plan_name,
-                            description=f"Imported from {file_name}",
-                            current_version=version,
-                            auto_version=True,
-                            created_at=datetime.utcnow(),
-                            updated_at=datetime.utcnow(),
-                        )
-                        session.add(plan_file)
-
-                        # Create version record
-                        content_hash = hash_content(body)
-                        version_record = VersionModel(
-                            plan_file_id=plan_file_id,
-                            version=version,
-                            file_path=str(file_path),
-                            content_hash=content_hash,
-                            created_by=created_by,
-                            created_at=datetime.utcnow(),
-                            notes=f"Imported version {version}",
-                        )
-                        session.add(version_record)
-
-                        session.commit()
-
-                        console.print(
-                            f"  OK IMPORTED {file_name} (plan: {plan_name}, version: {version})",
-                            style="green",
-                        )
-                        total_imported += 1
-
-            except Exception as e:
-                console.print(f"  ERROR {file_name} - {str(e)}", style="red")
-                total_errors += 1
-
-    # Summary
     console.print("\n" + "=" * 60, style="cyan")
     console.print("SYNC SUMMARY", style="cyan bold")
     console.print("=" * 60, style="cyan")
-    console.print(f"Files scanned: {total_scanned}", style="white")
-    console.print(f"Files imported: {total_imported}", style="green")
-    console.print(f"Files skipped: {total_skipped}", style="yellow")
-    console.print(f"Errors: {total_errors}", style="red")
+    console.print(f"Files scanned: {totals['scanned']}", style="white")
+    console.print(f"Files imported: {totals['imported']}", style="green")
+    console.print(f"Files skipped: {totals['skipped']}", style="yellow")
+    console.print(f"Errors: {totals['error']}", style="red")
     console.print()
 
-    if dry_run and total_imported > 0:
+    if dry_run and totals["imported"] > 0:
         console.print("Run without --dry-run to actually import the files", style="cyan")
 
 
@@ -862,7 +853,7 @@ def jira_config(project_name, url, project_key):
 
     if not db_path.exists():
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        return
+        raise SystemExit(1)
 
     # Validate JIRA URL
     if not is_valid_jira_url(url):
@@ -877,7 +868,7 @@ def jira_config(project_name, url, project_key):
     project = get_project_by_name(session, project_name)
     if not project:
         console.print(f"ERROR Project '{project_name}' not found", style="red")
-        return
+        raise SystemExit(1)
 
     # Create or update JIRA config
     try:
@@ -912,7 +903,7 @@ def jira_link(plan_name, issue, issue_type, notes, project):
 
     if not db_path.exists():
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        return
+        raise SystemExit(1)
 
     # Validate issue key
     formatted_issue = format_jira_issue_key(issue)
@@ -943,7 +934,7 @@ def jira_link(plan_name, issue, issue_type, notes, project):
         console.print(
             "ERROR Project not found. Specify --project or run from project directory", style="red"
         )
-        return
+        raise SystemExit(1)
 
     # Find plan file
     plan_file = None
@@ -999,7 +990,7 @@ def jira_unlink(plan_name, issue, unlink_all, project):
 
     if not db_path.exists():
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        return
+        raise SystemExit(1)
 
     init_database(str(db_path))
     session = get_session()
@@ -1018,7 +1009,7 @@ def jira_unlink(plan_name, issue, unlink_all, project):
 
     if not proj:
         console.print("ERROR Project not found", style="red")
-        return
+        raise SystemExit(1)
 
     # Find plan file
     plan_file = None
@@ -1029,7 +1020,7 @@ def jira_unlink(plan_name, issue, unlink_all, project):
 
     if not plan_file:
         console.print(f"ERROR Plan '{plan_name}' not found", style="red")
-        return
+        raise SystemExit(1)
 
     # Unlink
     try:
@@ -1064,7 +1055,7 @@ def jira_links(project):
 
     if not db_path.exists():
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        return
+        raise SystemExit(1)
 
     init_database(str(db_path))
     session = get_session()
@@ -1074,7 +1065,7 @@ def jira_links(project):
         proj = get_project_by_name(session, project)
         if not proj:
             console.print(f"ERROR Project '{project}' not found", style="red")
-            return
+            raise SystemExit(1)
         projects = [proj]
     else:
         projects = db_list_projects(session)
@@ -1127,7 +1118,7 @@ def jira_show(plan_name, project):
 
     if not db_path.exists():
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        return
+        raise SystemExit(1)
 
     init_database(str(db_path))
     session = get_session()
@@ -1146,7 +1137,7 @@ def jira_show(plan_name, project):
 
     if not proj:
         console.print("ERROR Project not found", style="red")
-        return
+        raise SystemExit(1)
 
     # Find plan file
     plan_file = None
@@ -1157,7 +1148,7 @@ def jira_show(plan_name, project):
 
     if not plan_file:
         console.print(f"ERROR Plan '{plan_name}' not found", style="red")
-        return
+        raise SystemExit(1)
 
     # Get links
     links = get_jira_links(session, plan_file.id)

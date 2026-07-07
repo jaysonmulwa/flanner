@@ -44,12 +44,11 @@ mcp = FastMCP("flanner")
 # Initialize database (will be called when tools are used)
 def ensure_database():
     """Ensure database is initialized"""
-    db_path = os.path.expanduser("~/.flanner/data.db")
     try:
         get_session()  # Test if session exists
     except DatabaseError:
-        # Database not initialized, initialize it
-        init_database(db_path)
+        # Database not initialized; path resolution is env-aware in init_database
+        init_database()
 
 
 # Configuration Tools

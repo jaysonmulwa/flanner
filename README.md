@@ -338,6 +338,17 @@ pip install -e ".[dev]"
 pytest
 ```
 
+### Performance
+
+Reproduce with `python benchmarks/bench.py` (throwaway temp database). Measured on
+Windows 11, Python 3.12, SQLite on NVMe:
+
+| Operation | Median |
+|---|---|
+| `create_project` | ~36 ms |
+| `create_plan_file` (2.4 KB body) | ~40 ms (n=100) |
+| `list_plan_files` (100 plans) | ~5 ms (n=20) |
+
 ### Database Location
 
 The database is stored at:

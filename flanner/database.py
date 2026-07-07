@@ -13,6 +13,7 @@ from pathlib import Path
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, relationship, sessionmaker
 from sqlalchemy.types import CHAR, TypeDecorator
@@ -182,14 +183,16 @@ def init_database(db_path: str | None = None) -> None:
     Initialize the database and create tables.
 
     Args:
-        db_path: Path to SQLite database file. If None, uses default ~/.flanner/data.db
+        db_path: Path to SQLite database file. If None, uses FLANNER_DB_PATH,
+            then FLANNER_HOME/data.db, then ~/.flanner/data.db
     """
     global _engine, _SessionLocal
 
     if db_path is None:
-        # Default path
-        mcp_dir = Path.home() / ".flanner"
-        mcp_dir.mkdir(exist_ok=True)
+        db_path = os.environ.get("FLANNER_DB_PATH")
+    if db_path is None:
+        mcp_dir = Path(os.environ.get("FLANNER_HOME", Path.home() / ".flanner"))
+        mcp_dir.mkdir(parents=True, exist_ok=True)
         db_path = str(mcp_dir / "data.db")
     else:
         # Ensure parent directory exists
@@ -197,7 +200,11 @@ def init_database(db_path: str | None = None) -> None:
         db_dir.mkdir(parents=True, exist_ok=True)
 
     # Create engine
-    _engine = create_engine(f"sqlite:///{db_path}", echo=False)
+    # NullPool: server tools create short-lived sessions without closing them;
+    # a bounded QueuePool exhausts after ~15 rapid calls. Local SQLite connections
+    # are cheap, so open/close per session is the safer default.
+    # ponytail: revisit with a session_scope() contextmanager if perf matters
+    _engine = create_engine(f"sqlite:///{db_path}", echo=False, poolclass=NullPool)
 
     # Create tables
     Base.metadata.create_all(_engine)
