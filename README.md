@@ -344,8 +344,15 @@ default. Do not expose it beyond localhost.
 
 ```bash
 pip install -e ".[dev]"
-pytest
+pre-commit install   # ruff + mypy on every commit
+pytest               # CI gates: ruff, mypy --strict, coverage >= 80%, pip-audit
 ```
+
+### Releasing
+
+1. Move the `[Unreleased]` CHANGELOG entries under a new version heading
+2. Bump `version` in `pyproject.toml` and `flanner/__init__.py`
+3. `git tag vX.Y.Z && git push --tags` — CI must be green first
 
 ### Performance
 
