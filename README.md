@@ -17,190 +17,65 @@ Today Flanner is local-first; the goal is cloud-hosted plans: shared workspaces 
 <sub><code>--- flanner &middot; the plan file is the interface ----------------</code></sub>
 </div>
 
-## Installation
-
-```bash
-# Clone or download this repository
-cd flanner
-
-# Install (provides the 'flanner' command)
-pip install -e .
-
-flanner --help
-```
-
-Once installed and initialized (see Quick Start), run `flanner web --open-browser`
-to explore your plans in the browser dashboard.
-
 ## Features
 
-- 🤖 **MCP Integration**: Exposes plan file management tools to Claude/Codex
-- 📁 **Git Protection**: Automatically prevents plan files from being committed to git
-- 🔖 **Smart Identification**: YAML frontmatter clearly marks managed plan files
-- 📝 **Automatic Versioning**: Tracks changes with semantic versioning
-- 🌐 **Web Interface**: Browser-based UI for viewing and editing plans
-- ⚙️ **Configurable**: Customize plan directory per project
-- 🚀 **Future-Ready**: Architecture supports cloud deployment and Jira integration
+- **MCP integration**: exposes plan-file tools to Claude Code and Codex.
+- **Automatic headers and versioning**: every plan gets YAML frontmatter, and each revision is a new version with a full history.
+- **Git protection**: plans live in `.plans/` and are kept out of commits automatically.
+- **Agent integration**: `flanner init` wires CLAUDE.md, AGENTS.md, and a guard hook so agents save plans through flanner instead of scattering raw markdown.
+- **Reading view**: a browser dashboard to read, edit, and walk the history of plans (light and dark, fully offline).
+- **Per-project config**: customize the plan directory per repository.
 
-## Quick Start
+## Quick start
 
-### 1. Installation
-
-**Windows:**
 ```bash
 cd flanner
-python -m venv venv
-venv\Scripts\activate
-pip install -e .
+pip install -e .     # provides the `flanner` command
+flanner init         # database, MCP registration, and a project for this repo
 ```
 
-**Linux/Mac:**
-```bash
-cd flanner
-python -m venv venv
-source venv/bin/activate
-pip install -e .
-```
+Then ask your agent to work with plans:
 
-### 2. Initialize Git Repository (if not already done)
+> "Create an architecture plan for the auth service"
+>
+> "Show me the history of the architecture plan"
+
+And open the dashboard to browse them:
 
 ```bash
-# Make sure you're in a git repository
-git init
+flanner web --open-browser     # http://localhost:8080
 ```
 
-### 3. Initialize the Plan Manager
+`flanner init` is safe to re-run. It detects your git root, creates `.plans/`, updates `.gitignore`, registers the MCP server with Claude Code, and installs the agent integration.
+
+<details>
+<summary><b>CLI commands</b></summary>
 
 ```bash
-# Run from the flanner directory
-flanner init
+flanner init [--project-root PATH] [--plan-dir DIR]     # set up a project
+flanner status                                          # projects, plan files, db path
+flanner list [--project NAME] [--output json]           # list projects or a project's plans
+flanner sync [--project NAME] [--dry-run]               # import existing .plans/ files
+flanner config NAME [--plan-dir DIR] [...]              # change project settings
+flanner web [--port 8080] [--host 127.0.0.1] [--open-browser]
+flanner register [--force] / flanner unregister         # MCP registration with Claude Code
+flanner claude-info                                     # integration status
 ```
 
-**✨ New: Idempotent Init** - Safe to run multiple times! The init command:
-- Detects your git repository root
-- Creates a `.plans/` directory
-- Updates your `.gitignore` to exclude plan files
-- Initializes the database at `~/.flanner/data.db`
-- **Automatically registers MCP server with Claude Code**
-- **Skips project creation if one already exists for this directory**
-- Prompts you to create a project (only if needed)
+</details>
 
-**Example output:**
-```
-✓ Initialized MCP Plan Manager at C:\Users\YourName\.flanner
-✓ Database created at C:\Users\YourName\.flanner\data.db
-✓ Detected git repository at: C:\Users\YourName\mcp_examples\flanner
-Enter project name [flanner]: my-project
-✓ Created project: my-project
-✓ Plan directory: C:\Users\YourName\mcp_examples\flanner\.plans
-✓ Updated .gitignore to exclude plan files
-```
+<details>
+<summary><b>Plan file format</b></summary>
 
-### 4. Verify Installation
-
-Check that everything is working:
-
-```bash
-flanner status
-```
-
-Should show:
-```
-============================================================
-FLANNER STATUS
-============================================================
-
-Server Status: Stopped
-Database: C:\Users\YourName\.flanner\data.db
-Projects: 1
-Total Plan Files: 0
-```
-
-### 5. Run the Test Suite (optional)
-
-```bash
-pip install -e ".[dev]"
-pytest
-```
-
-### 6. Configure Claude Code (Automatic)
-
-**The MCP server is automatically registered with Claude Code during `flanner init`!**
-
-No manual configuration needed. The `init` command will:
-- ✅ Detect your Claude Code installation
-- ✅ Register the MCP server automatically
-- ✅ Configure the correct paths
-- ✅ Update your `claude_desktop_config.json`
-
-**Check registration status:**
-```bash
-flanner status
-```
-
-**View detailed integration info:**
-```bash
-flanner claude-info
-```
-
-**Manually register/update if needed:**
-```bash
-# Register MCP server (local)
-flanner register
-
-# Force update configuration
-flanner register --force
-
-# Register cloud server (future use)
-flanner register --type cloud --url https://your-server.com --api-key YOUR_KEY
-
-# Unregister
-flanner unregister
-```
-
-### 7. Start Using with Claude
-
-Restart Claude Code, then you can ask Claude to create and manage plan files:
-
-```
-User: "Claude, list all projects in the plan manager"
-User: "Claude, create a new architecture plan for our project"
-User: "Claude, show me the history of the architecture plan"
-```
-
-Claude will use the MCP tools to:
-- List projects with `list_projects()`
-- Create plan files with `create_plan_file_tool()`
-- Update plans with `update_plan_file_tool()`
-- View history with `get_plan_history_tool()`
-
-### 8. Explore Your Plans in the Web UI
-
-Finish by opening the browser dashboard to see everything you just set up:
-
-```bash
-flanner web --open-browser
-```
-
-Then visit http://localhost:8080 (if another app holds port 8080 - Docker
-Desktop commonly does - pick another one with `flanner web --port 8321`).
-You can browse projects, read plans with rendered markdown, edit them, and
-walk the version history.
-
-## Plan File Format
-
-All plan files managed by this system include YAML frontmatter:
+Every managed plan carries YAML frontmatter, generated by the tools and never hand-written:
 
 ```markdown
 ---
 mcp_plan_file: true
-plan_manager_version: '1.0'
 project_id: 3d816ecd-489a-4fa0-abe2-15ec93f60d5a
-project_name: my-app
 plan_file_id: 59c34f9c-8471-47fc-97f2-8dcfefa15434
 plan_name: architecture
 version: 2
-created_at: 2025-01-15T10:30:00Z
 created_by: claude
 ---
 
@@ -209,228 +84,53 @@ created_by: claude
 Your plan content here...
 ```
 
-**Note**: All IDs use UUIDs for global uniqueness and future cloud compatibility.
+</details>
 
-## CLI Commands
-
-```bash
-# Initialize plan manager (creates database and optionally a project)
-flanner init [--project-root PATH] [--plan-dir DIR]
-
-# Check server status (shows projects, plan files, database path)
-flanner status
-
-# List all projects
-flanner list
-
-# List plan files for a specific project
-flanner list --project PROJECT_NAME
-
-# Sync existing plan files from .plans/ into database
-flanner sync [--project PROJECT_NAME] [--dry-run]
-
-# Configure a project's settings
-flanner config PROJECT_NAME [--project-root PATH] [--plan-dir DIR] [--auto-gitignore BOOL]
-
-# Manually update .gitignore for a project
-flanner setup-gitignore PROJECT_NAME
-
-# Start MCP server (displays connection instructions)
-flanner start [--port 8080]
-
-# Stop server (not yet implemented - server runs via stdio)
-flanner stop
-
-# Launch web interface
-flanner web [--port 8080] [--host 127.0.0.1] [--open-browser]
-
-# Claude Code Integration Commands (NEW!)
-# Show Claude Code integration status and configuration
-flanner claude-info
-
-# Register MCP server with Claude Code (auto-registration happens during init)
-flanner register [--force] [--type local|cloud] [--url URL] [--api-key KEY]
-
-# Unregister MCP server from Claude Code
-flanner unregister
-```
-
-### Example Usage
-
-```bash
-# Check status
-flanner status
-
-# List all projects
-flanner list
-
-# View plan files for a project
-flanner list --project my-project
-
-# Sync existing plan files into database (dry run first)
-flanner sync --dry-run
-flanner sync
-
-# Sync only a specific project
-flanner sync --project my-project
-
-# Change plan directory for a project
-flanner config my-project --plan-dir docs/plans
-
-# Launch web interface on default port (8080)
-flanner web
-
-# Launch web interface and auto-open browser
-flanner web --open-browser
-
-# Launch on custom port
-flanner web --port 3000
-```
-
-## Web Interface
-
-### Features
-
-The web interface provides a comprehensive UI for managing plan files:
-
-- **Dashboard**: Overview of all projects with statistics and recent activity
-- **Project Management**: Create and view projects
-- **Plan File Viewer**: Beautiful markdown rendering with syntax highlighting
-- **Version Selector**: Switch between different versions of plan files
-- **Plan File Editor**: Edit plans with live markdown preview
-- **Version History**: Timeline view of all changes with metadata
-- **Responsive Design**: Works on desktop, tablet, and mobile
-
-### Launching the Web UI
-
-```bash
-# Start the web server
-flanner web
-
-# Or with auto-open browser
-flanner web --open-browser
-```
-
-Access at: `http://localhost:8080`
-
-### Web Interface Screenshots
+<details>
+<summary><b>Web interface</b></summary>
 
 ![flanner dashboard](docs/assets/dashboard.png)
 
-The web interface includes:
-- **Dashboard** (`/`): Project overview with stats
-- **Projects** (`/projects`): List and manage all projects
-- **Project Detail** (`/projects/{id}`): View project's plan files
-- **Plan Viewer** (`/plans/{id}`): View plan with markdown rendering
-- **Plan Editor** (`/plans/{id}/edit`): Edit and create new versions
-- **Version History** (`/plans/{id}/history`): Timeline of all versions
+A server-rendered dashboard, no build step, works offline:
 
-## How It Works
+- Dashboard (`/`): projects, stats, and recent activity
+- Project detail (`/projects/{id}`): a project's plans, paginated
+- Plan viewer (`/plans/{id}`): rendered markdown, version selector, frontmatter
+- Editor (`/plans/{id}/edit`) and version history (`/plans/{id}/history`)
 
-### For Developers
+The web UI binds `127.0.0.1` with no authentication. Do not expose it beyond localhost.
 
-- Plan files are stored in your project repository (default: `.plans/`)
-- Automatically excluded from git via `.gitignore`
-- Clear identification via frontmatter
-- Configurable directory per project
+</details>
 
-### For Claude/Codex
+<details>
+<summary><b>Where data lives</b></summary>
 
-- Calls `get_plan_config()` to know where to create files
-- Automatic frontmatter generation
-- Version management happens transparently
-- No need to ask users where files should go
+- Catalog (SQLite): `~/.flanner/data.db`, override with `FLANNER_HOME` or `FLANNER_DB_PATH`
+- Plan files: `.plans/` in your repo, git-ignored, named `name_v1.md`, `name_v2.md`, and so on
 
-## Project Structure
+</details>
 
-```
-flanner/
-├── flanner/
-│   ├── server.py           # MCP Server
-│   ├── cli.py              # CLI tool
-│   ├── web.py              # Web server
-│   ├── database.py         # Database operations
-│   ├── storage.py          # File operations
-│   ├── git_integration.py  # Git operations
-│   ├── frontmatter.py      # Frontmatter handling
-│   ├── utils.py            # Utilities
-│   └── web/                # Templates and static assets
-├── tests/                  # Pytest suite
-├── docs/                   # Guides (installation, Jira, versioning, web UI)
-└── pyproject.toml          # Packaging and dependencies
-```
-
-## Architecture
+<details>
+<summary><b>Architecture</b></summary>
 
 Layering is enforced by `tests/test_architecture.py`:
 
 - **foundation** (`exceptions`, `utils`, `frontmatter`, `git_integration`, `jira_utils`) imports nothing else from the package
 - **data** (`database`, `storage`) sits on the foundation only
-- **composition roots** (`server` for MCP, `web`, `cli`) wire everything together and never import each other (except `cli`, which launches both)
+- **composition roots** (`server` for MCP, `web`, `cli`) wire everything together and do not import each other (except `cli`, which launches both)
 
-Design decisions are recorded in [docs/adr/](docs/adr/).
+Decisions are recorded in [docs/adr/](docs/adr/), with more guides in [docs/](docs/).
 
-**Security note:** the web UI has no authentication and binds `127.0.0.1` by
-default. Do not expose it beyond localhost.
+</details>
 
-## Development
+## How it works
 
-```bash
-pip install -e ".[dev]"
-pre-commit install   # ruff + mypy on every commit
-pytest               # CI gates: ruff, mypy --strict, coverage >= 80%, pip-audit
-```
+An agent calls `get_plan_config` to learn where plans go, then `create_plan_file_tool` or `update_plan_file_tool` to write them. Flanner places the file in the project's plan directory, adds the header, and bumps the version. Files stay in `.plans/` (git-ignored), so they never land in a commit by accident.
 
-### Releasing
+## Contributing
 
-1. Move the `[Unreleased]` CHANGELOG entries under a new version heading
-2. Bump `version` in `pyproject.toml` and `flanner/__init__.py`
-3. `git tag vX.Y.Z && git push --tags` — CI must be green first
-
-### Performance
-
-Reproduce with `python benchmarks/bench.py` (throwaway temp database). Measured on
-Windows 11, Python 3.12, SQLite on NVMe:
-
-| Operation | Median |
-|---|---|
-| `create_project` | ~36 ms |
-| `create_plan_file` (2.4 KB body) | ~40 ms (n=100) |
-| `list_plan_files` (100 plans) | ~5 ms (n=20) |
-
-### Database Location
-
-The database is stored at:
-- **Windows**: `C:\Users\YourName\.flanner\data.db`
-- **Linux/Mac**: `~/.flanner/data.db`
-
-### Plan Files Location
-
-Plan files are stored in your project repository:
-```
-your-project/
-├── .git/
-├── .gitignore          # Auto-updated to exclude .plans/
-├── .plans/             # Your plan files (git-ignored)
-│   ├── architecture_v1.md
-│   ├── architecture_v2.md
-│   └── api-design_v1.md
-├── src/
-└── ...
-```
-
-## Future Enhancements
-
-- ☁️ Cloud deployment with PostgreSQL + S3
-- 🔗 Jira integration for ticket linking
-- 🔍 Full-text search for plan files
-- 👥 Multi-user collaboration
-- 🔄 Real-time updates
+Setup, the CI gates, benchmarks, and the release process are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
 MIT
-
-## Contributing
-
-Contributions welcome! See the guides in [docs/](docs/) for architecture and usage details.

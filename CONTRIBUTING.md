@@ -2,23 +2,33 @@
 
 ## Setup
 
+With [uv](https://docs.astral.sh/uv/) (recommended, cross-platform, one step):
+
 ```bash
 git clone https://github.com/jaysonmulwa/flanner.git
 cd flanner
-python -m venv venv && venv/Scripts/activate  # or source venv/bin/activate
+uv sync --extra dev        # creates .venv and installs everything from uv.lock
+uv run pre-commit install
+```
+
+Or with pip and a manual virtualenv:
+
+```bash
+python -m venv venv && source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -e ".[dev]"
 pre-commit install
 ```
 
 ## Before you open a PR
 
-All of these must pass; CI enforces them:
+All of these must pass; CI enforces them. With uv you can run them without
+activating anything (drop the `uv run` prefix if your venv is active):
 
 ```bash
-ruff check flanner/ tests/ benchmarks/
-ruff format --check flanner/ tests/ benchmarks/
-mypy --strict flanner/
-pytest --cov=flanner --cov-fail-under=80
+uv run ruff check flanner/ tests/ benchmarks/
+uv run ruff format --check flanner/ tests/ benchmarks/
+uv run mypy --strict flanner/
+uv run pytest --cov=flanner --cov-fail-under=80
 ```
 
 ## Ground rules
@@ -33,8 +43,31 @@ pytest --cov=flanner --cov-fail-under=80
 
 ## Running the app
 
+In an activated venv the `flanner` command is on your PATH:
+
 ```bash
 flanner init          # database + MCP registration + project
 flanner web           # browser UI at http://localhost:8080
 python -m flanner.server  # MCP server over stdio
 ```
+
+Without activating, use the module form (inside the repo, `uv run flanner` is
+shadowed by the `flanner/` source directory, so prefer `-m`):
+
+```bash
+uv run python -m flanner.cli init
+uv run python -m flanner.cli web
+uv run python -m flanner.server
+```
+
+## Benchmarks
+
+Reproduce with `python benchmarks/bench.py` (throwaway temp database). Reference
+numbers on Windows 11, Python 3.12, SQLite on NVMe: `create_project` ~36 ms,
+`create_plan_file` (2.4 KB body) ~40 ms, `list_plan_files` (100 plans) ~5 ms.
+
+## Releasing
+
+1. Move the `[Unreleased]` CHANGELOG entries under a new version heading.
+2. Bump `version` in `pyproject.toml` and `flanner/__init__.py`.
+3. Once CI is green, tag and push: `git tag vX.Y.Z && git push --tags`.
