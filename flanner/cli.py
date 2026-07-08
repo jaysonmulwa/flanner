@@ -151,6 +151,56 @@ def init(
             console.print(f"WARN Could not check for existing project: {e}", style="yellow")
             console.print("  Skipping project creation to be safe", style="yellow")
 
+        _setup_agent_integration(project_root)
+
+
+def _setup_agent_integration(project_root: str) -> None:
+    """Wire the CLAUDE.md block, guard-write hook, and skill for this repo."""
+    from .agent_hooks import (
+        AGENT_MD_FILES,
+        agent_md_block,
+        ensure_settings_hook,
+        install_skill,
+        upsert_agent_md,
+    )
+    from .database import get_project_by_root
+
+    try:
+        project = get_project_by_root(get_session(), project_root)
+        if not project:
+            return
+        console.print("\n[Agent] Setting up coding-agent integration...", style="cyan")
+        block = agent_md_block(project)
+        for filename in AGENT_MD_FILES:
+            if upsert_agent_md(project_root, filename, block):
+                console.print(f"OK Added flanner block to {filename}", style="green")
+        if ensure_settings_hook(project_root):
+            console.print("OK Installed guard-write hook in .claude/settings.json", style="green")
+        if install_skill(project_root):
+            console.print("OK Installed flanner-plan skill", style="green")
+    except Exception as e:
+        console.print(f"WARN Could not set up agent integration: {e}", style="yellow")
+
+
+@cli.group()
+def hook() -> None:
+    """Claude Code hook entry points (invoked by the harness, not by hand)."""
+
+
+@hook.command("guard-write")
+def guard_write() -> None:
+    """PreToolUse guard: deny raw Writes into a flanner-managed plan directory."""
+    from .agent_hooks import run_guard_write
+
+    raw = sys.stdin.read()
+    try:
+        init_database()  # fresh hook process has no session yet
+        output = run_guard_write(raw, get_session())
+    except Exception:
+        output = ""  # fail open: never block a write because the guard broke
+    if output:
+        click.echo(output)
+
 
 @cli.command()
 @click.option(

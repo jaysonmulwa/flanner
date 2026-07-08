@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Claude Code agent integration so plan files reliably land in the managed
+  directory with the standard header, without the user reminding Claude:
+  - `flanner hook guard-write`: a PreToolUse hook that denies raw Writes into
+    a project's plan directory and steers Claude to create_plan_file_tool
+    (fails open; the MCP tools write outside the Write tool so they are never
+    blocked)
+  - `flanner init` now writes a managed block into CLAUDE.md and AGENTS.md
+    (the cross-tool file Codex reads), merges the guard-write hook into
+    .claude/settings.json, and installs a flanner-plan skill
+
 ## [0.2.0] - 2026-07-08
 
 ### Added

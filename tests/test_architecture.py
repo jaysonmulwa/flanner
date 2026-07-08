@@ -19,7 +19,9 @@ ALLOWED = {
     "claude_integration": set(),
     "server": FOUNDATION | {"database", "storage"},
     "web": FOUNDATION | {"database", "storage"},
-    "cli": FOUNDATION | {"database", "storage", "server", "web", "claude_integration"},
+    "agent_hooks": FOUNDATION | {"database"},
+    "cli": FOUNDATION
+    | {"database", "storage", "server", "web", "claude_integration", "agent_hooks"},
     "__main__": {"cli"},
     "__init__": set(),
 }

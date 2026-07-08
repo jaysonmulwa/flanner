@@ -60,4 +60,4 @@ Thumbs.db
 # Local artifacts
 *.db
 log.txt
-.claude/
+.claude/settings.local.json
