@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [0.2.0] - 2026-07-08
+
+### Added
+- Web UI redesigned: drafting-paper light / blueprint-night dark mode
+  (prefers-color-scheme), monospace chrome around a serif reading column,
+  path breadcrumbs on every page, empty-state illustrations, fluid type
+  scale for wide displays; fully offline (CDN dependencies removed)
+- Footer credit linking to the author's GitHub
+- Pagination on the projects list and project detail pages (50 per page)
+- MCP: list_plan_files_tool pages results (default 50, cap 200); get_plan_file_tool
+  truncates content past max_chars (default 100k) with truncated/total_chars fields
+- Plans past 1M characters are served as plain text instead of rendered markdown
+- Styled HTML error pages (400/404/500) for browser routes; /api/* keeps JSON;
+  unhandled exceptions log the traceback and never leak it to the page
+- Flash messages: project deletion confirms with a success banner; saving a plan
+  with unchanged content explains why no new version was created
+
+### Changed
+- Markdown rendering runs off the event loop and is cached by content hash;
+  a multi-megabyte plan no longer freezes the server for all clients (8.7s -> 57ms)
+- Dashboard stats computed in SQL instead of loading every plan file (fixes N+1)
+
+### Fixed
+- MCP server startup never initialized the database, so every DB-backed tool
+  failed in a fresh server process (added end-to-end stdio regression test)
+- 'list --project X --output json' printed a table instead of JSON
+- Emoji in CLI output crashed cp1252 Windows consoles
+- API returned 200 with an empty list for a nonexistent project's plans (now 404)
+
 ## [0.1.0] - 2026-07-07
 
 ### Added
