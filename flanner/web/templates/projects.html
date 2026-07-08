@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Projects - MCP Plan Manager{% endblock %}
+{% block title %}Projects - flanner{% endblock %}
 
 {% block content %}
 <div class="projects-page">
     <header class="page-header">
-        <h1><i class="fas fa-project-diagram"></i> Projects</h1>
+        <h1>Projects</h1>
         <a href="/projects/new" class="btn btn-primary">
-            <i class="fas fa-plus"></i> New Project
+            New Project
         </a>
     </header>
 
@@ -40,12 +40,8 @@
                     <td>{{ project.created_at.strftime('%Y-%m-%d') if project.created_at else '-' }}</td>
                     <td>
                         <div class="table-actions">
-                            <a href="/projects/{{ project.id }}" class="btn btn-sm btn-primary" title="View Project">
-                                <i class="fas fa-eye"></i>
-                            </a>
-                            <a href="/projects/{{ project.id }}/plans/new" class="btn btn-sm btn-secondary" title="New Plan">
-                                <i class="fas fa-plus"></i>
-                            </a>
+                            <a href="/projects/{{ project.id }}" class="btn btn-sm btn-primary" title="View Project">View Project</a>
+                            <a href="/projects/{{ project.id }}/plans/new" class="btn btn-sm btn-secondary" title="New Plan">New Plan</a>
                         </div>
                     </td>
                 </tr>
@@ -55,11 +51,10 @@
     </div>
     {% else %}
     <div class="empty-state">
-        <i class="fas fa-inbox"></i>
         <h3>No Projects Yet</h3>
         <p>Create your first project to get started with plan file management.</p>
         <a href="/projects/new" class="btn btn-primary">
-            <i class="fas fa-plus"></i> Create Project
+            Create Project
         </a>
     </div>
     {% endif %}

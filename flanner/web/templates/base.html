@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}MCP Plan File Manager{% endblock %}</title>
+    <title>{% block title %}flanner{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -14,16 +13,15 @@
         <div class="container">
             <div class="nav-brand">
                 <a href="/">
-                    <i class="fas fa-folder-open"></i>
-                    MCP Plan Manager
+                    flanner
                 </a>
             </div>
             <ul class="nav-menu">
                 <li><a href="/" {% if request.url.path == '/' %}class="active"{% endif %}>
-                    <i class="fas fa-home"></i> Dashboard
+                    Dashboard
                 </a></li>
                 <li><a href="/projects" {% if '/projects' in request.url.path %}class="active"{% endif %}>
-                    <i class="fas fa-project-diagram"></i> Projects
+                    Projects
                 </a></li>
             </ul>
         </div>
@@ -34,14 +32,12 @@
         <div class="container">
             {% if error %}
             <div class="alert alert-error">
-                <i class="fas fa-exclamation-circle"></i>
                 {{ error }}
             </div>
             {% endif %}
 
             {% if success %}
             <div class="alert alert-success">
-                <i class="fas fa-check-circle"></i>
                 {{ success }}
             </div>
             {% endif %}
@@ -53,7 +49,7 @@
     <!-- Footer -->
     <footer class="footer">
         <div class="container">
-            <p>&copy; 2025 MCP Plan File Manager | Powered by FastMCP & Claude Code</p>
+            <p>flanner --- plan files for AI assistants, versioned</p>
         </div>
     </footer>
 

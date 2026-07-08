@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}New Project - MCP Plan Manager{% endblock %}
+{% block title %}New Project - flanner{% endblock %}
 
 {% block content %}
 <div class="form-page">
     <header class="page-header">
-        <h1><i class="fas fa-plus-circle"></i> Create New Project</h1>
+        <h1>Create New Project</h1>
         <a href="/projects" class="btn btn-secondary">
-            <i class="fas fa-arrow-left"></i> Back to Projects
+            Back to Projects
         </a>
     </header>
 
@@ -49,7 +49,6 @@
                     placeholder="Leave empty to auto-detect from current directory"
                 >
                 <small class="form-help">
-                    <i class="fas fa-info-circle"></i>
                     Absolute path to your project root (where .git is located). Auto-detected if empty.
                 </small>
             </div>
@@ -65,28 +64,27 @@
                     placeholder=".plans"
                 >
                 <small class="form-help">
-                    <i class="fas fa-folder"></i>
                     Relative path within project where plan files will be stored (default: .plans)
                 </small>
             </div>
 
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">
-                    <i class="fas fa-save"></i> Create Project
+                    Create Project
                 </button>
                 <a href="/projects" class="btn btn-secondary">
-                    <i class="fas fa-times"></i> Cancel
+                    Cancel
                 </a>
             </div>
         </form>
 
         <div class="info-box">
-            <h3><i class="fas fa-lightbulb"></i> What happens when you create a project?</h3>
+            <h3>What happens when you create a project?</h3>
             <ul>
-                <li><i class="fas fa-check"></i> A project entry is created in the database</li>
-                <li><i class="fas fa-check"></i> The plan directory is created in your project root</li>
-                <li><i class="fas fa-check"></i> The plan directory is added to <code>.gitignore</code></li>
-                <li><i class="fas fa-check"></i> You can start creating plan files immediately</li>
+                <li>A project entry is created in the database</li>
+                <li>The plan directory is created in your project root</li>
+                <li>The plan directory is added to <code>.gitignore</code></li>
+                <li>You can start creating plan files immediately</li>
             </ul>
         </div>
     </div>

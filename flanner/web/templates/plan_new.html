@@ -1,16 +1,16 @@
 {% extends "base.html" %}
 
-{% block title %}New Plan File - {{ project.name }} - MCP Plan Manager{% endblock %}
+{% block title %}New Plan File - {{ project.name }} - flanner{% endblock %}
 
 {% block content %}
 <div class="form-page">
     <header class="page-header">
         <div>
-            <h1><i class="fas fa-plus-circle"></i> Create New Plan File</h1>
+            <h1>Create New Plan File</h1>
             <p class="page-subtitle">in <a href="/projects/{{ project.id }}">{{ project.name }}</a></p>
         </div>
         <a href="/projects/{{ project.id }}" class="btn btn-secondary">
-            <i class="fas fa-arrow-left"></i> Back to Project
+            Back to Project
         </a>
     </header>
 
@@ -28,7 +28,6 @@
                     placeholder="architecture"
                 >
                 <small class="form-help">
-                    <i class="fas fa-info-circle"></i>
                     Name without extension (e.g., "architecture", "api-design", "requirements")
                 </small>
             </div>
@@ -64,28 +63,27 @@ Write your plan content here in Markdown...
 - Feature 2"
                 >{{ content or '' }}</textarea>
                 <small class="form-help">
-                    <i class="fas fa-markdown"></i>
                     Supports Markdown formatting. Frontmatter will be added automatically.
                 </small>
             </div>
 
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">
-                    <i class="fas fa-save"></i> Create Plan File
+                    Create Plan File
                 </button>
                 <a href="/projects/{{ project.id }}" class="btn btn-secondary">
-                    <i class="fas fa-times"></i> Cancel
+                    Cancel
                 </a>
             </div>
         </form>
 
         <div class="info-box">
-            <h3><i class="fas fa-lightbulb"></i> Plan File Features</h3>
+            <h3>Plan File Features</h3>
             <ul>
-                <li><i class="fas fa-check"></i> Automatic version tracking (v1, v2, v3...)</li>
-                <li><i class="fas fa-check"></i> YAML frontmatter automatically added</li>
-                <li><i class="fas fa-check"></i> Full version history with diffs</li>
-                <li><i class="fas fa-check"></i> Git-ignored (won't be committed)</li>
+                <li>Automatic version tracking (v1, v2, v3...)</li>
+                <li>YAML frontmatter automatically added</li>
+                <li>Full version history with diffs</li>
+                <li>Git-ignored (won't be committed)</li>
             </ul>
         </div>
     </div>
