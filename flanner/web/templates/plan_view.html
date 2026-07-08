@@ -4,6 +4,7 @@
 
 {% block content %}
 <div class="plan-view">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">~</a><span class="crumb-sep"> / </span><a href="/projects">projects</a><span class="crumb-sep"> / </span><a href="/projects/{{ project.id }}">{{ project.name }}</a><span class="crumb-sep"> / </span><span class="crumb-here">{{ plan_file.name }}_v{{ version.version }}.md</span></nav>
     <header class="page-header">
         <div>
             <h1>{{ plan_file.name }}</h1>
