@@ -3,9 +3,19 @@
 [![CI](https://github.com/jaysonmulwa/flanner/actions/workflows/ci.yml/badge.svg)](https://github.com/jaysonmulwa/flanner/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A comprehensive plan file management system that integrates with Claude Code and other AI assistants through MCP (Model Context Protocol).
+A plan-file manager for AI coding agents, wired into Claude Code and other assistants over MCP (Model Context Protocol).
 
-![flanner plan view](docs/assets/plan-view.png)
+AI agents write markdown constantly: design docs, migration plans, architecture notes. It piles up fast, scattered across your repo, quietly going stale, and easy to commit by accident. Flanner gives those files one home, versions them automatically as the agent revises, and keeps them out of git until you decide otherwise, with a browsable reading view and an audit trail on top.
+
+Today Flanner is local-first; the goal is cloud-hosted plans: shared workspaces for easier collaboration, effectively unlimited storage and history, and clean links to the tools teams already work in, from product trackers and chat to second brains like Notion.
+
+<div align="center">
+<sub><code>-------------------------------------------------------------------</code></sub>
+<br>
+<img src="docs/assets/plan-view.png" alt="flanner reading view: a versioned plan file" width="840">
+<br>
+<sub><code>--- flanner &middot; the plan file is the interface ----------------</code></sub>
+</div>
 
 ## Installation
 
