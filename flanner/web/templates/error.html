@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}{{ status_code }} - flanner{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">~</a><span class="crumb-sep"> / </span><span class="crumb-here">error</span></nav>
+<div class="empty-state">
+        {% include "_empty_glyph.html" %}
+    <h3>{{ status_code }} {{ status_label }}</h3>
+    <p>{{ detail }}</p>
+    <a href="/" class="btn btn-primary">Back to Dashboard</a>
+</div>
+{% endblock %}

@@ -4,7 +4,9 @@ Web interface for Flanner
 Provides a browser-based UI for viewing and managing plan files.
 """
 
+import logging
 import os
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -12,10 +14,15 @@ from uuid import UUID
 
 import markdown
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
+from . import __version__
+from .database import count_plan_files as db_count_plan_files
+from .database import count_projects as db_count_projects
 from .database import create_plan_file as db_create_plan_file
 from .database import (
     create_project,
@@ -27,6 +34,8 @@ from .database import (
     get_version,
     init_database,
     list_versions,
+    plan_file_counts_by_project,
+    recent_plan_files,
 )
 from .database import list_plan_files as db_list_plan_files
 from .database import list_projects as db_list_projects
@@ -37,8 +46,10 @@ from .storage import ensure_plan_directory_exists, load_plan_file, save_plan_fil
 from .utils import format_relative_time, generate_file_name, hash_content
 
 # Initialize FastAPI app
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
-    title="Flanner", description="Manage plan files with automatic versioning", version="0.1.0"
+    title="Flanner", description="Manage plan files with automatic versioning", version=__version__
 )
 
 # Get paths
@@ -84,6 +95,88 @@ templates.env.filters["markdown"] = markdown_filter
 templates.env.filters["relative_time"] = format_relative_time
 templates.env.filters["basename"] = lambda p: Path(p).name
 
+_STATUS_LABELS = {400: "Bad Request", 404: "Not Found", 500: "Server Error"}
+
+
+@app.exception_handler(HTTPException)
+async def html_error_pages(request: Request, exc: HTTPException) -> Response:
+    """Browsers get a styled error page; /api/* callers keep JSON."""
+    if request.url.path.startswith("/api"):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    return templates.TemplateResponse(
+        request,
+        "error.html",
+        {
+            "request": request,
+            "status_code": exc.status_code,
+            "status_label": _STATUS_LABELS.get(exc.status_code, "Error"),
+            "detail": exc.detail,
+        },
+        status_code=exc.status_code,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def html_validation_pages(request: Request, exc: RequestValidationError) -> Response:
+    """Bad query/form input (e.g. ?page=abc) gets a styled 400, not raw 422 JSON."""
+    if request.url.path.startswith("/api"):
+        return JSONResponse({"detail": exc.errors()}, status_code=422)
+    return templates.TemplateResponse(
+        request,
+        "error.html",
+        {
+            "request": request,
+            "status_code": 400,
+            "status_label": "Bad Request",
+            "detail": "That request had an invalid value. Check the address and try again.",
+        },
+        status_code=400,
+    )
+
+
+@app.exception_handler(Exception)
+async def html_crash_page(request: Request, exc: Exception) -> Response:
+    """Unexpected failures: log the traceback, never show one to the user."""
+    logger.exception("Unhandled error on %s", request.url.path)
+    if request.url.path.startswith("/api"):
+        return JSONResponse({"detail": "Internal server error"}, status_code=500)
+    return templates.TemplateResponse(
+        request,
+        "error.html",
+        {
+            "request": request,
+            "status_code": 500,
+            "status_label": "Server Error",
+            "detail": "Something went wrong on our side. The details are in the server log.",
+        },
+        status_code=500,
+    )
+
+
+# Rendering guard: markdown.convert on multi-MB documents takes seconds and,
+# called from an async route, would freeze the event loop for every client.
+MAX_RENDER_CHARS = 1_000_000
+PAGE_SIZE = 50
+
+# Rendered-HTML cache keyed by content hash; versions are immutable so a
+# hash hit can never be stale. ponytail: in-process OrderedDict LRU is
+# plenty for a single-user local tool.
+_RENDER_CACHE_MAX = 64
+_render_cache: OrderedDict[str, str] = OrderedDict()
+
+
+def render_plan_html(content: str, content_hash: str | None) -> str:
+    """Markdown -> HTML with an LRU cache on the version's content hash."""
+    key = content_hash or hash_content(content)
+    if key in _render_cache:
+        _render_cache.move_to_end(key)
+        return _render_cache[key]
+    html = markdown_filter(content)
+    _render_cache[key] = html
+    if len(_render_cache) > _RENDER_CACHE_MAX:
+        _render_cache.popitem(last=False)
+    return html
+
 
 # =============================================================================
 # HTML PAGES
@@ -96,30 +189,24 @@ async def dashboard(request: Request) -> HTMLResponse:
     ensure_db()
     session = get_session()
 
-    projects = db_list_projects(session)
+    # Aggregates in SQL; loading every plan file to count them is O(rows)
+    # in Python and an N+1 query per project.
+    total_projects = db_count_projects(session)
+    total_plans = db_count_plan_files(session)
+    plan_counts = plan_file_counts_by_project(session)
 
-    # Calculate stats
-    total_projects = len(projects)
-    total_plans = sum(len(p.plan_files) for p in projects)
+    projects = db_list_projects(session, limit=12)
 
-    # Get recent activity (last updated plan files)
-    recent_activity: list[dict[str, Any]] = []
-    for project in projects:
-        for plan_file in project.plan_files:
-            recent_activity.append(
-                {"project": project, "plan_file": plan_file, "updated_at": plan_file.updated_at}
-            )
-
-    # Sort by updated_at
-    recent_activity.sort(
-        key=lambda x: x["updated_at"] if x["updated_at"] else datetime.min, reverse=True
-    )
-    recent_activity = recent_activity[:10]  # Top 10
+    recent_activity: list[dict[str, Any]] = [
+        {"project": pf.project, "plan_file": pf, "updated_at": pf.updated_at}
+        for pf in recent_plan_files(session, limit=10)
+    ]
 
     return templates.TemplateResponse(
         request,
         "dashboard.html",
         {
+            "plan_counts": plan_counts,
             "request": request,
             "projects": projects,
             "total_projects": total_projects,
@@ -130,15 +217,32 @@ async def dashboard(request: Request) -> HTMLResponse:
 
 
 @app.get("/projects", response_class=HTMLResponse)
-async def projects_list(request: Request) -> HTMLResponse:
-    """List all projects"""
+async def projects_list(
+    request: Request, page: int = 1, message: str | None = None
+) -> HTMLResponse:
+    """List projects, a page at a time"""
     ensure_db()
     session = get_session()
+    success = {"deleted": "Project deleted."}.get(message or "")
 
-    projects = db_list_projects(session)
+    total = db_count_projects(session)
+    pages = max(1, -(-total // PAGE_SIZE))
+    page = min(max(1, page), pages)
+    projects = db_list_projects(session, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE)
+    plan_counts = plan_file_counts_by_project(session)
 
     return templates.TemplateResponse(
-        request, "projects.html", {"request": request, "projects": projects}
+        request,
+        "projects.html",
+        {
+            "request": request,
+            "projects": projects,
+            "plan_counts": plan_counts,
+            "page": page,
+            "pages": pages,
+            "total": total,
+            "success": success,
+        },
     )
 
 
@@ -219,8 +323,8 @@ async def create_project_post(
 
 
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
-async def project_detail(request: Request, project_id: str) -> HTMLResponse:
-    """Show project detail with all plan files"""
+async def project_detail(request: Request, project_id: str, page: int = 1) -> HTMLResponse:
+    """Show project detail with a page of plan files"""
     ensure_db()
     session = get_session()
 
@@ -233,12 +337,24 @@ async def project_detail(request: Request, project_id: str) -> HTMLResponse:
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    plan_files = db_list_plan_files(session, project_uuid)
+    total = db_count_plan_files(session, project_uuid)
+    pages = max(1, -(-total // PAGE_SIZE))
+    page = min(max(1, page), pages)
+    plan_files = db_list_plan_files(
+        session, project_uuid, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE
+    )
 
     return templates.TemplateResponse(
         request,
         "project_detail.html",
-        {"request": request, "project": project, "plan_files": plan_files},
+        {
+            "request": request,
+            "project": project,
+            "plan_files": plan_files,
+            "page": page,
+            "pages": pages,
+            "total": total,
+        },
     )
 
 
@@ -370,7 +486,10 @@ async def create_plan_post(
 
 @app.get("/plans/{plan_file_id}", response_class=HTMLResponse)
 async def plan_view(
-    request: Request, plan_file_id: str, version: int | None = None
+    request: Request,
+    plan_file_id: str,
+    version: int | None = None,
+    message: str | None = None,
 ) -> HTMLResponse:
     """View a plan file (specific version or latest)"""
     ensure_db()
@@ -406,6 +525,13 @@ async def plan_view(
             status_code=404, detail=f"File not found at {version_obj.file_path}"
         ) from None
 
+    # Render off the event loop; a large document must not stall other clients.
+    render_capped = len(body) > MAX_RENDER_CHARS
+    if render_capped:
+        content_html = ""
+    else:
+        content_html = await run_in_threadpool(render_plan_html, body, version_obj.content_hash)
+
     return templates.TemplateResponse(
         request,
         "plan_view.html",
@@ -417,6 +543,13 @@ async def plan_view(
             "all_versions": all_versions,
             "frontmatter": frontmatter_data,
             "content": body,
+            "content_html": content_html,
+            "render_capped": render_capped,
+            "content_chars": len(body),
+            "info": {
+                "no_changes": "No changes detected - the content matches the current version, "
+                "so a new version was not created."
+            }.get(message or ""),
         },
     )
 
@@ -611,9 +744,13 @@ async def api_list_plan_files(project_id: str) -> list[dict[str, Any]]:
 
     try:
         project_uuid = UUID(project_id)
-        plan_files = db_list_plan_files(session, project_uuid)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project ID") from None
+
+    if not get_project(session, project_uuid):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    plan_files = db_list_plan_files(session, project_uuid)
 
     return [
         {

@@ -37,7 +37,7 @@
         </div>
         <div class="info-card">
             <div class="info-label">Total Plan Files</div>
-            <div class="info-value"><strong>{{ plan_files|length }}</strong></div>
+            <div class="info-value"><strong>{{ total }}</strong></div>
         </div>
     </div>
 
@@ -88,6 +88,7 @@
         </div>
         {% else %}
         <div class="empty-state">
+        {% include "_empty_glyph.html" %}
             <h3>No Plan Files Yet</h3>
             <p>Create your first plan file for this project.</p>
             <a href="/projects/{{ project.id }}/plans/new" class="btn btn-primary">
@@ -96,5 +97,13 @@
         </div>
         {% endif %}
     </section>
+
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pagination">
+    {% if page > 1 %}<a href="?page={{ page - 1 }}">&larr; prev</a>{% endif %}
+    <span>page {{ page }} / {{ pages }} ({{ total }} total)</span>
+    {% if page < pages %}<a href="?page={{ page + 1 }}">next &rarr;</a>{% endif %}
+</nav>
+{% endif %}
 </div>
 {% endblock %}

@@ -42,6 +42,12 @@
             </div>
             {% endif %}
 
+            {% if info %}
+            <div class="alert alert-info">
+                {{ info }}
+            </div>
+            {% endif %}
+
             {% block content %}{% endblock %}
         </div>
     </main>

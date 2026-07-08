@@ -11,7 +11,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Dialect, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Dialect,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -364,9 +374,46 @@ def get_project_by_name(session: Session, name: str) -> ProjectModel | None:
     return session.query(ProjectModel).filter_by(name=name).first()
 
 
-def list_projects(session: Session) -> list[ProjectModel]:
-    """List all projects"""
-    return session.query(ProjectModel).order_by(ProjectModel.created_at.desc()).all()
+def list_projects(
+    session: Session, limit: int | None = None, offset: int = 0
+) -> list[ProjectModel]:
+    """List projects, newest first; optionally a page of them."""
+    query = session.query(ProjectModel).order_by(ProjectModel.created_at.desc(), ProjectModel.id)
+    if offset:
+        query = query.offset(offset)
+    if limit is not None:
+        query = query.limit(limit)
+    return query.all()
+
+
+def count_projects(session: Session) -> int:
+    """Total number of projects (SQL COUNT, no object loading)."""
+    return session.query(func.count(ProjectModel.id)).scalar() or 0
+
+
+def count_plan_files(session: Session, project_id: uuid.UUID | None = None) -> int:
+    """Total plan files, overall or for one project (SQL COUNT)."""
+    query = session.query(func.count(PlanFileModel.id))
+    if project_id is not None:
+        query = query.filter(PlanFileModel.project_id == project_id)
+    return query.scalar() or 0
+
+
+def plan_file_counts_by_project(session: Session) -> dict[uuid.UUID, int]:
+    """Plan-file count per project in one grouped query."""
+    rows = (
+        session.query(PlanFileModel.project_id, func.count(PlanFileModel.id))
+        .group_by(PlanFileModel.project_id)
+        .all()
+    )
+    return {project_id: count for project_id, count in rows}
+
+
+def recent_plan_files(session: Session, limit: int = 10) -> list[PlanFileModel]:
+    """Most recently updated plan files across all projects (SQL ORDER BY ... LIMIT)."""
+    return (
+        session.query(PlanFileModel).order_by(PlanFileModel.updated_at.desc()).limit(limit).all()
+    )
 
 
 def update_project(
@@ -450,14 +497,20 @@ def get_plan_file(session: Session, plan_file_id: uuid.UUID) -> PlanFileModel | 
     return session.query(PlanFileModel).filter_by(id=plan_file_id).first()
 
 
-def list_plan_files(session: Session, project_id: uuid.UUID) -> list[PlanFileModel]:
-    """List all plan files for a project"""
-    return (
+def list_plan_files(
+    session: Session, project_id: uuid.UUID, limit: int | None = None, offset: int = 0
+) -> list[PlanFileModel]:
+    """List plan files for a project, newest first; optionally a page of them."""
+    query = (
         session.query(PlanFileModel)
         .filter_by(project_id=project_id)
-        .order_by(PlanFileModel.created_at.desc())
-        .all()
+        .order_by(PlanFileModel.created_at.desc(), PlanFileModel.id)
     )
+    if offset:
+        query = query.offset(offset)
+    if limit is not None:
+        query = query.limit(limit)
+    return query.all()
 
 
 def create_version(

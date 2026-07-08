@@ -44,7 +44,7 @@
             <div class="project-card">
                 <div class="project-header">
                     <h3>{{ project.name }}</h3>
-                    <span class="badge">{{ project.plan_files|length }} files</span>
+                    <span class="badge">{{ plan_counts.get(project.id, 0) }} files</span>
                 </div>
                 <p class="project-description">
                     {{ project.description or 'No description' }}
@@ -68,8 +68,12 @@
             </div>
             {% endfor %}
         </div>
+        {% if total_projects > projects|length %}
+        <p class="see-all"><a href="/projects">all {{ total_projects }} projects &rarr;</a></p>
+        {% endif %}
         {% else %}
         <div class="empty-state">
+        {% include "_empty_glyph.html" %}
             <h3>No Projects Yet</h3>
             <p>Get started by creating your first project.</p>
             <a href="/projects/new" class="btn btn-primary">

@@ -60,9 +60,17 @@
 
     <!-- Main Content -->
     <div class="content-section">
-        <div class="markdown-content">
-            {{ content|markdown|safe }}
+        {% if render_capped %}
+        <div class="alert alert-info">
+            This plan is {{ "{:,}".format(content_chars) }} characters, past the
+            1,000,000-character rendering limit, so it is shown as plain text.
         </div>
+        <pre class="raw-content">{{ content }}</pre>
+        {% else %}
+        <div class="markdown-content">
+            {{ content_html|safe }}
+        </div>
+        {% endif %}
     </div>
 
     <!-- File Path Info -->

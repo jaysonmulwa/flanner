@@ -322,12 +322,20 @@ def delete_project_tool(project_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_plan_files_tool(project_id: str) -> list[dict[str, Any]]:
+def list_plan_files_tool(
+    project_id: str, limit: int = 50, offset: int = 0
+) -> list[dict[str, Any]]:
     """
-    List all plan files for a project.
+    List plan files for a project, newest first, one page at a time.
+
+    Defaults return the 50 most recent plan files; pass offset to page
+    through the rest. The page size is capped at 200 to keep tool results
+    a sane size for the calling model.
 
     Args:
         project_id: UUID of the project (as string)
+        limit: Maximum entries to return (default 50, capped at 200)
+        offset: Entries to skip, for paging (default 0)
 
     Returns:
         List of plan files with current version information
@@ -339,7 +347,9 @@ def list_plan_files_tool(project_id: str) -> list[dict[str, Any]]:
     except ValueError:
         return [{"error": True, "message": f"Invalid UUID: {project_id}"}]
 
-    plan_files = db_list_plan_files(session, project_uuid)
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    plan_files = db_list_plan_files(session, project_uuid, limit=limit, offset=offset)
 
     return [
         {
@@ -563,13 +573,21 @@ def update_plan_file_tool(
 
 
 @mcp.tool()
-def get_plan_file_tool(plan_file_id: str, version: int | None = None) -> dict[str, Any]:
+def get_plan_file_tool(
+    plan_file_id: str, version: int | None = None, max_chars: int = 100_000
+) -> dict[str, Any]:
     """
     Get plan file content (specific version or latest).
+
+    Content longer than max_chars is truncated so a huge plan cannot blow
+    the calling model's context; the result then carries truncated=True and
+    total_chars. Raise max_chars (or page by reading the file_path) when the
+    full text is genuinely needed.
 
     Args:
         plan_file_id: UUID of the plan file (as string)
         version: Optional version number (defaults to latest)
+        max_chars: Maximum content characters to return (default 100000)
 
     Returns:
         Plan file content with metadata
@@ -598,7 +616,12 @@ def get_plan_file_tool(plan_file_id: str, version: int | None = None) -> dict[st
     except FileNotFoundError:
         return {"error": True, "message": f"File not found at {version_obj.file_path}"}
 
-    return {
+    total_chars = len(body)
+    truncated = total_chars > max_chars > 0
+    if truncated:
+        body = body[:max_chars]
+
+    result: dict[str, Any] = {
         "plan_file": {
             "id": str(plan_file.id),  # Convert UUID to string
             "name": plan_file.name,
@@ -616,6 +639,14 @@ def get_plan_file_tool(plan_file_id: str, version: int | None = None) -> dict[st
         "frontmatter": frontmatter_data,
         "content": body,
     }
+    if truncated:
+        result["truncated"] = True
+        result["total_chars"] = total_chars
+        result["message"] = (
+            f"Content truncated to {max_chars} of {total_chars} characters; "
+            "pass a larger max_chars to read more."
+        )
+    return result
 
 
 @mcp.tool()

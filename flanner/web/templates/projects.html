@@ -36,7 +36,7 @@
                     <td>{{ project.description or '-' }}</td>
                     <td><code>{{ project.plan_directory }}</code></td>
                     <td>
-                        <span class="badge">{{ project.plan_files|length }}</span>
+                        <span class="badge">{{ plan_counts.get(project.id, 0) }}</span>
                     </td>
                     <td>{{ project.created_at.strftime('%Y-%m-%d') if project.created_at else '-' }}</td>
                     <td>
@@ -52,6 +52,7 @@
     </div>
     {% else %}
     <div class="empty-state">
+        {% include "_empty_glyph.html" %}
         <h3>No Projects Yet</h3>
         <p>Create your first project to get started with plan file management.</p>
         <a href="/projects/new" class="btn btn-primary">
@@ -59,5 +60,13 @@
         </a>
     </div>
     {% endif %}
+
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pagination">
+    {% if page > 1 %}<a href="?page={{ page - 1 }}">&larr; prev</a>{% endif %}
+    <span>page {{ page }} / {{ pages }} ({{ total }} total)</span>
+    {% if page < pages %}<a href="?page={{ page + 1 }}">next &rarr;</a>{% endif %}
+</nav>
+{% endif %}
 </div>
 {% endblock %}
