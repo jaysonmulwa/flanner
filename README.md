@@ -10,11 +10,7 @@ AI agents write markdown constantly: design docs, migration plans, architecture 
 Today Flanner is local-first; the goal is cloud-hosted plans: shared workspaces for easier collaboration, effectively unlimited storage and history, and clean links to the tools teams already work in, from product trackers and chat to second brains like Notion.
 
 <div align="center">
-<sub><code>-------------------------------------------------------------------</code></sub>
-<br>
 <img src="docs/assets/plan-view.png" alt="flanner reading view: a versioned plan file" width="840">
-<br>
-<sub><code>--- flanner &middot; the plan file is the interface ----------------</code></sub>
 </div>
 
 ## Features
@@ -48,8 +44,7 @@ flanner web --open-browser     # http://localhost:8080
 
 `flanner init` is safe to re-run. It detects your git root, creates `.plans/`, updates `.gitignore`, registers the MCP server with Claude Code, and installs the agent integration.
 
-<details>
-<summary><b>CLI commands</b></summary>
+## CLI commands
 
 ```bash
 flanner init [--project-root PATH] [--plan-dir DIR]     # set up a project
@@ -61,8 +56,6 @@ flanner web [--port 8080] [--host 127.0.0.1] [--open-browser]
 flanner register [--force] / flanner unregister         # MCP registration with Claude Code
 flanner claude-info                                     # integration status
 ```
-
-</details>
 
 <details>
 <summary><b>Plan file format</b></summary>
