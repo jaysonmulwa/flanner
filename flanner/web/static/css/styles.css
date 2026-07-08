@@ -97,6 +97,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 }
 
 .nav-brand a {
+  white-space: nowrap;
   font-family: var(--mono);
   font-size: 1.2rem;
   font-weight: 600;
@@ -146,6 +147,14 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   border-top: 1px solid var(--line);
   padding: 1rem 0 1.5rem;
 }
+.footer .container {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.footer-credit a { color: var(--ink-muted); text-decoration: underline; text-underline-offset: 2px; }
+.footer-credit a:hover { color: var(--accent); }
 .footer p {
   font-family: var(--mono);
   font-size: 0.875rem;
@@ -693,7 +702,14 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 /* ---------------------------------------------------------------- responsive */
 @media (max-width: 640px) {
-  .navbar .container { gap: 1rem; }
+  .navbar .container {
+    gap: 0.25rem 1rem;
+    height: auto;
+    min-height: 3.25rem;
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
+    flex-wrap: wrap;
+  }
   .page-header { flex-direction: column; align-items: flex-start; }
   .stats-grid { grid-template-columns: 1fr 1fr; }
   .activity-content { flex-direction: column; gap: 0.2rem; }
@@ -783,5 +799,17 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
 }
 
 .projects-table-container { overflow-x: auto; }
+
+.info-box h3 {
+  font-family: var(--mono);
+  font-size: 1.0625rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid var(--line);
+}
+.info-box h3::before { content: "## "; color: var(--line-strong); font-weight: 400; }
+.info-box ul { list-style: none; padding: 0; }
+.info-box li { padding: 0.2rem 0; color: var(--ink-muted); }
+.info-box li::before { content: "- "; font-family: var(--mono); color: var(--line-strong); }
 .table-actions { display: flex; gap: 0.4rem; }
 .table-link { font-family: var(--mono); font-weight: 600; }
