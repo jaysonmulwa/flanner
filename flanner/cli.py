@@ -145,6 +145,8 @@ def init(
                     console.print(f"OK Plan directory: {result['full_plan_path']}", style="green")
                     if result.get("gitignore_updated"):
                         console.print("OK Updated .gitignore to exclude plan files", style="green")
+                    else:
+                        console.print("OK .gitignore already excludes plan files", style="green")
         except Exception as e:
             console.print(f"WARN Could not check for existing project: {e}", style="yellow")
             console.print("  Skipping project creation to be safe", style="yellow")
