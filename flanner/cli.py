@@ -89,7 +89,7 @@ def init(
                 "  You may need to restart Claude Code for changes to take effect", style="yellow"
             )
         else:
-            console.print(f"⚠ {message}", style="yellow")
+            console.print(f"WARN {message}", style="yellow")
             console.print(
                 "  You can manually register later with: flanner register", style="white"
             )
@@ -121,7 +121,7 @@ def init(
             else:
                 if existing_project and force_new_project:
                     console.print(
-                        f"⚠ Project '{existing_project.name}' already exists for this directory",
+                        f"WARN Project '{existing_project.name}' already exists here",
                         style="yellow",
                     )
                     console.print(
@@ -146,7 +146,7 @@ def init(
                     if result.get("gitignore_updated"):
                         console.print("OK Updated .gitignore to exclude plan files", style="green")
         except Exception as e:
-            console.print(f"⚠ Could not check for existing project: {e}", style="yellow")
+            console.print(f"WARN Could not check for existing project: {e}", style="yellow")
             console.print("  Skipping project creation to be safe", style="yellow")
 
 
@@ -318,6 +318,22 @@ def list(project: str | None, output: str) -> None:
         if not proj:
             console.print(f"ERROR Project '{project}' not found", style="red")
             raise SystemExit(1)
+
+        if output == "json":
+            click.echo(
+                json_module.dumps(
+                    [
+                        {
+                            "id": str(pf.id),
+                            "name": pf.name,
+                            "version": pf.current_version,
+                            "updated_at": pf.updated_at.isoformat() if pf.updated_at else None,
+                        }
+                        for pf in proj.plan_files
+                    ]
+                )
+            )
+            return
 
         console.print(f"\nPlan files for project: {project}\n", style="cyan bold")
 
@@ -532,7 +548,7 @@ def web(port: int, host: str, open_browser: bool) -> None:
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
         raise SystemExit(1)
 
-    console.print("\n🚀 Starting Flanner Web Interface...\n", style="cyan bold")
+    console.print("\nStarting Flanner Web Interface...\n", style="cyan bold")
     console.print(f"  Server:    http://{host}:{port}", style="green")
     console.print(f"  Dashboard: http://{host}:{port}/", style="green")
     console.print(f"  Projects:  http://{host}:{port}/projects", style="green")
@@ -1185,7 +1201,7 @@ def jira_show(plan_name: str, project: str | None) -> None:
     jira_config = get_jira_config(session, proj.id)
 
     for link in links:
-        console.print(f"  • {link.jira_issue_key}", style="green")
+        console.print(f"  - {link.jira_issue_key}", style="green")
         if link.jira_issue_type:
             console.print(f"    Type: {link.jira_issue_type}", style="white")
 

@@ -128,7 +128,7 @@ def test_init_force_new_project(runner, git_repo):
         input="second\n",
     )
     assert result.exit_code == 0
-    assert "already exists for this directory" in result.output
+    assert "already exists here" in result.output
     assert "Created project: second" in result.output
 
 
@@ -677,3 +677,10 @@ def test_jira_unlink_missing_plan(runner, project):
 def test_jira_unlink_missing_project(runner, initialized):
     result = runner.invoke(cli, ["jira", "unlink", "myplan", "--project", "nope"])
     assert result.exit_code == 1
+
+
+def test_list_project_plans_json(runner, plan):
+    result = runner.invoke(cli, ["list", "--project", "proj", "--output", "json"])
+    assert result.exit_code == 0
+    rows = json.loads(result.output)
+    assert rows and rows[0]["name"] == "myplan" and rows[0]["version"] == 1
