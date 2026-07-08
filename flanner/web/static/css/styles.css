@@ -28,7 +28,7 @@
   --serif: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
 
   --radius: 4px;
-  --maxw: 1040px;
+  --maxw: 1320px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -54,11 +54,12 @@
 /* ---------------------------------------------------------------- reset */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { font-size: 16px; }
+/* fluid base: 16px on laptops, ~19px on wide desktops */
+html { font-size: clamp(16px, 12.8px + 0.24vw, 19.5px); }
 
 body {
   font-family: var(--sans);
-  font-size: 0.9375rem;
+  font-size: 1rem;
   line-height: 1.55;
   color: var(--ink);
   background: var(--bg);
@@ -92,12 +93,12 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   display: flex;
   align-items: center;
   gap: 2rem;
-  height: 3rem;
+  height: 3.75rem;
 }
 
 .nav-brand a {
   font-family: var(--mono);
-  font-size: 1rem;
+  font-size: 1.2rem;
   font-weight: 600;
   color: var(--ink);
   letter-spacing: -0.02em;
@@ -120,16 +121,16 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 .nav-menu a {
   font-family: var(--mono);
-  font-size: 0.8125rem;
+  font-size: 0.9375rem;
   color: var(--ink-muted);
-  padding: 0.35rem 0.65rem;
+  padding: 0.5rem 0.9rem;
   border-radius: var(--radius);
 }
 .nav-menu a:hover { color: var(--ink); background: var(--accent-wash); text-decoration: none; }
 .nav-menu a.active { color: var(--accent); background: var(--accent-wash); }
 
 /* ---------------------------------------------------------------- layout */
-.main-content { flex: 1; padding: 2rem 0 4rem; }
+.main-content { flex: 1; padding: 2.75rem 0 5rem; }
 
 .footer {
   border-top: 1px solid var(--line);
@@ -137,7 +138,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 }
 .footer p {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   color: var(--ink-muted);
 }
 
@@ -152,21 +153,21 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 .page-header h1 {
   font-family: var(--mono);
-  font-size: 1.375rem;
+  font-size: 1.875rem;
   font-weight: 600;
   letter-spacing: -0.02em;
   overflow-wrap: anywhere;
 }
 
-.page-subtitle { color: var(--ink-muted); font-size: 0.875rem; margin-top: 0.2rem; }
+.page-subtitle { color: var(--ink-muted); font-size: 1rem; margin-top: 0.2rem; }
 
 .header-actions { display: flex; gap: 0.5rem; }
 
 /* section headings carry the markdown ## prefix */
-.content-section { margin-bottom: 2.5rem; }
+.content-section { margin-bottom: 3.25rem; }
 .content-section > h2 {
   font-family: var(--mono);
-  font-size: 0.9375rem;
+  font-size: 1.125rem;
   font-weight: 600;
   color: var(--ink);
   margin-bottom: 0.9rem;
@@ -185,8 +186,8 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   align-items: center;
   gap: 0.4rem;
   font-family: var(--mono);
-  font-size: 0.8125rem;
-  padding: 0.4rem 0.85rem;
+  font-size: 0.9375rem;
+  padding: 0.55rem 1.1rem;
   border: 1px solid transparent;
   border-radius: var(--radius);
   cursor: pointer;
@@ -208,12 +209,12 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .btn-danger { background: transparent; color: var(--err); border-color: var(--err); }
 .btn-danger:hover { background: var(--err); color: var(--bg-raised); }
 
-.btn-sm { font-size: 0.75rem; padding: 0.25rem 0.6rem; }
+.btn-sm { font-size: 0.8125rem; padding: 0.35rem 0.8rem; }
 
 /* ---------------------------------------------------------------- stats */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0.75rem;
   margin-bottom: 2.5rem;
 }
@@ -222,12 +223,12 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 0.9rem 1rem;
+  padding: 1.4rem 1.5rem;
 }
 
 .stat-value {
   font-family: var(--mono);
-  font-size: 1.75rem;
+  font-size: 2.5rem;
   font-weight: 600;
   letter-spacing: -0.03em;
   line-height: 1.1;
@@ -235,7 +236,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 .stat-label {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   text-transform: lowercase;
   letter-spacing: 0.05em;
   color: var(--ink-muted);
@@ -244,10 +245,10 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 .stats-bar {
   display: flex;
-  gap: 1.75rem;
+  gap: 2rem;
   flex-wrap: wrap;
   font-family: var(--mono);
-  font-size: 0.8125rem;
+  font-size: 0.9375rem;
   color: var(--ink-muted);
   padding: 0.75rem 1rem;
   background: var(--bg-raised);
@@ -260,15 +261,15 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* ---------------------------------------------------------------- cards */
 .projects-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 1rem;
 }
 
 .project-card {
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 1rem 1.1rem;
+  padding: 1.4rem 1.5rem;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
@@ -285,7 +286,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 .project-header h3 {
   font-family: var(--mono);
-  font-size: 0.9375rem;
+  font-size: 1.125rem;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -294,7 +295,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 .project-description {
   color: var(--ink-muted);
-  font-size: 0.85rem;
+  font-size: 0.9375rem;
   flex: 1;
 }
 
@@ -303,7 +304,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   gap: 1rem;
   flex-wrap: wrap;
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   color: var(--ink-muted);
 }
 
@@ -312,8 +313,8 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* ---------------------------------------------------------------- badges */
 .badge {
   font-family: var(--mono);
-  font-size: 0.6875rem;
-  padding: 0.1rem 0.45rem;
+  font-size: 0.8125rem;
+  padding: 0.15rem 0.55rem;
   border-radius: var(--radius);
   background: var(--accent-wash);
   color: var(--accent);
@@ -326,7 +327,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .activity-version,
 .version-suffix {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--vmark);
 }
@@ -336,7 +337,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   align-items: center;
   gap: 0.3rem;
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   color: var(--ink-muted);
 }
 
@@ -348,7 +349,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 }
 
 .activity-item {
-  padding: 0.6rem 1rem;
+  padding: 0.9rem 1.25rem;
 }
 .activity-item + .activity-item { border-top: 1px solid var(--line); }
 
@@ -360,7 +361,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   flex-wrap: wrap;
 }
 
-.activity-title { font-family: var(--mono); font-size: 0.875rem; }
+.activity-title { font-family: var(--mono); font-size: 1rem; }
 .activity-title a { color: var(--ink); font-weight: 600; }
 .activity-title a:hover { color: var(--accent); }
 .activity-title .activity-version::before { content: "_"; color: var(--line-strong); }
@@ -368,10 +369,10 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .activity-meta {
   display: flex;
   gap: 1rem;
-  font-size: 0.8125rem;
+  font-size: 0.9375rem;
   color: var(--ink-muted);
 }
-.activity-time { font-family: var(--mono); font-size: 0.75rem; }
+.activity-time { font-family: var(--mono); font-size: 0.875rem; }
 
 /* ---------------------------------------------------------------- alerts */
 .alert {
@@ -407,8 +408,8 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 1.5rem;
-  max-width: 640px;
+  padding: 2rem;
+  max-width: 760px;
 }
 
 .form-group { margin-bottom: 1.1rem; }
@@ -416,7 +417,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .form-group label {
   display: block;
   font-family: var(--mono);
-  font-size: 0.8125rem;
+  font-size: 0.9375rem;
   font-weight: 600;
   margin-bottom: 0.35rem;
 }
@@ -427,7 +428,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .form-group select {
   width: 100%;
   font-family: var(--mono);
-  font-size: 0.875rem;
+  font-size: 1rem;
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--line-strong);
@@ -444,7 +445,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   border-color: transparent;
 }
 
-.form-help { font-size: 0.78rem; color: var(--ink-muted); margin-top: 0.3rem; }
+.form-help { font-size: 0.875rem; color: var(--ink-muted); margin-top: 0.3rem; }
 
 .form-actions { display: flex; gap: 0.5rem; margin-top: 1.5rem; }
 
@@ -463,11 +464,11 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 }
 
 .version-info { display: flex; align-items: center; gap: 0.5rem; }
-.version-label { font-family: var(--mono); font-size: 0.8125rem; color: var(--ink-muted); }
+.version-label { font-family: var(--mono); font-size: 0.9375rem; color: var(--ink-muted); }
 
 .version-select {
   font-family: var(--mono);
-  font-size: 0.8125rem;
+  font-size: 0.9375rem;
   color: var(--vmark);
   font-weight: 600;
   background: var(--bg);
@@ -481,7 +482,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* the signature: plan metadata as literal YAML frontmatter */
 .frontmatter-details {
   font-family: var(--mono);
-  font-size: 0.8125rem;
+  font-size: 0.9375rem;
   margin-bottom: 1.5rem;
 }
 
@@ -509,7 +510,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 .file-info {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   color: var(--ink-muted);
   padding-top: 1rem;
   margin-top: 2rem;
@@ -522,9 +523,9 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
    document is the point. Serif, book measure, generous rhythm. */
 .markdown-content {
   font-family: var(--serif);
-  font-size: 1.0625rem;
-  line-height: 1.65;
-  max-width: 72ch;
+  font-size: 1.1875rem;
+  line-height: 1.7;
+  max-width: 76ch;
 }
 
 .markdown-content h1,
@@ -537,10 +538,10 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   margin: 1.6em 0 0.5em;
 }
 .markdown-content h1:first-child { margin-top: 0; }
-.markdown-content h1 { font-size: 1.5rem; }
-.markdown-content h2 { font-size: 1.2rem; padding-bottom: 0.25em; border-bottom: 1px solid var(--line); }
-.markdown-content h3 { font-size: 1.05rem; }
-.markdown-content h4 { font-size: 0.9375rem; }
+.markdown-content h1 { font-size: 1.875rem; }
+.markdown-content h2 { font-size: 1.4rem; padding-bottom: 0.25em; border-bottom: 1px solid var(--line); }
+.markdown-content h3 { font-size: 1.1875rem; }
+.markdown-content h4 { font-size: 1.0625rem; }
 
 .markdown-content p, .markdown-content ul, .markdown-content ol { margin-bottom: 0.9em; }
 .markdown-content ul, .markdown-content ol { padding-left: 1.5em; }
@@ -563,7 +564,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   margin-bottom: 1em;
   line-height: 1.5;
 }
-.markdown-content pre code { background: none; padding: 0; font-size: 0.8125rem; }
+.markdown-content pre code { background: none; padding: 0; font-size: 0.9375rem; }
 
 .markdown-content blockquote {
   border-left: 3px solid var(--line-strong);
@@ -577,14 +578,14 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   width: 100%;
   margin-bottom: 1em;
   font-family: var(--sans);
-  font-size: 0.875rem;
+  font-size: 1rem;
 }
 .markdown-content th, .markdown-content td {
   border: 1px solid var(--line);
   padding: 0.4rem 0.7rem;
   text-align: left;
 }
-.markdown-content th { font-family: var(--mono); font-size: 0.8125rem; background: var(--bg-raised); }
+.markdown-content th { font-family: var(--mono); font-size: 0.9375rem; background: var(--bg-raised); }
 
 .markdown-content hr {
   border: 0;
@@ -633,7 +634,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 0.85rem 1.1rem;
+  padding: 1.25rem 1.5rem;
   margin-bottom: 0.75rem;
 }
 .timeline-current .timeline-content { border-color: var(--vmark); }
@@ -646,15 +647,15 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   flex-wrap: wrap;
 }
 
-.timeline-version h3 { font-family: var(--mono); font-size: 0.9375rem; }
+.timeline-version h3 { font-family: var(--mono); font-size: 1.125rem; }
 .timeline-version h3 a { color: var(--ink); }
 .timeline-version h3 a:hover { color: var(--accent); }
 
-.timeline-date { font-family: var(--mono); font-size: 0.75rem; color: var(--ink-muted); }
+.timeline-date { font-family: var(--mono); font-size: 0.875rem; color: var(--ink-muted); }
 
 .timeline-meta { display: flex; gap: 1rem; flex-wrap: wrap; margin: 0.4rem 0; }
 
-.timeline-notes { font-size: 0.85rem; color: var(--ink-muted); margin: 0.4rem 0 0.6rem; }
+.timeline-notes { font-size: 0.9375rem; color: var(--ink-muted); margin: 0.4rem 0 0.6rem; }
 
 .timeline-actions { display: flex; gap: 0.5rem; }
 
@@ -667,17 +668,17 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  font-size: 0.875rem;
+  font-size: 1rem;
 }
 .data-table th {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   text-align: left;
   color: var(--ink-muted);
-  padding: 0.5rem 1rem;
+  padding: 0.75rem 1.25rem;
   border-bottom: 1px solid var(--line);
 }
-.data-table td { padding: 0.5rem 1rem; border-bottom: 1px solid var(--line); }
+.data-table td { padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--line); }
 .data-table tr:last-child td { border-bottom: 0; }
 
 /* ---------------------------------------------------------------- responsive */
@@ -693,14 +694,14 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 1.5rem;
-  max-width: 680px;
+  padding: 2rem;
+  max-width: 800px;
 }
 
 .form-control {
   width: 100%;
   font-family: var(--mono);
-  font-size: 0.875rem;
+  font-size: 1rem;
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--line-strong);
@@ -723,9 +724,9 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
 .info-grid, .version-info-grid {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 0.35rem 1.25rem;
+  gap: 0.5rem 1.5rem;
   font-family: var(--mono);
-  font-size: 0.8125rem;
+  font-size: 0.9375rem;
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-left: 3px solid var(--vmark);
@@ -744,7 +745,7 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 0.85rem 1.1rem;
+  padding: 1.25rem 1.5rem;
   transition: border-color 120ms ease;
 }
 .plan-file-card:hover { border-color: var(--accent); }
@@ -756,17 +757,17 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
   gap: 0.75rem;
   flex-wrap: wrap;
 }
-.plan-file-header h3 { font-family: var(--mono); font-size: 0.9375rem; }
+.plan-file-header h3 { font-family: var(--mono); font-size: 1.125rem; }
 .plan-file-header h3 a { color: var(--ink); }
 .plan-file-header h3 a:hover { color: var(--accent); }
 
-.plan-file-description { color: var(--ink-muted); font-size: 0.85rem; margin: 0.3rem 0; }
+.plan-file-description { color: var(--ink-muted); font-size: 0.9375rem; margin: 0.3rem 0; }
 .plan-file-meta { display: flex; gap: 1rem; flex-wrap: wrap; margin: 0.3rem 0 0.5rem; }
 .plan-file-actions { display: flex; gap: 0.5rem; }
 
 .version-badge {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--vmark);
 }
