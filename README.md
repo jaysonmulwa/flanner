@@ -14,6 +14,9 @@ pip install -e .
 flanner --help
 ```
 
+Once installed and initialized (see Quick Start), run `flanner web --open-browser`
+to explore your plans in the browser dashboard.
+
 ## Features
 
 - 🤖 **MCP Integration**: Exposes plan file management tools to Claude/Codex
@@ -155,6 +158,19 @@ Claude will use the MCP tools to:
 - Create plan files with `create_plan_file_tool()`
 - Update plans with `update_plan_file_tool()`
 - View history with `get_plan_history_tool()`
+
+### 8. Explore Your Plans in the Web UI
+
+Finish by opening the browser dashboard to see everything you just set up:
+
+```bash
+flanner web --open-browser
+```
+
+Then visit http://localhost:8080 (if another app holds port 8080 - Docker
+Desktop commonly does - pick another one with `flanner web --port 8321`).
+You can browse projects, read plans with rendered markdown, edit them, and
+walk the version history.
 
 ## Plan File Format
 
