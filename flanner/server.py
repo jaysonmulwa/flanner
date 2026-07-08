@@ -1000,5 +1000,7 @@ def get_jira_config_tool(project_id: str) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    # Run the MCP server
+    # Initialize the database before serving: tools assume a live session,
+    # and an MCP client's first call is otherwise "Database not initialized"
+    ensure_database()
     mcp.run(transport="stdio")
