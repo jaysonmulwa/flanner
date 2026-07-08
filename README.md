@@ -120,6 +120,16 @@ Decisions are recorded in [docs/adr/](docs/adr/), with more guides in [docs/](do
 
 An agent calls `get_plan_config` to learn where plans go, then `create_plan_file_tool` or `update_plan_file_tool` to write them. Flanner places the file in the project's plan directory, adds the header, and bumps the version. Files stay in `.plans/` (git-ignored), so they never land in a commit by accident.
 
+## Roadmap
+
+Flanner is local-first today. Planned next:
+
+- Cloud-hosted plans: a PostgreSQL catalog and S3-backed storage for effectively unlimited history
+- Shared workspaces for team collaboration
+- Full-text search across plans
+- Links out to product trackers, chat, and second brains like Notion
+- Real-time updates in the web UI
+
 ## Contributing
 
 Setup, the CI gates, benchmarks, and the release process are in [CONTRIBUTING.md](CONTRIBUTING.md).
