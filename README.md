@@ -1,6 +1,11 @@
 # Flanner
 
+[![CI](https://github.com/jaysonmulwa/flanner/actions/workflows/ci.yml/badge.svg)](https://github.com/jaysonmulwa/flanner/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A comprehensive plan file management system that integrates with Claude Code and other AI assistants through MCP (Model Context Protocol).
+
+![flanner plan view](docs/assets/plan-view.png)
 
 ## Installation
 
@@ -299,6 +304,8 @@ flanner web --open-browser
 Access at: `http://localhost:8080`
 
 ### Web Interface Screenshots
+
+![flanner dashboard](docs/assets/dashboard.png)
 
 The web interface includes:
 - **Dashboard** (`/`): Project overview with stats
