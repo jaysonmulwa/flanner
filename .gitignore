@@ -65,3 +65,6 @@ log.txt
 # Local agent-tool dirs (not part of the shipped integration)
 .agents/
 .codex/
+
+# Local design drafts (not tracked)
+docs/cloud-design.md
