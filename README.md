@@ -25,9 +25,10 @@ Today Flanner is local-first; the goal is cloud-hosted plans: shared workspaces 
 ## Quick start
 
 ```bash
-cd flanner
-pip install -e .     # provides the `flanner` command
-flanner init         # database, MCP registration, and a project for this repo
+pip install flanner
+
+cd your-project      # a git repo where plans should live
+flanner init         # sets up the database, MCP registration, and a project
 ```
 
 Then ask your agent to work with plans:
