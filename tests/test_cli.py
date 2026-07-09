@@ -684,3 +684,20 @@ def test_list_project_plans_json(runner, plan):
     assert result.exit_code == 0
     rows = json.loads(result.output)
     assert rows and rows[0]["name"] == "myplan" and rows[0]["version"] == 1
+
+
+def test_web_warns_on_non_local_host(runner, initialized, monkeypatch):
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+    result = runner.invoke(cli, ["web", "--host", "0.0.0.0", "--port", "0"])
+    assert result.exit_code == 0
+    assert "exposes the web UI beyond localhost" in result.output
+
+
+def test_web_no_warning_on_localhost(runner, initialized, monkeypatch):
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+    result = runner.invoke(cli, ["web", "--host", "127.0.0.1", "--port", "0"])
+    assert "exposes the web UI" not in result.output

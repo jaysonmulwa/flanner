@@ -600,6 +600,14 @@ def web(port: int, host: str, open_browser: bool) -> None:
         console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
         raise SystemExit(1)
 
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        console.print(
+            f"WARN Binding {host} exposes the web UI beyond localhost. It has no "
+            "authentication; anyone who can reach this address can read and edit "
+            "your plans. Use 127.0.0.1 unless you have put auth in front of it.",
+            style="yellow",
+        )
+
     console.print("\nStarting Flanner Web Interface...\n", style="cyan bold")
     console.print(f"  Server:    http://{host}:{port}", style="green")
     console.print(f"  Dashboard: http://{host}:{port}/", style="green")
