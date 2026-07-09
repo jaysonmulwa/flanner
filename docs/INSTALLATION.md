@@ -1,121 +1,78 @@
-# Flanner Installation Guide
+# Installation
 
-## Quick Start (Without Installation)
+For the short version see the [README](../README.md); for the development
+setup (uv, gates, release) see [CONTRIBUTING](../CONTRIBUTING.md). This guide
+covers install, project setup, upgrade, and removal in more detail.
 
-You can run Flanner directly without installation:
+## Install
 
-```bash
-# Windows
-cd path\to\flanner
-flanner --help
-
-# Or use Python directly
-python -m flanner.cli --help
-```
-
-## Proper Installation (Recommended)
-
-### Option 1: Install with pip (Editable Mode)
-
-This allows you to run `flanner` from anywhere:
+Flanner is a Python package. Install it from a clone in editable mode, which
+puts the `flanner` command on your PATH:
 
 ```bash
 cd flanner
 pip install -e .
-```
-
-After installation, you can use `flanner` command directly:
-
-```bash
-flanner init
-flanner status
-flanner sync
-```
-
-### Option 2: Add to PATH (Windows)
-
-1. Add the flanner directory to your PATH
-2. Use the `flanner.bat` wrapper:
-
-```bash
-set PATH=%PATH%;C:\path\to\flanner
 flanner --help
 ```
 
-### Option 3: Create Alias (Linux/Mac)
-
-Add to your `.bashrc` or `.zshrc`:
+Or with uv, which creates and manages the virtualenv for you:
 
 ```bash
-alias flanner='python /path/to/flanner/flanner/cli.py'
+uv sync
+uv run python -m flanner.cli --help
 ```
 
-Then reload your shell:
+Note: inside the repo, prefer `python -m flanner.cli` over `uv run flanner`.
+The `flanner/` source directory shadows the installed console script there.
+
+Without installing at all, run the module directly:
 
 ```bash
-source ~/.bashrc  # or ~/.zshrc
-flanner --help
+python -m flanner.cli --help
 ```
 
-## Verify Installation
-
-```bash
-flanner --help
-# Should show: Flanner - Manage plan files for AI assistants
-```
-
-## Post-Installation
-
-Initialize Flanner in your project:
+## Set up a project
 
 ```bash
 cd your-project
 flanner init
 ```
 
-This will:
-- Create `~/.flanner/` directory for database
-- Set up your project with plan file tracking
-- Automatically register with Claude Code (optional)
+`flanner init` is safe to re-run. It:
 
-## Upgrading
+- creates `~/.flanner/` with the SQLite catalog (override with `FLANNER_HOME`
+  or `FLANNER_DB_PATH`)
+- creates `.plans/` and adds it to `.gitignore`
+- registers the MCP server with Claude Code
+- writes a managed block to CLAUDE.md and AGENTS.md, installs the guard-write
+  hook in `.claude/settings.json`, and installs the flanner-plan skill
 
-If you installed with pip:
+Verify:
+
+```bash
+flanner status
+```
+
+## Upgrade
 
 ```bash
 cd flanner
-git pull  # if using git
+git pull
 pip install -e . --upgrade
 ```
 
-## Uninstallation
-
-If installed with pip:
+## Uninstall
 
 ```bash
 pip uninstall flanner
 ```
 
-To remove data:
+Remove the catalog (plan files in your repositories are untouched):
 
 ```bash
-# Windows
-rmdir /s %USERPROFILE%\.flanner
-
 # Linux/Mac
 rm -rf ~/.flanner
+
+# Windows
+rmdir /s %USERPROFILE%\.flanner
 ```
-
-## Command Reference
-
-All commands now use `flanner` prefix:
-
-| Old Command | New Command |
-|-------------|-------------|
-| `python -m flanner.cli init` | `flanner init` |
-| `python -m flanner.cli status` | `flanner status` |
-| `python -m flanner.cli sync` | `flanner sync` |
-| `python -m flanner.cli list` | `flanner list` |
-| `python -m flanner.cli web` | `flanner web` |
-
-See `flanner --help` for full command list.
