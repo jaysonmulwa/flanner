@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Schema migration runner: a versioned MIGRATIONS registry upgrades an existing
+  database in-place when SCHEMA_VERSION rises, instead of only stamping the
+  version (see docs/adr/0003-schema-migrations.md)
+
+### Changed
+- Extracted the shared plan write-path (frontmatter, filename, save, hash,
+  version record) into flanner/plan_ops.write_version; the MCP server and web
+  UI both call it so the four create/update copies cannot drift
+
+### Fixed
+- Bump pytest to >=9.0.3 so pip-audit passes (PYSEC-2026-1845)
+- Replace deprecated datetime.utcnow() with a naive-UTC helper
+- Refresh the stale docs/INSTALLATION.md
+
+### Security
+- flanner web warns when binding a non-local host (the web UI has no auth)
+
 ## [0.3.0] - 2026-07-09
 
 ### Added

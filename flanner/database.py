@@ -7,12 +7,14 @@ Provides SQLAlchemy models and database operations.
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import (
     Boolean,
+    Connection,
     DateTime,
     Dialect,
     ForeignKey,
@@ -21,6 +23,7 @@ from sqlalchemy import (
     Text,
     create_engine,
     func,
+    inspect,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.engine import Engine
@@ -240,6 +243,51 @@ _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
 
 
+def _migration_1(conn: Connection) -> None:
+    """0 -> 1: schema versioning introduced. The v1 layout matches the
+    pre-versioning tables, so there is no DDL to apply."""
+
+
+# Target version -> the step that upgrades from (target - 1) to target. Add an
+# entry for every SCHEMA_VERSION bump; _apply_schema runs the pending ones in
+# order. New whole tables are handled by create_all; use a migration here for
+# in-place changes to existing tables (ADD COLUMN, backfills, index changes).
+MIGRATIONS: dict[int, Callable[[Connection], None]] = {
+    1: _migration_1,
+}
+
+
+def _apply_schema(engine: Engine) -> None:
+    """Bring the database to SCHEMA_VERSION.
+
+    Fresh file: create_all produces the current schema and we stamp it.
+    Existing file: create_all adds any brand-new tables, then pending
+    migrations run in order for in-place changes. A newer-than-supported
+    database is refused rather than silently downgraded.
+    """
+    fresh = not inspect(engine).has_table("projects")
+
+    # create_all never alters existing tables; it only creates missing ones.
+    Base.metadata.create_all(engine)
+
+    with engine.begin() as conn:
+        found = int(conn.exec_driver_sql("PRAGMA user_version").scalar() or 0)
+        if found > SCHEMA_VERSION:
+            raise DatabaseError(
+                f"Database schema v{found} is newer than this flanner supports "
+                f"(v{SCHEMA_VERSION}). Upgrade flanner."
+            )
+        if fresh:
+            conn.exec_driver_sql(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            return
+        for target in range(found + 1, SCHEMA_VERSION + 1):
+            migrate = MIGRATIONS.get(target)
+            if migrate is None:
+                raise DatabaseError(f"No migration registered for schema v{target}")
+            migrate(conn)
+            conn.exec_driver_sql(f"PRAGMA user_version = {target}")
+
+
 def init_database(db_path: str | None = None) -> None:
     """
     Initialize the database and create tables.
@@ -268,21 +316,8 @@ def init_database(db_path: str | None = None) -> None:
     # ponytail: revisit with a session_scope() contextmanager if perf matters
     _engine = create_engine(f"sqlite:///{db_path}", echo=False, poolclass=NullPool)
 
-    # Create tables
-    Base.metadata.create_all(_engine)
-
-    # Stamp/verify schema version (0 means pre-versioning or fresh file)
-    with _engine.connect() as conn:
-        found = conn.exec_driver_sql("PRAGMA user_version").scalar() or 0
-        if found > SCHEMA_VERSION:
-            raise DatabaseError(
-                f"Database schema v{found} is newer than this flanner supports "
-                f"(v{SCHEMA_VERSION}). Upgrade flanner."
-            )
-        if found < SCHEMA_VERSION:
-            # v0 -> v1: first stamped release, tables created by create_all above
-            conn.exec_driver_sql(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            conn.commit()
+    # Create tables (fresh) or run pending migrations (existing), then stamp.
+    _apply_schema(_engine)
 
     # Create session factory
     _SessionLocal = sessionmaker(bind=_engine, autocommit=False, autoflush=False)
