@@ -1,5 +1,14 @@
 # Contributing to flanner
 
+## Branches
+
+- `development` is the working branch. Day-to-day work and PRs target it.
+- `main` is the release branch and stays always-releasable.
+- CI runs on pushes and PRs to both.
+- To release: open a PR from `development` to `main`, merge it, then tag and
+  cut a GitHub Release from `main` (see Releasing). Publishing to PyPI only
+  happens from a Release on `main`, so nothing ships until it reaches `main`.
+
 ## Setup
 
 With [uv](https://docs.astral.sh/uv/) (recommended, cross-platform, one step):
