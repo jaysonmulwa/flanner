@@ -70,4 +70,6 @@ numbers on Windows 11, Python 3.12, SQLite on NVMe: `create_project` ~36 ms,
 
 1. Move the `[Unreleased]` CHANGELOG entries under a new version heading.
 2. Bump `version` in `pyproject.toml` and `flanner/__init__.py`.
-3. Once CI is green, tag and push: `git tag vX.Y.Z && git push --tags`.
+3. Commit, then tag and push: `git tag vX.Y.Z && git push origin main --tags`.
+4. Publish a GitHub Release for the tag. The `publish` workflow then builds the
+   package and uploads it to PyPI via Trusted Publishing (OIDC, no tokens).
