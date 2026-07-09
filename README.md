@@ -1,6 +1,6 @@
 # Flanner
 
-[![CI](https://github.com/jaysonmulwa/flanner/actions/workflows/ci.yml/badge.svg)](https://github.com/jaysonmulwa/flanner/actions/workflows/ci.yml)
+[![CI](https://github.com/jaysonmulwa/flanner/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jaysonmulwa/flanner/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A plan-file manager for AI coding agents, wired into Claude Code and other assistants over MCP (Model Context Protocol).
