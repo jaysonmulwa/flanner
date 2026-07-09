@@ -13,6 +13,7 @@ from flanner.utils import (
     hash_content,
     sanitize_filename,
     truncate_string,
+    utcnow,
     validate_path,
 )
 
@@ -45,7 +46,7 @@ def test_format_datetime():
 
 
 def test_format_relative_time_buckets():
-    now = datetime.utcnow()
+    now = utcnow()
     assert format_relative_time(now) == "just now"
     assert format_relative_time(now - timedelta(minutes=1)) == "1 minute ago"
     assert format_relative_time(now - timedelta(minutes=5)) == "5 minutes ago"

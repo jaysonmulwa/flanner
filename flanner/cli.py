@@ -727,12 +727,11 @@ def claude_info() -> None:
 
 def _sync_file(session: Session, proj: ProjectModel, file_path: Path, dry_run: bool) -> str:
     """Import one plan file into the database. Returns 'imported', 'skipped', or 'error'."""
-    from datetime import datetime
     from uuid import UUID
 
     from .database import PlanFileModel, VersionModel, get_plan_file, get_version
     from .frontmatter import parse_frontmatter, validate_frontmatter
-    from .utils import hash_content
+    from .utils import hash_content, utcnow
 
     file_name = file_path.name
     with open(file_path, encoding="utf-8") as f:
@@ -778,12 +777,12 @@ def _sync_file(session: Session, proj: ProjectModel, file_path: Path, dry_run: b
                 file_path=str(file_path),
                 content_hash=hash_content(body),
                 created_by=created_by,
-                created_at=datetime.utcnow(),
+                created_at=utcnow(),
                 notes=f"Imported version {version}",
             )
         )
         existing.current_version = version
-        existing.updated_at = datetime.utcnow()
+        existing.updated_at = utcnow()
         session.commit()
         console.print(
             f"  OK UPDATED {file_name} (plan: {plan_name}, v{old_version} -> v{version})",
@@ -806,8 +805,8 @@ def _sync_file(session: Session, proj: ProjectModel, file_path: Path, dry_run: b
             description=f"Imported from {file_name}",
             current_version=version,
             auto_version=True,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=utcnow(),
+            updated_at=utcnow(),
         )
     )
     session.add(
@@ -817,7 +816,7 @@ def _sync_file(session: Session, proj: ProjectModel, file_path: Path, dry_run: b
             file_path=str(file_path),
             content_hash=hash_content(body),
             created_by=created_by,
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
             notes=f"Imported version {version}",
         )
     )

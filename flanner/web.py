@@ -7,7 +7,6 @@ Provides a browser-based UI for viewing and managing plan files.
 import logging
 import os
 from collections import OrderedDict
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -43,7 +42,7 @@ from .exceptions import DatabaseError
 from .frontmatter import create_plan_file_content, generate_frontmatter
 from .git_integration import find_git_root, update_gitignore, validate_git_repo
 from .storage import ensure_plan_directory_exists, load_plan_file, save_plan_file_with_frontmatter
-from .utils import format_relative_time, generate_file_name, hash_content
+from .utils import format_relative_time, generate_file_name, hash_content, utcnow
 
 # Initialize FastAPI app
 logger = logging.getLogger(__name__)
@@ -452,7 +451,7 @@ async def create_plan_post(
         plan_name=name,
         version=1,
         created_by="user",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
     # Combine frontmatter + content
@@ -645,7 +644,7 @@ async def plan_update(
         plan_name=plan_file.name,
         version=new_version_num,
         created_by="user",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
     # Combine frontmatter + content
@@ -675,7 +674,7 @@ async def plan_update(
 
     # Update plan file current version
     plan_file.current_version = new_version_num
-    plan_file.updated_at = datetime.utcnow()
+    plan_file.updated_at = utcnow()
     session.commit()
 
     return RedirectResponse(url=f"/plans/{plan_file_id}", status_code=303)

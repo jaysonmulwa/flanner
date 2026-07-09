@@ -4,8 +4,13 @@ Utility functions for Flanner
 
 import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+
+def utcnow() -> datetime:
+    """Current UTC time, returned naive to match the SQLite DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def hash_content(content: str) -> str:
@@ -95,7 +100,7 @@ def format_relative_time(dt: datetime) -> str:
     Returns:
         Relative time string
     """
-    now = datetime.utcnow()
+    now = utcnow()
     diff = now - dt
 
     seconds = diff.total_seconds()

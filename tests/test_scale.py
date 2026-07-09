@@ -1,7 +1,6 @@
 """Scale guardrails: pagination, render caps, MCP result limits."""
 
 import uuid
-from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +13,7 @@ from flanner.server import (
     get_plan_file_tool,
     list_plan_files_tool,
 )
+from flanner.utils import utcnow
 from flanner.web import app, render_plan_html
 
 
@@ -36,7 +36,7 @@ def _bulk_project(session, n_plans: int) -> ProjectModel:
                 version=1,
                 file_path="/nonexistent.md",
                 content_hash=f"h{i}",
-                created_at=datetime.utcnow(),
+                created_at=utcnow(),
             )
         )
     session.commit()

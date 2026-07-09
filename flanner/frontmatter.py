@@ -4,12 +4,17 @@ Frontmatter handling for Flanner
 Provides YAML frontmatter generation and parsing for plan files.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
 import frontmatter
 import yaml
+
+
+def _utcnow() -> datetime:
+    """Current UTC time, naive to match the DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def generate_frontmatter(
@@ -37,7 +42,7 @@ def generate_frontmatter(
         YAML frontmatter string (including --- delimiters)
     """
     if created_at is None:
-        created_at = datetime.utcnow()
+        created_at = _utcnow()
 
     # Create frontmatter dictionary
     fm_data = {
@@ -202,7 +207,7 @@ def increment_version_in_frontmatter(content: str) -> str:
         fm_data["version"] = 1
 
     # Update created_at
-    fm_data["created_at"] = datetime.utcnow().isoformat() + "Z"
+    fm_data["created_at"] = _utcnow().isoformat() + "Z"
 
     post = frontmatter.Post(body, **fm_data)
     return frontmatter.dumps(post)

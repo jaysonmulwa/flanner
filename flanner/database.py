@@ -7,7 +7,7 @@ Provides SQLAlchemy models and database operations.
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +39,11 @@ from sqlalchemy.types import CHAR, TypeDecorator, TypeEngine
 from .exceptions import DatabaseError, DuplicateError, NotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    """Current UTC time, naive to match the DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Base(DeclarativeBase):
@@ -101,9 +106,9 @@ class ProjectModel(Base):
     plan_directory: Mapped[str] = mapped_column(String, default=".plans", nullable=True)
     # Auto-update .gitignore
     auto_gitignore: Mapped[bool] = mapped_column(Boolean, default=True, nullable=True)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=_utcnow, onupdate=_utcnow
     )
 
     # Relationships
@@ -130,9 +135,9 @@ class PlanFileModel(Base):
     current_version: Mapped[int] = mapped_column(Integer, default=1, nullable=True)
     # Auto-increment version on update
     auto_version: Mapped[bool] = mapped_column(Boolean, default=True, nullable=True)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=_utcnow, onupdate=_utcnow
     )
 
     # Relationships
@@ -161,7 +166,7 @@ class VersionModel(Base):
     content_hash: Mapped[str | None] = mapped_column(String)
     # 'user', 'claude', 'codex', etc.
     created_by: Mapped[str] = mapped_column(String, default="user", nullable=True)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
     # Version notes/changelog
     notes: Mapped[str | None] = mapped_column(Text)
 
@@ -185,9 +190,9 @@ class JiraConfigModel(Base):
     jira_url: Mapped[str] = mapped_column(String, nullable=False)
     # Default JIRA project key (e.g., PROJ)
     jira_project_key: Mapped[str | None] = mapped_column(String)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=_utcnow, onupdate=_utcnow
     )
 
     # Relationships
@@ -216,7 +221,7 @@ class JiraLinkModel(Base):
     jira_issue_type: Mapped[str | None] = mapped_column(String)
     # User notes about the link
     notes: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
     # Who created the link
     created_by: Mapped[str] = mapped_column(String, default="user", nullable=True)
 
@@ -438,7 +443,7 @@ def update_project(
     if description is not None:
         project.description = description
 
-    project.updated_at = datetime.utcnow()
+    project.updated_at = _utcnow()
     _commit(session)
     session.refresh(project)
 
@@ -661,7 +666,7 @@ def create_jira_config(
         existing.jira_url = jira_url
         if jira_project_key is not None:
             existing.jira_project_key = jira_project_key
-        existing.updated_at = datetime.utcnow()
+        existing.updated_at = _utcnow()
         _commit(session)
         session.refresh(existing)
         return existing

@@ -5,7 +5,6 @@ Exposes plan file management tools to Claude Code and other AI assistants.
 """
 
 import os
-from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -36,7 +35,7 @@ from .storage import (
     load_plan_file,
     save_plan_file_with_frontmatter,
 )
-from .utils import generate_file_name, hash_content
+from .utils import generate_file_name, hash_content, utcnow
 
 # Initialize MCP server
 mcp = FastMCP("flanner")
@@ -421,7 +420,7 @@ def create_plan_file_tool(
         plan_name=name,
         version=1,
         created_by=created_by,
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
     # Combine frontmatter + content
@@ -526,7 +525,7 @@ def update_plan_file_tool(
             plan_name=plan_file.name,
             version=new_version_num,
             created_by=created_by,
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
 
         # Combine frontmatter + content
@@ -556,7 +555,7 @@ def update_plan_file_tool(
 
         # Update plan file current version
         plan_file.current_version = new_version_num
-        plan_file.updated_at = datetime.utcnow()
+        plan_file.updated_at = utcnow()
         session.commit()
 
         return {
