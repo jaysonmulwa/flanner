@@ -73,3 +73,9 @@ numbers on Windows 11, Python 3.12, SQLite on NVMe: `create_project` ~36 ms,
 3. Commit, then tag and push: `git tag vX.Y.Z && git push origin main --tags`.
 4. Publish a GitHub Release for the tag. The `publish` workflow then builds the
    package and uploads it to PyPI via Trusted Publishing (OIDC, no tokens).
+
+The publish job runs in the `pypi` GitHub Environment. Add a **required
+reviewer** to that environment (repo *Settings -> Environments -> pypi ->
+Required reviewers*) so every publish pauses for a human to approve before it
+uploads to PyPI. The one-time PyPI-side setup (registering the trusted
+publisher) is in the workflow header at `.github/workflows/publish.yml`.
