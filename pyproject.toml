@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,9 +7,24 @@ name = "flanner"
 version = "0.4.0"
 description = "Plan file management for AI assistants via MCP"
 authors = [{ name = "Jayson Mulwa", email = "jayson.mulwa@gmail.com" }]
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = ["mcp", "claude", "codex", "ai-agents", "plan-files", "markdown", "cli", "planning"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Utilities",
+]
 dependencies = [
     "click>=8.1,<9",
     "rich>=13.0,<16",
@@ -41,6 +56,12 @@ dev = [
 
 [project.scripts]
 flanner = "flanner.cli:cli"
+
+[project.urls]
+Homepage = "https://flanner.io"
+Repository = "https://github.com/jaysonmulwa/flanner"
+Changelog = "https://github.com/jaysonmulwa/flanner/blob/main/CHANGELOG.md"
+Issues = "https://github.com/jaysonmulwa/flanner/issues"
 
 [tool.mypy]
 strict = true
