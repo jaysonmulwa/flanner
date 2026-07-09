@@ -25,7 +25,6 @@ from .database import count_projects as db_count_projects
 from .database import create_plan_file as db_create_plan_file
 from .database import (
     create_project,
-    create_version,
     delete_project,
     get_plan_file,
     get_project,
@@ -39,10 +38,10 @@ from .database import (
 from .database import list_plan_files as db_list_plan_files
 from .database import list_projects as db_list_projects
 from .exceptions import DatabaseError
-from .frontmatter import create_plan_file_content, generate_frontmatter
 from .git_integration import find_git_root, update_gitignore, validate_git_repo
-from .storage import ensure_plan_directory_exists, load_plan_file, save_plan_file_with_frontmatter
-from .utils import format_relative_time, generate_file_name, hash_content, utcnow
+from .plan_ops import write_version
+from .storage import ensure_plan_directory_exists, load_plan_file
+from .utils import format_relative_time, hash_content, utcnow
 
 # Initialize FastAPI app
 logger = logging.getLogger(__name__)
@@ -443,39 +442,12 @@ async def create_plan_post(
             },
         )
 
-    # Generate frontmatter
-    frontmatter_str = generate_frontmatter(
-        project_id=project.id,
-        project_name=project.name,
-        plan_file_id=plan_file.id,
-        plan_name=name,
-        version=1,
-        created_by="user",
-        created_at=utcnow(),
-    )
-
-    # Combine frontmatter + content
-    full_content = create_plan_file_content(frontmatter_str, content)
-
-    # Generate filename
-    file_name = generate_file_name(name, 1)
-
-    # Save file
-    file_path = save_plan_file_with_frontmatter(
-        project_root=project.project_root,
-        plan_directory=project.plan_directory,
-        file_name=file_name,
-        content=full_content,
-    )
-
-    # Create version record
-    content_hash = hash_content(content)
-    create_version(
+    write_version(
         session,
-        plan_file_id=plan_file.id,
+        project=project,
+        plan_file=plan_file,
         version=1,
-        file_path=file_path,
-        content_hash=content_hash,
+        content=content,
         created_by="user",
         notes="Initial version",
     )
@@ -636,38 +608,12 @@ async def plan_update(
     # Create new version
     new_version_num = plan_file.current_version + 1
 
-    # Generate frontmatter
-    frontmatter_str = generate_frontmatter(
-        project_id=project.id,
-        project_name=project.name,
-        plan_file_id=plan_file.id,
-        plan_name=plan_file.name,
-        version=new_version_num,
-        created_by="user",
-        created_at=utcnow(),
-    )
-
-    # Combine frontmatter + content
-    full_content = create_plan_file_content(frontmatter_str, content)
-
-    # Generate new filename
-    file_name = generate_file_name(plan_file.name, new_version_num)
-
-    # Save new file
-    file_path = save_plan_file_with_frontmatter(
-        project_root=project.project_root,
-        plan_directory=project.plan_directory,
-        file_name=file_name,
-        content=full_content,
-    )
-
-    # Create version record
-    create_version(
+    write_version(
         session,
-        plan_file_id=plan_file.id,
+        project=project,
+        plan_file=plan_file,
         version=new_version_num,
-        file_path=file_path,
-        content_hash=new_hash,
+        content=content,
         created_by="user",
         notes=notes,
     )

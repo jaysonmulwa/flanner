@@ -17,9 +17,10 @@ ALLOWED = {
     "database": {"exceptions"},
     "storage": {"exceptions", "frontmatter", "utils"},
     "claude_integration": set(),
-    "server": FOUNDATION | {"database", "storage"},
-    "web": FOUNDATION | {"database", "storage"},
+    "server": FOUNDATION | {"database", "storage", "plan_ops"},
+    "web": FOUNDATION | {"database", "storage", "plan_ops"},
     "agent_hooks": FOUNDATION | {"database"},
+    "plan_ops": FOUNDATION | {"database", "storage"},
     "cli": FOUNDATION
     | {"database", "storage", "server", "web", "claude_integration", "agent_hooks"},
     "__main__": {"cli"},

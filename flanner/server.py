@@ -13,7 +13,6 @@ from mcp.server.fastmcp import FastMCP
 from .database import create_plan_file as db_create_plan_file
 from .database import (
     create_project,
-    create_version,
     delete_project,
     get_plan_file,
     get_project,
@@ -28,14 +27,13 @@ from .database import list_projects as db_list_projects
 
 # Import our modules
 from .exceptions import DatabaseError
-from .frontmatter import create_plan_file_content, generate_frontmatter
 from .git_integration import find_git_root, update_gitignore, validate_git_repo
+from .plan_ops import write_version
 from .storage import (
     ensure_plan_directory_exists,
     load_plan_file,
-    save_plan_file_with_frontmatter,
 )
-from .utils import generate_file_name, hash_content, utcnow
+from .utils import hash_content, utcnow
 
 # Initialize MCP server
 mcp = FastMCP("flanner")
@@ -412,39 +410,12 @@ def create_plan_file_tool(
     except ValueError as e:
         return {"error": True, "message": str(e)}
 
-    # Generate frontmatter
-    frontmatter_str = generate_frontmatter(
-        project_id=project.id,
-        project_name=project.name,
-        plan_file_id=plan_file.id,
-        plan_name=name,
-        version=1,
-        created_by=created_by,
-        created_at=utcnow(),
-    )
-
-    # Combine frontmatter + content
-    full_content = create_plan_file_content(frontmatter_str, content)
-
-    # Generate filename
-    file_name = generate_file_name(name, 1)
-
-    # Save file to disk (in project's plan directory)
-    file_path = save_plan_file_with_frontmatter(
-        project_root=project.project_root,
-        plan_directory=project.plan_directory,
-        file_name=file_name,
-        content=full_content,
-    )
-
-    # Create version record
-    content_hash = hash_content(content)  # Hash body only, not frontmatter
-    create_version(
+    version = write_version(
         session,
-        plan_file_id=plan_file.id,
+        project=project,
+        plan_file=plan_file,
         version=1,
-        file_path=file_path,
-        content_hash=content_hash,
+        content=content,
         created_by=created_by,
         notes="Initial version",
     )
@@ -453,8 +424,8 @@ def create_plan_file_tool(
         "id": str(plan_file.id),  # Convert UUID to string
         "name": plan_file.name,
         "version": 1,
-        "file_path": file_path,
-        "message": f"Plan file created successfully at {file_path}",
+        "file_path": version.file_path,
+        "message": f"Plan file created successfully at {version.file_path}",
     }
 
 
@@ -517,38 +488,12 @@ def update_plan_file_tool(
     if plan_file.auto_version:
         new_version_num = plan_file.current_version + 1
 
-        # Generate frontmatter for new version
-        frontmatter_str = generate_frontmatter(
-            project_id=project.id,
-            project_name=project.name,
-            plan_file_id=plan_file.id,
-            plan_name=plan_file.name,
-            version=new_version_num,
-            created_by=created_by,
-            created_at=utcnow(),
-        )
-
-        # Combine frontmatter + content
-        full_content = create_plan_file_content(frontmatter_str, content)
-
-        # Generate new filename
-        file_name = generate_file_name(plan_file.name, new_version_num)
-
-        # Save new file
-        file_path = save_plan_file_with_frontmatter(
-            project_root=project.project_root,
-            plan_directory=project.plan_directory,
-            file_name=file_name,
-            content=full_content,
-        )
-
-        # Create version record
-        version = create_version(
+        version = write_version(
             session,
-            plan_file_id=plan_file.id,
+            project=project,
+            plan_file=plan_file,
             version=new_version_num,
-            file_path=file_path,
-            content_hash=new_hash,
+            content=content,
             created_by=created_by,
             notes=notes,
         )
@@ -561,10 +506,10 @@ def update_plan_file_tool(
         return {
             "id": str(version.id),  # Convert UUID to string
             "version": new_version_num,
-            "file_path": file_path,
+            "file_path": version.file_path,
             "content_hash": new_hash,
             "created_by": created_by,
-            "message": f"Created version {new_version_num} at {file_path}",
+            "message": f"Created version {new_version_num} at {version.file_path}",
         }
 
     # auto_version disabled: preserve historical behavior of returning None
