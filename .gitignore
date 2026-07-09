@@ -61,3 +61,7 @@ Thumbs.db
 *.db
 log.txt
 .claude/settings.local.json
+
+# Local agent-tool dirs (not part of the shipped integration)
+.agents/
+.codex/
