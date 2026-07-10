@@ -3,6 +3,12 @@
    Monospace chrome (filenames, metadata, commands) around serif documents.
    Motifs from the file format itself: --- rules, ## headings, _v3 suffixes. */
 
+/* Smooth cross-page fades where supported (Chrome); a no-op elsewhere. */
+@view-transition { navigation: auto; }
+@media (prefers-reduced-motion: reduce) {
+  @view-transition { navigation: none; }
+}
+
 :root {
   color-scheme: light dark;
 
@@ -213,6 +219,49 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   font-size: 0.75rem;
 }
 @media (max-width: 640px) { .cmdk-trigger span { display: none; } }
+
+/* ---- inline field validation ---- */
+.field-error {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--err);
+  font-size: 0.8125rem;
+}
+.form-control[aria-invalid="true"] { border-color: var(--err); }
+
+/* ---- keyboard-shortcuts help ---- */
+.help-dialog {
+  width: min(92vw, 26rem);
+  margin: auto;
+  padding: var(--space-6);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+}
+.help-dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+.help-title { margin: 0 0 var(--space-4); font-size: 1.1rem; }
+.help-list { margin: 0 0 var(--space-5); }
+.help-list > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+.help-list dt { flex-shrink: 0; }
+.help-list dd { margin: 0; color: var(--ink-muted); text-align: right; }
+.help-list kbd {
+  font-family: var(--mono);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 0.35em;
+  margin-left: 0.2em;
+  font-size: 0.8125rem;
+}
 
 /* ---- list filter + sort controls ---- */
 .list-controls {
@@ -580,8 +629,9 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* base field styling comes from .form-control (every field carries it);
    these are the textarea-only extras */
 .form-group textarea { line-height: 1.5; resize: vertical; }
-/* only the main content editor is tall; notes/description honour their `rows` */
-.form-group textarea.markdown-editor { min-height: 320px; }
+/* only the main content editor is tall; notes/description honour their `rows`.
+   Height matches the mounted CodeMirror (60vh) so enhancing it causes no shift. */
+.form-group textarea.markdown-editor { min-height: 60vh; }
 
 .form-help { font-size: 0.875rem; color: var(--ink-muted); margin-top: 0.3rem; }
 

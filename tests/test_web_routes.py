@@ -235,6 +235,21 @@ def test_list_sort_filter_controls(client, project_id, plan_id):
     assert "data-updated=" in detail
 
 
+def test_tier2_polish_shipped(client, project_id):
+    css = client.get("/static/css/styles.css").text
+    assert "@view-transition" in css  # smooth cross-page transitions
+    js = client.get("/static/js/app.js").text
+    assert "rel = 'prefetch'" in js or "'prefetch'" in js  # hover prefetch
+    # keyboard-shortcuts help sheet ships on every page
+    home = client.get("/").text
+    assert 'id="help"' in home and "Keyboard shortcuts" in home
+    # inline duplicate-name validation on the new-project and new-plan forms
+    newproj = client.get("/projects/new").text
+    assert 'data-check-unique="project"' in newproj and 'class="field-error"' in newproj
+    newplan = client.get(f"/projects/{project_id}/plans/new").text
+    assert 'data-check-unique="plan"' in newplan and "data-check-scope=" in newplan
+
+
 def test_plan_view_has_reading_settings(client, plan_id):
     html = client.get(f"/plans/{plan_id}").text
     assert 'id="reading-panel"' in html

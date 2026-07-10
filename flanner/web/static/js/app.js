@@ -121,6 +121,28 @@ document.addEventListener('DOMContentLoaded', function () {
             toggle.setAttribute('aria-expanded', 'false');
         }
     });
+
+    // Esc closes the popover and returns focus to its trigger.
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !panel.hasAttribute('hidden')) {
+            panel.setAttribute('hidden', '');
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.focus();
+        }
+    });
+
+    // Arrow keys move focus within each segmented control.
+    panel.querySelectorAll('.reading-seg').forEach(function (seg) {
+        seg.addEventListener('keydown', function (e) {
+            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+            const btns = Array.from(seg.querySelectorAll('button'));
+            const i = btns.indexOf(document.activeElement);
+            if (i < 0) return;
+            e.preventDefault();
+            const n = btns.length;
+            btns[e.key === 'ArrowRight' ? (i + 1) % n : (i - 1 + n) % n].focus();
+        });
+    });
 });
 
 // Theme toggle: cycles system -> light -> dark, persisted. The no-flash script
@@ -297,6 +319,53 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 
+// Prefetch internal pages on hover, so a click feels instant.
+document.addEventListener('DOMContentLoaded', function () {
+    const seen = new Set();
+    document.body.addEventListener('mouseover', function (e) {
+        const a = e.target.closest('a[href^="/"]');
+        if (!a) return;
+        const href = a.getAttribute('href');
+        if (!href || seen.has(href) || href.indexOf('/static/') === 0) return;
+        seen.add(href);
+        const link = document.createElement('link');
+        link.rel = 'prefetch';
+        link.href = href;
+        document.head.appendChild(link);
+    });
+});
+
+// Inline uniqueness check: warn before submit if a project/plan name is taken,
+// instead of only learning it from the server round-trip. Reuses /api/search.
+document.addEventListener('DOMContentLoaded', function () {
+    const inputs = document.querySelectorAll('[data-check-unique]');
+    if (!inputs.length) return;
+    let index = null;
+    async function taken(type, scope) {
+        if (!index) {
+            try { index = await (await fetch('/api/search')).json(); } catch (e) { index = []; }
+        }
+        return index
+            .filter(function (i) { return i.type === type && (!scope || i.context === scope); })
+            .map(function (i) { return i.name.toLowerCase(); });
+    }
+    inputs.forEach(function (input) {
+        const err = input.parentElement.querySelector('.field-error');
+        let names = null;
+        async function check() {
+            if (names === null) names = await taken(input.dataset.checkUnique, input.dataset.checkScope || '');
+            const v = input.value.trim().toLowerCase();
+            const dup = !!v && names.indexOf(v) !== -1;
+            input.setAttribute('aria-invalid', String(dup));
+            if (err) {
+                err.hidden = !dup;
+                err.textContent = dup ? 'That name is already taken.' : '';
+            }
+        }
+        input.addEventListener('input', check);
+    });
+});
+
 // Confirmation dialogs
 function confirmDelete(message) {
     return confirm(message || 'Are you sure you want to delete this item?');
@@ -361,6 +430,10 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // Keyboard shortcuts
+function inTextField() {
+    const el = document.activeElement;
+    return !!el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
+}
 document.addEventListener('keydown', function(e) {
     // Ctrl+S or Cmd+S to save (prevent default and trigger form submit)
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -368,6 +441,15 @@ document.addEventListener('keydown', function(e) {
         const form = document.querySelector('form');
         if (form) {
             form.submit();
+        }
+        return;
+    }
+    // "?" opens the keyboard-shortcuts help (but not while typing)
+    if (e.key === '?' && !inTextField()) {
+        const help = document.getElementById('help');
+        if (help && typeof help.showModal === 'function' && !help.open) {
+            e.preventDefault();
+            help.showModal();
         }
     }
 });

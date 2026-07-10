@@ -91,6 +91,18 @@
         <p class="cmdk-hint"><kbd>↑</kbd><kbd>↓</kbd> navigate &nbsp; <kbd>↵</kbd> open &nbsp; <kbd>esc</kbd> close</p>
     </dialog>
 
+    <!-- Keyboard shortcuts help (press ?) -->
+    <dialog id="help" class="help-dialog" aria-label="Keyboard shortcuts">
+        <h2 class="help-title">Keyboard shortcuts</h2>
+        <dl class="help-list">
+            <div><dt><kbd>Ctrl</kbd><kbd>K</kbd></dt><dd>Search projects and plans</dd></div>
+            <div><dt><kbd>Ctrl</kbd><kbd>S</kbd></dt><dd>Save (in the plan editor)</dd></div>
+            <div><dt><kbd>?</kbd></dt><dd>Show this help</dd></div>
+            <div><dt><kbd>Esc</kbd></dt><dd>Close a dialog or popover</dd></div>
+        </dl>
+        <form method="dialog"><button class="btn btn-sm">Close</button></form>
+    </dialog>
+
     <script src="{{ url_for('static', path='/js/app.js') }}?v={{ asset_version }}"></script>
     {% block extra_scripts %}{% endblock %}
 </body>

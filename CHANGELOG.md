@@ -7,6 +7,13 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Keyboard-shortcuts help sheet: press `?` (outside a text field) for a native
+  dialog listing the shortcuts.
+- Snappier navigation: internal links are prefetched on hover, and supporting
+  browsers get a smooth cross-page transition (disabled under reduced motion).
+- Inline duplicate-name check on the new-project and new-plan forms: typing a
+  name that is already taken warns immediately (reusing the search index)
+  instead of waiting for the server to reject the submit.
 - Filter and sort on the projects list and a project's plan list: a search box
   narrows the visible rows and a sort control orders by name, created, or last
   updated. Client-side over the loaded page (global search is the palette).
@@ -41,7 +48,11 @@ versioning follows [SemVer](https://semver.org/).
     uniform; the first markdown heading no longer gets a stray top gap; the
     history file-path is a plain code span, not a dead link.
   - A11y: reading-settings groups are `role="group"` and labelled, and the
-    version selector has a real `<label>`.
+    version selector has a real `<label>`. The reading popover now closes on Esc
+    (returning focus to its button) and its segmented controls move with the
+    arrow keys.
+  - No layout shift when the plan editor upgrades: the plain textarea reserves
+    the same height (60vh) as the CodeMirror that mounts over it.
   - Mobile: dashboard stats stack (no orphaned third card) and small action
     buttons get a 44px touch target.
   - Cosmetic/cleanup: empty project dates show `-` consistently; the recent-
