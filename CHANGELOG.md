@@ -6,6 +6,13 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- `flanner web` checks the port first and, if it is taken, prints an actionable
+  message (how to pick another port / set `FLANNER_WEB_PORT`) and exits 1,
+  instead of letting a raw bind error scroll past. `--open-browser` now opens
+  once the server is actually accepting connections, on a background thread, so
+  it never delays startup.
+
 ### Fixed
 - Editing a plan in the web UI no longer corrupts its line endings. Browser
   forms submit CRLF; the file was written in text mode on Windows, doubling the

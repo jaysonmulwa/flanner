@@ -211,6 +211,7 @@ def guard_write() -> None:
 @cli.command()
 @click.option(
     "--port",
+    type=int,
     default=lambda: int(os.environ.get("FLANNER_WEB_PORT", "8080")),
     help="Web server port (env: FLANNER_WEB_PORT)",
 )
@@ -583,9 +584,43 @@ def delete(project_name: str, force: bool) -> None:
         console.print("ERROR Failed to delete project", style="red")
 
 
+def _port_in_use(host: str, port: int) -> bool:
+    """True if binding (host, port) fails because something already holds it."""
+    import socket
+
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return True
+    return False
+
+
+def _open_browser_when_ready(host: str, port: int) -> None:
+    """Open the browser once the server accepts connections (background thread)."""
+    import socket
+    import threading
+    import time
+    import webbrowser
+
+    target = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host  # noqa: S104 (comparison, not a bind)
+
+    def _wait_and_open() -> None:
+        for _ in range(100):  # up to ~10s
+            with socket.socket() as probe:
+                if probe.connect_ex((target, port)) == 0:
+                    break
+            time.sleep(0.1)
+        webbrowser.open(f"http://{target}:{port}")
+
+    threading.Thread(target=_wait_and_open, daemon=True).start()
+
+
 @cli.command()
 @click.option(
     "--port",
+    type=int,
     default=lambda: int(os.environ.get("FLANNER_WEB_PORT", "8080")),
     help="Web server port (env: FLANNER_WEB_PORT)",
 )
@@ -608,19 +643,28 @@ def web(port: int, host: str, open_browser: bool) -> None:
             style="yellow",
         )
 
+    if _port_in_use(host, port):
+        console.print(f"ERROR Port {port} is already in use on {host}.", style="red")
+        console.print("  Start on a different port, for example:", style="yellow")
+        console.print(f"    flanner web --port {port + 1}", style="white")
+        console.print("  Or set a default port for future runs:", style="yellow")
+        console.print("    PowerShell:  $env:FLANNER_WEB_PORT = '8090'", style="white")
+        console.print("    bash/zsh:    export FLANNER_WEB_PORT=8090", style="white")
+        console.print(
+            f"  (something may already be serving at http://{host}:{port})", style="white"
+        )
+        raise SystemExit(1)
+
     console.print("\nStarting Flanner Web Interface...\n", style="cyan bold")
     console.print(f"  Server:    http://{host}:{port}", style="green")
     console.print(f"  Dashboard: http://{host}:{port}/", style="green")
     console.print(f"  Projects:  http://{host}:{port}/projects", style="green")
     console.print("\n  Press CTRL+C to stop the server\n", style="yellow")
 
-    # Open browser if requested
+    # Open the browser once the server is actually accepting connections, on a
+    # background thread so it never delays or blocks startup.
     if open_browser:
-        import time
-        import webbrowser
-
-        time.sleep(1)  # Give server time to start
-        webbrowser.open(f"http://{host}:{port}")
+        _open_browser_when_ready(host, port)
 
     # Start web server
     try:

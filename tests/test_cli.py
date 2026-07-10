@@ -712,6 +712,19 @@ def test_web_no_warning_on_localhost(runner, initialized, monkeypatch):
     assert "exposes the web UI" not in result.output
 
 
+def test_web_port_in_use_is_graceful(runner, initialized):
+    import socket
+
+    with socket.socket() as held:
+        held.bind(("127.0.0.1", 0))
+        held.listen()
+        port = held.getsockname()[1]
+        result = runner.invoke(cli, ["web", "--host", "127.0.0.1", "--port", str(port)])
+    assert result.exit_code == 1
+    assert "already in use" in result.output
+    assert f"flanner web --port {port + 1}" in result.output  # actionable next step
+
+
 # --- linear ---
 
 
