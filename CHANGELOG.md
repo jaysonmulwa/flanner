@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [0.4.1] - 2026-07-09
+
+### Fixed
+- PyPI project page showed `pip install -e .`; the rendered description now uses
+  `pip install flanner` (0.4.0 was built before the README install line was updated).
+
+### Added
+- README explains the skill and guard-hook enforcement layer on top of the MCP tools.
+
 ## [0.4.0] - 2026-07-09
 
 ### Added
