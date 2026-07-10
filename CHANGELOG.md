@@ -7,6 +7,11 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Brand favicon (inline SVG, three-rule document mark) and `theme-color` meta for
+  the light and dark palettes, so the browser chrome matches the page.
+- Craft details: selection uses the accent wash, scrollbars are theme-aware,
+  numeric data (counts, versions, dates) uses tabular figures, and a print
+  stylesheet renders a plan as a clean document (drops the app chrome).
 - Keyboard-shortcuts help sheet: press `?` (outside a text field) for a native
   dialog listing the shortcuts.
 - Snappier navigation: internal links are prefetched on hover, and supporting
@@ -27,6 +32,11 @@ versioning follows [SemVer](https://semver.org/).
 - A real toast component for client-side notifications (bottom-right, aria-live,
   per-status left accent bar, dismiss button, reduced-motion aware), replacing
   the previously unstyled notification and built entirely on the tokens.
+
+### Changed
+- The dashboard's third stat is now "Updated this week" (plans touched in the
+  last 7 days), a real signal, instead of the length of the recent-activity list
+  (which was capped at 10 and so plateaued as a vanity number).
 
 ### Security
 - Rendered plan markdown is sanitized (nh3) before being inserted with `|safe`,

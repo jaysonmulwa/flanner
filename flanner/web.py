@@ -22,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import __version__
 from .database import count_plan_files as db_count_plan_files
+from .database import count_plan_files_recent as db_count_plan_files_recent
 from .database import count_projects as db_count_projects
 from .database import create_plan_file as db_create_plan_file
 from .database import (
@@ -259,6 +260,7 @@ async def dashboard(request: Request) -> HTMLResponse:
     # in Python and an N+1 query per project.
     total_projects = db_count_projects(session)
     total_plans = db_count_plan_files(session)
+    updated_this_week = db_count_plan_files_recent(session, days=7)
     plan_counts = plan_file_counts_by_project(session)
 
     projects = db_list_projects(session, limit=12)
@@ -277,6 +279,7 @@ async def dashboard(request: Request) -> HTMLResponse:
             "projects": projects,
             "total_projects": total_projects,
             "total_plans": total_plans,
+            "updated_this_week": updated_this_week,
             "recent_activity": recent_activity,
         },
     )

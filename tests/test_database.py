@@ -13,6 +13,23 @@ def test_get_project_by_root_missing(db, tmp_path):
     assert get_project_by_root(session, str(tmp_path)) is None
 
 
+def test_count_plan_files_recent(db, tmp_path):
+    from datetime import timedelta
+
+    from flanner.database import PlanFileModel, _utcnow, count_plan_files_recent
+
+    session = get_session()
+    proj = create_project(session, name="p", project_root=str(tmp_path), auto_gitignore=False)
+    now = _utcnow()
+    old = now - timedelta(days=30)
+    session.add(PlanFileModel(project_id=proj.id, name="fresh", updated_at=now))
+    session.add(PlanFileModel(project_id=proj.id, name="stale", updated_at=old))
+    session.commit()
+
+    assert count_plan_files_recent(session, days=7) == 1
+    assert count_plan_files_recent(session, days=60) == 2
+
+
 def test_create_and_find_project_by_root(db, tmp_path):
     root = tmp_path / "proj"
     root.mkdir()

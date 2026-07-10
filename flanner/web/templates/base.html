@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}flanner{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}?v={{ asset_version }}">
+    <meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f141d" media="(prefers-color-scheme: dark)">
     <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}?v={{ asset_version }}">
     <script>
     // Apply saved theme + reading preferences before first paint to avoid a flash.

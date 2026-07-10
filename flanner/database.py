@@ -8,7 +8,7 @@ import logging
 import os
 import uuid
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -511,6 +511,21 @@ def recent_plan_files(session: Session, limit: int = 10) -> list[PlanFileModel]:
     """Most recently updated plan files across all projects (SQL ORDER BY ... LIMIT)."""
     return (
         session.query(PlanFileModel).order_by(PlanFileModel.updated_at.desc()).limit(limit).all()
+    )
+
+
+def count_plan_files_recent(session: Session, days: int = 7) -> int:
+    """Plan files updated within the last `days` (SQL COUNT).
+
+    The cutoff is computed with the same naive-UTC convention as the columns
+    (see _utcnow), so callers do not deal with timezones.
+    """
+    cutoff = _utcnow() - timedelta(days=days)
+    return (
+        session.query(func.count(PlanFileModel.id))
+        .filter(PlanFileModel.updated_at >= cutoff)
+        .scalar()
+        or 0
     )
 
 

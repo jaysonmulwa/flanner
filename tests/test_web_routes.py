@@ -235,6 +235,21 @@ def test_list_sort_filter_controls(client, project_id, plan_id):
     assert "data-updated=" in detail
 
 
+def test_tier3_craft_signals(client, plan_id):
+    # SVG favicon is served and referenced, with theme-color meta for both schemes
+    favicon = client.get("/static/favicon.svg")
+    assert favicon.status_code == 200 and "<svg" in favicon.text
+    home = client.get("/")
+    assert 'rel="icon"' in home.text and "favicon.svg" in home.text
+    assert 'name="theme-color"' in home.text and "prefers-color-scheme: dark" in home.text
+    # dashboard shows a real "updated this week" count, not the capped-list length
+    assert "Updated this week" in home.text
+    css = client.get("/static/css/styles.css").text
+    assert "@media print" in css  # print a plan as a document
+    assert "tabular-nums" in css  # aligned numeric figures
+    assert "::selection" in css and "scrollbar-color" in css
+
+
 def test_tier2_polish_shipped(client, project_id):
     css = client.get("/static/css/styles.css").text
     assert "@view-transition" in css  # smooth cross-page transitions

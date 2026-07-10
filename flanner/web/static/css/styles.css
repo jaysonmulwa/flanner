@@ -1359,3 +1359,47 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
   padding: 0 0.3em;
   margin: 0 0.1em;
 }
+
+/* ---- craft signals (Tier 3) ---- */
+
+/* Selection picks up the blueprint accent wash. */
+::selection { background: var(--accent-wash); }
+
+/* Theme-aware scrollbars: a quiet thumb on a transparent track. */
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 6px;
+  border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ink-muted); }
+
+/* Numeric data (counts, versions, dates) aligns with tabular figures. */
+.stat-value,
+.badge,
+.version-badge,
+.data-table td,
+.cmdk-kind,
+.pager span { font-variant-numeric: tabular-nums; }
+
+/* Print a plan as a document: drop all the app chrome, keep the reading column. */
+@media print {
+  .navbar,
+  .footer,
+  .breadcrumb,
+  .header-actions,
+  .reading-settings,
+  .version-bar,
+  .skip-link,
+  .theme-toggle,
+  .cmdk-trigger,
+  .cmdk,
+  .help-dialog,
+  .toast-region { display: none !important; }
+  body { background: #fff; color: #000; }
+  .main-content { min-height: 0; }
+  .markdown-content { max-width: none; }
+  a { text-decoration: none; color: #000; }
+}
