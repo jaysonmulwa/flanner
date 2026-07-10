@@ -65,6 +65,64 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
+// Reading settings popover (plan viewer). Presentation only: sets data-* on
+// <html>, which drives CSS variables, and persists to localStorage.
+document.addEventListener('DOMContentLoaded', function () {
+    const toggle = document.getElementById('reading-toggle');
+    const panel = document.getElementById('reading-panel');
+    if (!toggle || !panel) return;
+
+    const KEY = 'flanner.reading';
+    const DEFAULTS = { preset: 'default', font: 'serif', size: 'm', measure: 'comfortable' };
+
+    function load() {
+        try {
+            return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(KEY) || '{}'));
+        } catch (e) {
+            return Object.assign({}, DEFAULTS);
+        }
+    }
+
+    function apply(state) {
+        const d = document.documentElement;
+        d.dataset.readingPreset = state.preset;
+        d.dataset.readingFont = state.font;
+        d.dataset.readingSize = state.size;
+        d.dataset.readingMeasure = state.measure;
+        panel.querySelectorAll('.reading-seg').forEach(function (seg) {
+            const key = seg.getAttribute('data-reading');
+            seg.querySelectorAll('button').forEach(function (b) {
+                b.setAttribute('aria-pressed', String(b.getAttribute('data-value') === state[key]));
+            });
+        });
+    }
+
+    let state = load();
+    apply(state);
+
+    toggle.addEventListener('click', function () {
+        const willOpen = panel.hasAttribute('hidden');
+        if (willOpen) { panel.removeAttribute('hidden'); } else { panel.setAttribute('hidden', ''); }
+        toggle.setAttribute('aria-expanded', String(willOpen));
+    });
+
+    panel.querySelectorAll('.reading-seg button').forEach(function (b) {
+        b.addEventListener('click', function () {
+            const key = b.parentElement.getAttribute('data-reading');
+            state[key] = b.getAttribute('data-value');
+            try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+            apply(state);
+        });
+    });
+
+    document.addEventListener('click', function (e) {
+        if (!panel.hasAttribute('hidden') && !e.target.closest('.reading-settings')) {
+            panel.setAttribute('hidden', '');
+            toggle.setAttribute('aria-expanded', 'false');
+        }
+    });
+});
+
 // Confirmation dialogs
 function confirmDelete(message) {
     return confirm(message || 'Are you sure you want to delete this item?');

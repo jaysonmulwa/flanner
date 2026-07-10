@@ -83,3 +83,41 @@
     </div>
 </div>
 {% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', path='/vendor/codemirror/codemirror.min.css') }}">
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', path='/vendor/codemirror/codemirror.min.js') }}"></script>
+<script src="{{ url_for('static', path='/vendor/codemirror/mode/xml/xml.min.js') }}"></script>
+<script src="{{ url_for('static', path='/vendor/codemirror/mode/markdown/markdown.min.js') }}"></script>
+<script src="{{ url_for('static', path='/vendor/codemirror/addon/selection/active-line.min.js') }}"></script>
+<script src="{{ url_for('static', path='/vendor/codemirror/addon/edit/continuelist.min.js') }}"></script>
+<script>
+// Progressive enhancement: mount CodeMirror over the plain textarea. If the
+// script fails to load the textarea keeps working, and fromTextArea copies the
+// content back on form submit so the POST body is unchanged.
+(function () {
+  var ta = document.getElementById('content');
+  if (!ta || typeof CodeMirror === 'undefined') return;
+  var cm = CodeMirror.fromTextArea(ta, {
+    mode: 'markdown',
+    lineNumbers: true,
+    lineWrapping: true,
+    styleActiveLine: true,
+    indentUnit: 4,
+    theme: 'flanner',
+    extraKeys: {
+      'Enter': 'newlineAndIndentContinueMarkdownList',
+      'Tab': function (c) { c.replaceSelection('    '); }
+    }
+  });
+  // Ctrl/Cmd+S saves; keep it working from inside the editor too.
+  cm.setOption('extraKeys', Object.assign(cm.getOption('extraKeys') || {}, {
+    'Ctrl-S': function () { cm.save(); ta.form.submit(); },
+    'Cmd-S': function () { cm.save(); ta.form.submit(); }
+  }));
+})();
+</script>
+{% endblock %}

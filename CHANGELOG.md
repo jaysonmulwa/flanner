@@ -7,6 +7,16 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Web plan editor upgraded to a real code editor (vendored CodeMirror 5, no
+  build step, fully offline): line numbers, markdown syntax highlighting,
+  active-line, and list continuation, themed to match the light/dark palette.
+  It mounts over the existing textarea as progressive enhancement, so editing
+  still works with JavaScript disabled and the form contract is unchanged.
+- Reading customization on the plan viewer: an "Aa" popover to choose a preset
+  (Default / Book / Night / Plain), font, size, and width. Presentation-only and
+  client-side (CSS variables + `data-*` attributes persisted to localStorage),
+  so the server keeps caching one canonical HTML and the render cache is never
+  invalidated per preference.
 - Self-adoption for new projects. `flanner setup` (one-time, global) registers
   the MCP server for Claude Desktop and Claude Code (user scope) and adds a
   narrow nudge to `~/.claude/CLAUDE.md`, so Claude offers to adopt a repo when
@@ -21,6 +31,8 @@ versioning follows [SemVer](https://semver.org/).
   (`..`) is rejected.
 
 ### Changed
+- Static assets (CSS/JS) are version-stamped (`?v=<version>`) so a released
+  upgrade busts the browser cache instead of serving stale files.
 - `flanner web` checks the port first and, if it is taken, prints an actionable
   message (how to pick another port / set `FLANNER_WEB_PORT`) and exits 1,
   instead of letting a raw bind error scroll past. `--open-browser` now opens

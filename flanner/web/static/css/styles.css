@@ -538,10 +538,10 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* ------------------------------------------------- rendered markdown: the
    document is the point. Serif, book measure, generous rhythm. */
 .markdown-content {
-  font-family: var(--serif);
-  font-size: 1.1875rem;
-  line-height: 1.7;
-  max-width: 76ch;
+  font-family: var(--reading-font, var(--serif));
+  font-size: var(--reading-size, 1.1875rem);
+  line-height: var(--reading-lh, 1.7);
+  max-width: var(--reading-measure, 76ch);
 }
 
 .markdown-content h1,
@@ -893,4 +893,124 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
   padding: 0.05rem 0.4rem;
   border-radius: var(--radius);
   white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- codemirror
+   Plan editor theme (cm-s-flanner). Maps CodeMirror tokens onto flanner's
+   variables so it follows the light/dark theme automatically. */
+.CodeMirror.cm-s-flanner {
+  height: 60vh;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.cm-s-flanner .CodeMirror-gutters {
+  background: var(--bg);
+  border-right: 1px solid var(--line);
+}
+.cm-s-flanner .CodeMirror-linenumber { color: var(--ink-muted); }
+.cm-s-flanner .CodeMirror-cursor { border-left: 2px solid var(--accent); }
+.cm-s-flanner .CodeMirror-activeline-background { background: var(--accent-wash); }
+.cm-s-flanner .CodeMirror-selected { background: var(--accent-wash); }
+.cm-s-flanner .CodeMirror-line::selection,
+.cm-s-flanner .CodeMirror-line > span::selection { background: var(--accent-wash); }
+/* markdown tokens */
+.cm-s-flanner .cm-header { color: var(--accent); font-weight: 700; }
+.cm-s-flanner .cm-strong { color: var(--ink); font-weight: 700; }
+.cm-s-flanner .cm-em { font-style: italic; }
+.cm-s-flanner .cm-quote { color: var(--ink-muted); font-style: italic; }
+.cm-s-flanner .cm-link,
+.cm-s-flanner .cm-url { color: var(--accent); }
+.cm-s-flanner .cm-comment { color: var(--ok); }         /* fenced code */
+.cm-s-flanner .cm-variable-2 { color: var(--vmark); }   /* list markers */
+.cm-s-flanner .cm-hr { color: var(--line-strong); }
+
+/* ---------------------------------------------------------- reading settings
+   Presentation-only, driven by data-* attributes on <html> and persisted to
+   localStorage (see app.js). The server keeps rendering one canonical HTML. */
+:root {
+  --reading-font: var(--serif);
+  --reading-size: 1.1875rem;
+  --reading-lh: 1.7;
+  --reading-measure: 76ch;
+}
+:root[data-reading-font="serif"]  { --reading-font: var(--serif); }
+:root[data-reading-font="sans"]   { --reading-font: var(--sans); }
+:root[data-reading-font="mono"]   { --reading-font: var(--mono); }
+:root[data-reading-font="system"] { --reading-font: system-ui, -apple-system, sans-serif; }
+
+:root[data-reading-size="s"]  { --reading-size: 1rem;      --reading-lh: 1.65; }
+:root[data-reading-size="m"]  { --reading-size: 1.1875rem; --reading-lh: 1.7; }
+:root[data-reading-size="l"]  { --reading-size: 1.35rem;   --reading-lh: 1.7; }
+:root[data-reading-size="xl"] { --reading-size: 1.55rem;   --reading-lh: 1.75; }
+
+:root[data-reading-measure="narrow"]      { --reading-measure: 58ch; }
+:root[data-reading-measure="comfortable"] { --reading-measure: 76ch; }
+:root[data-reading-measure="wide"]        { --reading-measure: 96ch; }
+
+/* Presets restyle the reading pane itself. "default" inherits the app theme. */
+:root[data-reading-preset="book"] .markdown-content {
+  --reading-font: var(--serif);
+  background: #f6f1e6;
+  color: #2c2620;
+  padding: 2.25rem 2.75rem;
+  border: 1px solid #e6ddc9;
+  border-radius: var(--radius);
+}
+:root[data-reading-preset="night"] .markdown-content {
+  --reading-font: var(--serif);
+  background: #10151d;
+  color: #d3dae4;
+  padding: 2.25rem 2.75rem;
+  border: 1px solid #222c3a;
+  border-radius: var(--radius);
+}
+:root[data-reading-preset="plain"] .markdown-content {
+  --reading-font: var(--sans);
+}
+
+/* the settings popover */
+.reading-settings { position: relative; display: inline-block; }
+.reading-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 50;
+  min-width: 15rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+.reading-panel[hidden] { display: none; }
+.reading-row { margin: 0.35rem 0; }
+.reading-row > span {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+  margin-bottom: 0.25rem;
+}
+.reading-seg { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.reading-seg button {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  padding: 0.2rem 0.5rem;
+  color: var(--ink-muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.reading-seg button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-color: var(--accent);
 }

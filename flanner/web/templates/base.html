@@ -4,7 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}flanner{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}?v={{ asset_version }}">
+    <script>
+    // Apply saved reading preferences before first paint to avoid a flash.
+    (function () {
+      try {
+        var r = JSON.parse(localStorage.getItem('flanner.reading') || '{}');
+        var d = document.documentElement;
+        if (r.preset) d.dataset.readingPreset = r.preset;
+        if (r.font) d.dataset.readingFont = r.font;
+        if (r.size) d.dataset.readingSize = r.size;
+        if (r.measure) d.dataset.readingMeasure = r.measure;
+      } catch (e) {}
+    })();
+    </script>
     {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -60,7 +73,7 @@
         </div>
     </footer>
 
-    <script src="{{ url_for('static', path='/js/app.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v={{ asset_version }}"></script>
     {% block extra_scripts %}{% endblock %}
 </body>
 </html>

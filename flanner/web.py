@@ -97,6 +97,10 @@ templates.env.filters["markdown"] = markdown_filter
 templates.env.filters["relative_time"] = format_relative_time
 templates.env.filters["basename"] = lambda p: Path(p).name
 
+# Version-stamp static assets so a released upgrade busts the browser cache
+# instead of serving stale CSS/JS.
+templates.env.globals["asset_version"] = __version__
+
 _STATUS_LABELS = {400: "Bad Request", 404: "Not Found", 500: "Server Error"}
 
 

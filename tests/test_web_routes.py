@@ -166,6 +166,28 @@ def test_plan_edit_page(client, plan_id):
     assert client.get(f"/plans/{MISSING_UUID}/edit").status_code == 404
 
 
+def test_plan_edit_has_codemirror_over_textarea(client, plan_id):
+    html = client.get(f"/plans/{plan_id}/edit").text
+    # CodeMirror is loaded as a vendored asset...
+    assert "vendor/codemirror/codemirror.min.js" in html
+    assert "CodeMirror.fromTextArea" in html
+    # ...but the plain textarea is still the form field (progressive enhancement).
+    assert 'id="content"' in html and 'name="content"' in html
+
+
+def test_codemirror_asset_is_served(client, plan_id):
+    resp = client.get("/static/vendor/codemirror/codemirror.min.js")
+    assert resp.status_code == 200
+    assert "CodeMirror" in resp.text
+
+
+def test_plan_view_has_reading_settings(client, plan_id):
+    html = client.get(f"/plans/{plan_id}").text
+    assert 'id="reading-panel"' in html
+    assert 'data-reading="preset"' in html
+    assert 'data-reading="font"' in html
+
+
 def test_plan_update_no_changes(client, plan_id):
     response = client.post(f"/plans/{plan_id}/edit", data={"content": "# Web Plan v1\n"})
     assert response.status_code == 303
