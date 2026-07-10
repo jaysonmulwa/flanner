@@ -157,14 +157,7 @@ def init(
 
 def _setup_agent_integration(project_root: str) -> None:
     """Wire the CLAUDE.md block, guard-write hook, and skill for this repo."""
-    from .agent_hooks import (
-        AGENT_MD_FILES,
-        agent_md_block,
-        ensure_project_mcp_json,
-        ensure_settings_hook,
-        install_skill,
-        upsert_agent_md,
-    )
+    from .agent_hooks import wire_agent_integration
     from .database import get_project_by_root
 
     try:
@@ -172,18 +165,8 @@ def _setup_agent_integration(project_root: str) -> None:
         if not project:
             return
         console.print("\n[Agent] Setting up coding-agent integration...", style="cyan")
-        block = agent_md_block(project)
-        for filename in AGENT_MD_FILES:
-            if upsert_agent_md(project_root, filename, block):
-                console.print(f"OK Added flanner block to {filename}", style="green")
-        if ensure_project_mcp_json(project_root):
-            console.print(
-                "OK Registered flanner MCP server in .mcp.json (Claude Code CLI)", style="green"
-            )
-        if ensure_settings_hook(project_root):
-            console.print("OK Installed guard-write hook in .claude/settings.json", style="green")
-        if install_skill(project_root):
-            console.print("OK Installed flanner-plan skill", style="green")
+        for item in wire_agent_integration(project_root, project):
+            console.print(f"OK Installed {item}", style="green")
     except Exception as e:
         console.print(f"WARN Could not set up agent integration: {e}", style="yellow")
 
@@ -677,6 +660,65 @@ def web(port: int, host: str, open_browser: bool) -> None:
         console.print("\n\nOK Web server stopped", style="green")
     except Exception as e:
         console.print(f"\nERROR Error starting web server: {e}", style="red")
+
+
+@cli.command()
+def setup() -> None:
+    """Make flanner available in every project (global, one-time).
+
+    Registers the MCP server for Claude Desktop and Claude Code (user scope),
+    and adds a short nudge to ~/.claude/CLAUDE.md so Claude offers to adopt a
+    repo (initialize_project_tool / flanner init) when you write a plan doc in a
+    project that is not yet flanner-managed.
+    """
+    console.print("\n[Setup] Making flanner available across all projects...\n", style="cyan bold")
+
+    # 1. Claude Desktop (single global config).
+    from .claude_integration import auto_register_on_init
+
+    ok, message = auto_register_on_init()
+    console.print(
+        f"{'OK' if ok else 'WARN'} Claude Desktop: {message}", style="green" if ok else "yellow"
+    )
+
+    # 2. Claude Code, user scope (via its own CLI so its config is written safely).
+    import shutil
+    import subprocess
+
+    claude_bin = shutil.which("claude")
+    if claude_bin:
+        proc = subprocess.run(  # noqa: S603 (fixed argv, no shell, no untrusted input)
+            [claude_bin, "mcp", "add", "-s", "user", "flanner", "--", "flanner-mcp"],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0:
+            console.print("OK Claude Code: registered flanner-mcp at user scope", style="green")
+        else:
+            detail = (proc.stderr or proc.stdout).strip().splitlines()[-1:] or [""]
+            console.print(f"WARN Claude Code: {detail[0]}", style="yellow")
+            console.print(
+                "  Add it manually:  claude mcp add -s user flanner -- flanner-mcp", style="white"
+            )
+    else:
+        console.print(
+            "- Claude Code CLI not found. To use flanner there globally, run:", style="yellow"
+        )
+        console.print("    claude mcp add -s user flanner -- flanner-mcp", style="white")
+
+    # 3. Global adoption nudge.
+    from .agent_hooks import upsert_global_nudge
+
+    changed = upsert_global_nudge()
+    where = str(Path.home() / ".claude" / "CLAUDE.md")
+    console.print(
+        f"OK Global nudge {'added to' if changed else 'already in'} {where}", style="green"
+    )
+
+    console.print(
+        "\nRestart Claude Desktop and start a fresh Claude Code session to pick up the changes.",
+        style="cyan",
+    )
 
 
 @cli.command()

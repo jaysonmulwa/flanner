@@ -198,6 +198,74 @@ def create_project_tool(
 
 
 @mcp.tool()
+def initialize_project_tool(
+    project_root: str | None = None,
+    name: str | None = None,
+    plan_directory: str = ".plans",
+) -> dict[str, Any]:
+    """
+    Adopt a repository into flanner so its plan documents are tracked.
+
+    Creates the flanner project (if it does not exist yet) and installs the
+    coding-agent integration for the repo: the CLAUDE.md/AGENTS.md guidance
+    block, the guard-write hook, the flanner-plan skill, and a .mcp.json entry.
+    Use this when the user wants to save a plan, design, architecture, or
+    migration doc in a git repo that is not yet flanner-managed, then create the
+    document with create_plan_file_tool.
+
+    Args:
+        project_root: Repo root to adopt (defaults to the git root of the cwd)
+        name: Project name (defaults to the repo directory name)
+        plan_directory: Directory for plan files (default ".plans")
+
+    Returns:
+        Project info plus the list of integration pieces installed
+    """
+    from .agent_hooks import wire_agent_integration
+    from .database import get_project_by_root
+
+    ensure_database()
+    session = get_session()
+
+    root = project_root or find_git_root(os.getcwd())
+    if not root:
+        return {
+            "error": True,
+            "message": "Not inside a git repository; pass project_root or run from a git repo.",
+        }
+
+    existing = get_project_by_root(session, root)
+    created = existing is None
+    if created:
+        result: dict[str, Any] = create_project_tool(
+            name=name or os.path.basename(os.path.normpath(root)),
+            project_root=root,
+            plan_directory=plan_directory,
+        )
+        if result.get("error"):
+            return result
+
+    project = get_project_by_root(session, root)
+    if not project:
+        return {"error": True, "message": "Failed to load project after creation"}
+
+    installed = wire_agent_integration(root, project)
+    return {
+        "project_id": str(project.id),
+        "project_name": project.name,
+        "project_root": project.project_root,
+        "plan_directory": project.plan_directory,
+        "created": created,
+        "installed": installed,
+        "message": (
+            f"{'Adopted' if created else 'Re-synced'} project '{project.name}'. "
+            f"Create plans with create_plan_file_tool(project_id='{project.id}', name=..., "
+            f"content=...)."
+        ),
+    }
+
+
+@mcp.tool()
 def configure_project_tool(
     project_id: str,
     project_root: str | None = None,

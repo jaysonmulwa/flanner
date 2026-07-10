@@ -7,6 +7,13 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Self-adoption for new projects. `flanner setup` (one-time, global) registers
+  the MCP server for Claude Desktop and Claude Code (user scope) and adds a
+  narrow nudge to `~/.claude/CLAUDE.md`, so Claude offers to adopt a repo when
+  you write a plan doc in a project that is not yet flanner-managed. A new
+  `initialize_project_tool` lets the agent do the adoption itself (create the
+  project and install the CLAUDE.md/AGENTS.md block, guard hook, skill, and
+  `.mcp.json`) without leaving the chat.
 - Plans can live in subdirectories of the plan directory. A plan name may be a
   subpath (`auth/login-flow` -> `.plans/auth/login-flow_v1.md`); parent
   directories are created, `sync` discovers nested plans, and the guard hook

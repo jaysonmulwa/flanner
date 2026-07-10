@@ -267,3 +267,31 @@ def test_init_writes_both_agent_files(tmp_path):
         assert "managed by flanner" in (repo / name).read_text(encoding="utf-8")
     assert (repo / ".claude" / "settings.json").exists()
     assert (repo / ".claude" / "skills" / "flanner-plan" / "SKILL.md").exists()
+
+
+# --- shared wiring + global nudge --------------------------------------------
+
+
+def test_wire_agent_integration(db, git_repo):
+    from flanner.agent_hooks import wire_agent_integration
+
+    project = _project(get_session(), git_repo)
+    done = wire_agent_integration(str(git_repo), project)
+    assert any("CLAUDE.md" in d for d in done)
+    assert any(".mcp.json" in d for d in done)
+    assert any("skill" in d for d in done)
+    assert (git_repo / ".mcp.json").exists()
+    assert (git_repo / ".claude" / "settings.json").exists()
+    assert wire_agent_integration(str(git_repo), project) == []  # idempotent
+
+
+def test_upsert_global_nudge(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from flanner.agent_hooks import upsert_global_nudge
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert upsert_global_nudge() is True
+    text = (tmp_path / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "initialize_project_tool" in text
+    assert upsert_global_nudge() is False  # idempotent

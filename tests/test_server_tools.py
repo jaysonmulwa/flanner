@@ -482,3 +482,30 @@ def test_get_linear_config_tool(project, no_linear_key):
     result = get_linear_config_tool(project["id"])
     assert result["configured"] is True
     assert result["workspace"] == "acme"
+
+
+# --- initialize_project_tool (adopt a repo) ----------------------------------
+
+
+def test_initialize_project_tool_adopts_repo(db, git_repo):
+    from flanner.server import initialize_project_tool
+
+    result = initialize_project_tool(project_root=str(git_repo), name="adopted")
+    assert not result.get("error"), result.get("message")
+    assert result["created"] is True
+    assert result["project_name"] == "adopted"
+    assert any("skill" in i for i in result["installed"])
+    assert (git_repo / ".mcp.json").exists()
+    assert (git_repo / ".claude" / "settings.json").exists()
+
+    # Idempotent: re-adopting an existing repo creates nothing new.
+    again = initialize_project_tool(project_root=str(git_repo))
+    assert again["created"] is False
+    assert again["installed"] == []
+
+
+def test_initialize_project_tool_rejects_non_git(db, tmp_path):
+    from flanner.server import initialize_project_tool
+
+    result = initialize_project_tool(project_root=str(tmp_path))  # exists but not a git repo
+    assert result["error"] is True

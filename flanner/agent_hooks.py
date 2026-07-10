@@ -263,3 +263,50 @@ def install_skill(root: str) -> bool:
     skill_path.parent.mkdir(parents=True, exist_ok=True)
     skill_path.write_text(_SKILL_BODY, encoding="utf-8")
     return True
+
+
+def wire_agent_integration(root: str, project: ProjectModel) -> list[str]:
+    """Install the full per-repo agent integration; return a list of what changed.
+
+    Shared by `flanner init` (CLI) and initialize_project_tool (MCP) so the set
+    of files a repo gets never drifts between the two entry points.
+    """
+    done: list[str] = []
+    block = agent_md_block(project)
+    for filename in AGENT_MD_FILES:
+        if upsert_agent_md(root, filename, block):
+            done.append(f"flanner block in {filename}")
+    if ensure_project_mcp_json(root):
+        done.append(".mcp.json (Claude Code)")
+    if ensure_settings_hook(root):
+        done.append("guard-write hook in .claude/settings.json")
+    if install_skill(root):
+        done.append("flanner-plan skill")
+    return done
+
+
+# A global nudge written into ~/.claude/CLAUDE.md by `flanner setup`. Because a
+# brand-new repo has no flanner files, the instruction to adopt it has to live
+# at user scope. It is deliberately narrow: only offer adoption on plan-doc
+# intent in an unmanaged repo, never for READMEs or casual notes.
+GLOBAL_NUDGE_BLOCK = (
+    f"{AGENT_MD_START}\n"
+    f"## Plan files (flanner, global)\n\n"
+    f"flanner tracks plan, design, architecture, migration, and RFC markdown: it "
+    f"places the file in a managed directory, adds a standard header, and versions "
+    f"every revision.\n\n"
+    f"When the user asks to write or save such a document in a git repository that "
+    f"is not yet flanner-managed (no `.plans/` and no flanner project), offer to "
+    f"adopt the repo first: call `initialize_project_tool` (or suggest "
+    f"`flanner init`), then create the plan with `create_plan_file_tool`. If the "
+    f"repo is already flanner-managed, just use the flanner tools. Do not nudge for "
+    f"READMEs, changelogs, or casual notes.\n"
+    f"{AGENT_MD_END}"
+)
+
+
+def upsert_global_nudge() -> bool:
+    """Write the global adoption nudge into ~/.claude/CLAUDE.md. Returns True if changed."""
+    claude_dir = Path.home() / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    return upsert_agent_md(str(claude_dir), "CLAUDE.md", GLOBAL_NUDGE_BLOCK)

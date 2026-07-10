@@ -25,7 +25,7 @@ ALLOWED = {
     "storage": {"exceptions", "frontmatter", "utils"},
     "claude_integration": set(),
     "linear_api": {"exceptions", "linear_utils"},
-    "server": FOUNDATION | {"database", "storage", "plan_ops", "linear_api"},
+    "server": FOUNDATION | {"database", "storage", "plan_ops", "linear_api", "agent_hooks"},
     "web": FOUNDATION | {"database", "storage", "plan_ops"},
     "agent_hooks": FOUNDATION | {"database"},
     "plan_ops": FOUNDATION | {"database", "storage"},

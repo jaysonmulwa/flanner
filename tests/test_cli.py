@@ -874,3 +874,17 @@ def test_linear_refresh_updates_cache(runner, plan, monkeypatch):
     result = runner.invoke(cli, ["linear", "refresh", "myplan", "--project", "proj"])
     assert result.exit_code == 0, result.output
     assert "[Done] Now done" in result.output
+
+
+def test_setup_registers_and_writes_global_nudge(runner, tmp_path, monkeypatch, claude_config):
+    import shutil
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(shutil, "which", lambda name: None)  # pretend the claude CLI is absent
+    result = runner.invoke(cli, ["setup"])
+    assert result.exit_code == 0, result.output
+    nudge = tmp_path / ".claude" / "CLAUDE.md"
+    assert nudge.exists()
+    assert "initialize_project_tool" in nudge.read_text(encoding="utf-8")
+    assert "Claude Code CLI not found" in result.output  # took the no-claude branch
