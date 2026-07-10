@@ -14,7 +14,7 @@ AI agents write markdown constantly: design docs, migration plans, architecture 
 Today Flanner is local-first; the goal is cloud-hosted plans: shared workspaces for easier collaboration, effectively unlimited storage and history, and clean links to the tools teams already work in, from product trackers and chat to second brains like Notion.
 
 <div align="center">
-<img src="docs/assets/plan-view.png" alt="flanner reading view: a versioned plan file" width="840">
+<img src="docs/assets/demo.gif" alt="flanner: versioned plan files linked to Linear issues, in the web dashboard" width="840">
 </div>
 
 ## Features
@@ -23,6 +23,7 @@ Today Flanner is local-first; the goal is cloud-hosted plans: shared workspaces 
 - **Automatic headers and versioning**: every plan gets YAML frontmatter, and each revision is a new version with a full history.
 - **Git protection**: plans live in `.plans/` and are kept out of commits automatically.
 - **Agent integration**: `flanner init` wires CLAUDE.md, AGENTS.md, and a guard hook so agents save plans through flanner instead of scattering raw markdown.
+- **Issue tracker links**: tie a plan to its Linear (or JIRA) issue; with a `LINEAR_API_KEY`, flanner verifies the issue and shows its live state, in the CLI and the dashboard.
 - **Reading view**: a browser dashboard to read, edit, and walk the history of plans (light and dark, fully offline).
 - **Per-project config**: customize the plan directory per repository.
 
