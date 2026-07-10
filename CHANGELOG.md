@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-10
+
 ### Added
 - Brand favicon (inline SVG, three-rule document mark) and `theme-color` meta for
   the light and dark palettes, so the browser chrome matches the page.
