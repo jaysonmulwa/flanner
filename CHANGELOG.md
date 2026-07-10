@@ -7,6 +7,9 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Filter and sort on the projects list and a project's plan list: a search box
+  narrows the visible rows and a sort control orders by name, created, or last
+  updated. Client-side over the loaded page (global search is the palette).
 - Command palette (Ctrl/Cmd+K, or the nav "Search" button): a native `<dialog>`
   that fuzzy-filters every project and plan and jumps to it. Arrow keys move the
   selection, Enter opens, Esc closes; the index is served by a new `/api/search`

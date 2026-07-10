@@ -251,6 +251,52 @@ document.addEventListener('DOMContentLoaded', function () {
     dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
 });
 
+// List filter + sort: client-side, over the rendered page. Any [data-listgroup]
+// with a [data-list-filter] input and/or [data-list-sort] select reorders and
+// hides its [data-list-item] children by their data-* attributes.
+// ponytail: operates on the current page (50 items); global search is Cmd+K.
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('[data-listgroup]').forEach(function (group) {
+        const list = group.querySelector('[data-list]');
+        if (!list) return;
+        const filter = group.querySelector('[data-list-filter]');
+        const sort = group.querySelector('[data-list-sort]');
+        const empty = group.querySelector('[data-list-empty]');
+        const items = function () { return Array.from(list.querySelectorAll('[data-list-item]')); };
+
+        function applyFilter() {
+            const q = (filter ? filter.value : '').toLowerCase().trim();
+            let shown = 0;
+            items().forEach(function (it) {
+                const hay = (it.dataset.name || it.textContent).toLowerCase();
+                const hit = !q || hay.indexOf(q) !== -1;
+                it.hidden = !hit;
+                if (hit) shown++;
+            });
+            if (empty) empty.hidden = shown !== 0;
+        }
+
+        function applySort() {
+            if (!sort || !sort.value) return;
+            const parts = sort.value.split(':');
+            const key = parts[0];
+            const mul = parts[1] === 'desc' ? -1 : 1;
+            items().sort(function (a, b) {
+                const av = a.dataset[key] || '';
+                const bv = b.dataset[key] || '';
+                const an = Number(av), bn = Number(bv);
+                const numeric = av !== '' && bv !== '' && !isNaN(an) && !isNaN(bn);
+                const cmp = numeric ? an - bn : av.localeCompare(bv);
+                return cmp * mul;
+            }).forEach(function (it) { list.appendChild(it); });
+        }
+
+        if (filter) filter.addEventListener('input', applyFilter);
+        if (sort) sort.addEventListener('change', function () { applySort(); applyFilter(); });
+        applySort();
+    });
+});
+
 // Confirmation dialogs
 function confirmDelete(message) {
     return confirm(message || 'Are you sure you want to delete this item?');

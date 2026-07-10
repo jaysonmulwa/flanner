@@ -13,7 +13,20 @@
     </header>
 
     {% if projects %}
-    <div class="projects-table-container">
+    <div data-listgroup>
+        <div class="list-controls">
+            <input type="search" class="list-filter" data-list-filter
+                   placeholder="Filter projects..." aria-label="Filter projects by name">
+            <label class="list-sort">Sort
+                <select data-list-sort aria-label="Sort projects">
+                    <option value="name:asc">Name (A-Z)</option>
+                    <option value="created:desc">Newest first</option>
+                    <option value="created:asc">Oldest first</option>
+                    <option value="files:desc">Most files</option>
+                </select>
+            </label>
+        </div>
+        <div class="projects-table-container">
         <table class="data-table">
             <thead>
                 <tr>
@@ -25,9 +38,11 @@
                     <th>Actions</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody data-list>
                 {% for project in projects %}
-                <tr>
+                <tr data-list-item data-name="{{ project.name }}"
+                    data-created="{{ project.created_at.isoformat() if project.created_at else '' }}"
+                    data-files="{{ plan_counts.get(project.id, 0) }}">
                     <td>
                         <a href="/projects/{{ project.id }}" class="table-link">
                             <strong>{{ project.name }}</strong>
@@ -47,8 +62,10 @@
                     </td>
                 </tr>
                 {% endfor %}
+                <tr class="list-empty" data-list-empty hidden><td colspan="6">No projects match that filter.</td></tr>
             </tbody>
         </table>
+        </div>
     </div>
     {% else %}
     <div class="empty-state">

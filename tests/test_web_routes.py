@@ -224,6 +224,17 @@ def test_command_palette_index_and_markup(client, plan_id, project_id):
     assert plan["url"] == f"/plans/{plan_id}" and plan["context"] == "webproj"
 
 
+def test_list_sort_filter_controls(client, project_id, plan_id):
+    # projects list: filter input + sort select over sortable rows
+    projects = client.get("/projects").text
+    assert "data-listgroup" in projects and "data-list-filter" in projects
+    assert 'data-name="webproj"' in projects and "data-files=" in projects
+    # project detail plan list gets the same controls, with an updated-at key
+    detail = client.get(f"/projects/{project_id}").text
+    assert "data-list-sort" in detail and 'data-name="webplan"' in detail
+    assert "data-updated=" in detail
+
+
 def test_plan_view_has_reading_settings(client, plan_id):
     html = client.get(f"/plans/{plan_id}").text
     assert 'id="reading-panel"' in html

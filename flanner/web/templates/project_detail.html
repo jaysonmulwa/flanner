@@ -46,9 +46,24 @@
         <h2>Plan Files</h2>
 
         {% if plan_files %}
-        <div class="plan-files-list">
+        <div data-listgroup>
+        <div class="list-controls">
+            <input type="search" class="list-filter" data-list-filter
+                   placeholder="Filter plans..." aria-label="Filter plans by name">
+            <label class="list-sort">Sort
+                <select data-list-sort aria-label="Sort plans">
+                    <option value="updated:desc">Recently updated</option>
+                    <option value="name:asc">Name (A-Z)</option>
+                    <option value="created:desc">Newest first</option>
+                    <option value="created:asc">Oldest first</option>
+                </select>
+            </label>
+        </div>
+        <div class="plan-files-list" data-list>
             {% for plan_file in plan_files %}
-            <div class="plan-file-card">
+            <div class="plan-file-card" data-list-item data-name="{{ plan_file.name }}"
+                 data-created="{{ plan_file.created_at.isoformat() if plan_file.created_at else '' }}"
+                 data-updated="{{ plan_file.updated_at.isoformat() if plan_file.updated_at else '' }}">
                 <div class="plan-file-header">
                     <h3>
                         <a href="/plans/{{ plan_file.id }}">{{ plan_file.name }}</a>
@@ -89,6 +104,8 @@
                 </div>
             </div>
             {% endfor %}
+        </div>
+        <p class="list-empty" data-list-empty hidden>No plans match that filter.</p>
         </div>
         {% else %}
         <div class="empty-state">
