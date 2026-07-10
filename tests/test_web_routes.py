@@ -40,6 +40,18 @@ def test_markdown_filter():
     assert "<h1" in markdown_filter("# Title")
 
 
+def test_markdown_filter_sanitizes_html():
+    out = markdown_filter('# ok\n\n<script>alert(1)</script>\n\n<a href="javascript:x">j</a>')
+    assert "<script" not in out
+    assert "javascript:" not in out
+    out2 = markdown_filter("<img src=x onerror=alert(1)>")
+    assert "onerror" not in out2
+    # legitimate formatting and code fences survive sanitization
+    assert "<h1" in markdown_filter("# Title")
+    assert "<pre" in markdown_filter("```python\nprint(1)\n```")
+    assert "<table" in markdown_filter("| a | b |\n|---|---|\n| 1 | 2 |")
+
+
 # --- project pages ---
 
 
@@ -47,6 +59,7 @@ def test_dashboard_with_activity(client, plan_id):
     response = client.get("/")
     assert response.status_code == 200
     assert "webplan" in response.text
+    assert "Recent Activity" in response.text  # relabelled from "Recent Updates"
 
 
 def test_create_project_invalid_git_root(client, tmp_path):
@@ -181,11 +194,85 @@ def test_codemirror_asset_is_served(client, plan_id):
     assert "CodeMirror" in resp.text
 
 
+def test_design_tokens_and_toast_shipped(client):
+    css = client.get("/static/css/styles.css").text
+    assert "--space-4:" in css and "--shadow-md:" in css  # spacing + elevation tokens
+    assert ".toast-region" in css and ".toast--success" in css  # toast component
+    js = client.get("/static/js/app.js").text
+    assert "toast-region" in js and "aria-live" in js  # toast built with a live region
+
+
+def test_theme_toggle_and_skip_link(client):
+    html = client.get("/").text
+    assert 'id="theme-toggle"' in html
+    assert 'class="skip-link"' in html and 'href="#main"' in html
+    assert 'aria-current="page"' in html  # active nav item marked
+    css = client.get("/static/css/styles.css").text
+    assert ':root[data-theme="dark"]' in css  # manual dark overrides the OS setting
+
+
+def test_command_palette_index_and_markup(client, plan_id, project_id):
+    # the palette dialog and search trigger ship on every page
+    html = client.get("/").text
+    assert 'id="cmdk"' in html and 'id="cmdk-input"' in html
+    assert 'id="cmdk-open"' in html  # discoverable search button in the nav
+    # the search index lists both projects and their plans with jump URLs
+    index = client.get("/api/search").json()
+    proj = next(i for i in index if i["type"] == "project" and i["name"] == "webproj")
+    assert proj["url"] == f"/projects/{project_id}"
+    plan = next(i for i in index if i["type"] == "plan" and i["name"] == "webplan")
+    assert plan["url"] == f"/plans/{plan_id}" and plan["context"] == "webproj"
+
+
+def test_list_sort_filter_controls(client, project_id, plan_id):
+    # projects list: filter input + sort select over sortable rows
+    projects = client.get("/projects").text
+    assert "data-listgroup" in projects and "data-list-filter" in projects
+    assert 'data-name="webproj"' in projects and "data-files=" in projects
+    # project detail plan list gets the same controls, with an updated-at key
+    detail = client.get(f"/projects/{project_id}").text
+    assert "data-list-sort" in detail and 'data-name="webplan"' in detail
+    assert "data-updated=" in detail
+
+
+def test_tier3_craft_signals(client, plan_id):
+    # SVG favicon is served and referenced, with theme-color meta for both schemes
+    favicon = client.get("/static/favicon.svg")
+    assert favicon.status_code == 200 and "<svg" in favicon.text
+    home = client.get("/")
+    assert 'rel="icon"' in home.text and "favicon.svg" in home.text
+    assert 'name="theme-color"' in home.text and "prefers-color-scheme: dark" in home.text
+    # dashboard shows a real "updated this week" count, not the capped-list length
+    assert "Updated this week" in home.text
+    css = client.get("/static/css/styles.css").text
+    assert "@media print" in css  # print a plan as a document
+    assert "tabular-nums" in css  # aligned numeric figures
+    assert "::selection" in css and "scrollbar-color" in css
+
+
+def test_tier2_polish_shipped(client, project_id):
+    css = client.get("/static/css/styles.css").text
+    assert "@view-transition" in css  # smooth cross-page transitions
+    js = client.get("/static/js/app.js").text
+    assert "rel = 'prefetch'" in js or "'prefetch'" in js  # hover prefetch
+    # keyboard-shortcuts help sheet ships on every page
+    home = client.get("/").text
+    assert 'id="help"' in home and "Keyboard shortcuts" in home
+    # inline duplicate-name validation on the new-project and new-plan forms
+    newproj = client.get("/projects/new").text
+    assert 'data-check-unique="project"' in newproj and 'class="field-error"' in newproj
+    newplan = client.get(f"/projects/{project_id}/plans/new").text
+    assert 'data-check-unique="plan"' in newplan and "data-check-scope=" in newplan
+
+
 def test_plan_view_has_reading_settings(client, plan_id):
     html = client.get(f"/plans/{plan_id}").text
     assert 'id="reading-panel"' in html
     assert 'data-reading="preset"' in html
     assert 'data-reading="font"' in html
+    # a11y: segmented groups are labelled, and the version select has a real label
+    assert 'aria-labelledby="rl-preset"' in html
+    assert 'for="version-selector"' in html
 
 
 def test_plan_update_no_changes(client, plan_id):

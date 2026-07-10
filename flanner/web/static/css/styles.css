@@ -3,6 +3,12 @@
    Monospace chrome (filenames, metadata, commands) around serif documents.
    Motifs from the file format itself: --- rules, ## headings, _v3 suffixes. */
 
+/* Smooth cross-page fades where supported (Chrome); a no-op elsewhere. */
+@view-transition { navigation: auto; }
+@media (prefers-reduced-motion: reduce) {
+  @view-transition { navigation: none; }
+}
+
 :root {
   color-scheme: light dark;
 
@@ -21,6 +27,12 @@
   --ok-wash: #2c7a4b14;
   --err: #b3403a;
   --err-wash: #b3403a14;
+  --vmark-wash: #a35a0e1a;
+
+  /* elevation (theme-tuned) */
+  --shadow-sm: 0 1px 2px rgba(45, 40, 30, 0.08);
+  --shadow-md: 0 6px 24px rgba(45, 40, 30, 0.12);
+  --shadow-lg: 0 16px 48px rgba(45, 40, 30, 0.18);
 
   /* type */
   --mono: ui-monospace, "Cascadia Code", Consolas, "SF Mono", "JetBrains Mono", Menlo, monospace;
@@ -29,11 +41,28 @@
 
   --radius: 4px;
   --maxw: 1680px;
+
+  /* spacing scale (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* motion */
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
+/* blueprint night: applied when the OS is dark AND the user has not forced a
+   theme, or when the user explicitly chooses dark. Light stays the base :root. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    /* palette: blueprint night */
+  :root:not([data-theme]) {
     --bg: #0f141d;
     --bg-raised: #151c29;
     --ink: #d6dde8;
@@ -48,7 +77,31 @@
     --ok-wash: #74c3951a;
     --err: #e08984;
     --err-wash: #e089841a;
+    --vmark-wash: #dfa45a1a;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 20px 56px rgba(0, 0, 0, 0.6);
   }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141d;
+  --bg-raised: #151c29;
+  --ink: #d6dde8;
+  --ink-muted: #8494a9;
+  --line: #27324a;
+  --line-strong: #35435f;
+  --accent: #82b3e3;
+  --accent-ink: #0f141d;
+  --accent-wash: #82b3e31a;
+  --vmark: #dfa45a;
+  --ok: #74c395;
+  --ok-wash: #74c3951a;
+  --err: #e08984;
+  --err-wash: #e089841a;
+  --vmark-wash: #dfa45a1a;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 20px 56px rgba(0, 0, 0, 0.6);
 }
 
 /* ---------------------------------------------------------------- reset */
@@ -129,6 +182,149 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 }
 .nav-menu a:hover { color: var(--ink); background: var(--accent-wash); text-decoration: none; }
 .nav-menu a.active { color: var(--accent); background: var(--accent-wash); }
+
+.theme-toggle {
+  margin-left: var(--space-2);
+  padding: var(--space-2);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--ink-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--ink); background: var(--accent-wash); }
+
+.cmdk-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.cmdk-trigger:hover { color: var(--ink); border-color: var(--line-strong); }
+.cmdk-trigger kbd {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 0.3em;
+  font-size: 0.75rem;
+}
+@media (max-width: 640px) { .cmdk-trigger span { display: none; } }
+
+/* ---- inline field validation ---- */
+.field-error {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--err);
+  font-size: 0.8125rem;
+}
+.form-control[aria-invalid="true"] { border-color: var(--err); }
+
+/* ---- keyboard-shortcuts help ---- */
+.help-dialog {
+  width: min(92vw, 26rem);
+  margin: auto;
+  padding: var(--space-6);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+}
+.help-dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+.help-title { margin: 0 0 var(--space-4); font-size: 1.1rem; }
+.help-list { margin: 0 0 var(--space-5); }
+.help-list > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+.help-list dt { flex-shrink: 0; }
+.help-list dd { margin: 0; color: var(--ink-muted); text-align: right; }
+.help-list kbd {
+  font-family: var(--mono);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 0.35em;
+  margin-left: 0.2em;
+  font-size: 0.8125rem;
+}
+
+/* ---- list filter + sort controls ---- */
+.list-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.list-filter {
+  flex: 1 1 14rem;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 0.9375rem;
+}
+.list-filter:focus { outline: none; border-color: var(--accent); }
+.list-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+.list-sort select {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 0.875rem;
+}
+.list-empty {
+  padding: var(--space-4);
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+/* skip link: off-screen until focused */
+.skip-link {
+  position: fixed;
+  left: var(--space-2);
+  top: -4rem;
+  z-index: 200;
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg-raised);
+  color: var(--ink);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  transition: top var(--dur) var(--ease);
+}
+.skip-link:focus { top: var(--space-2); text-decoration: none; }
 
 /* ---------------------------------------------------------------- layout */
 .breadcrumb {
@@ -235,8 +431,8 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 2.5rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-10);
 }
 
 .stat-card {
@@ -281,8 +477,8 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* ---------------------------------------------------------------- cards */
 .projects-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+  gap: var(--space-4);
 }
 
 .project-card {
@@ -421,14 +617,6 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .empty-state p { font-size: 0.875rem; margin-bottom: 1.25rem; }
 
 /* ---------------------------------------------------------------- forms */
-.form-card {
-  background: var(--bg-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 2rem;
-  max-width: 760px;
-}
-
 .form-group { margin-bottom: 1.1rem; }
 
 .form-group label {
@@ -439,32 +627,16 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   margin-bottom: 0.35rem;
 }
 
-.form-group input[type="text"],
-.form-group input[type="url"],
-.form-group textarea,
-.form-group select {
-  width: 100%;
-  font-family: var(--mono);
-  font-size: 1rem;
-  color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  padding: 0.5rem 0.65rem;
-}
-.form-group textarea { min-height: 320px; line-height: 1.5; resize: vertical; }
-
-.form-group input:focus,
-.form-group textarea:focus,
-.form-group select:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 0;
-  border-color: transparent;
-}
+/* base field styling comes from .form-control (every field carries it);
+   these are the textarea-only extras */
+.form-group textarea { line-height: 1.5; resize: vertical; }
+/* only the main content editor is tall; notes/description honour their `rows`.
+   Height matches the mounted CodeMirror (60vh) so enhancing it causes no shift. */
+.form-group textarea.markdown-editor { min-height: 60vh; }
 
 .form-help { font-size: 0.875rem; color: var(--ink-muted); margin-top: 0.3rem; }
 
-.form-actions { display: flex; gap: 0.5rem; margin-top: 1.5rem; }
+.form-actions { display: flex; gap: var(--space-2); margin-top: var(--space-6); }
 
 /* ---------------------------------------------------------------- plan view */
 .version-bar {
@@ -554,7 +726,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   line-height: 1.25;
   margin: 1.6em 0 0.5em;
 }
-.markdown-content h1:first-child { margin-top: 0; }
+.markdown-content > :first-child { margin-top: 0; }
 .markdown-content h1 { font-size: 1.875rem; }
 .markdown-content h2 { font-size: 1.4rem; padding-bottom: 0.25em; border-bottom: 1px solid var(--line); }
 .markdown-content h3 { font-size: 1.1875rem; }
@@ -591,8 +763,11 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 }
 
 .markdown-content table {
+  display: block;              /* let a wide table scroll instead of the page */
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
-  width: 100%;
   margin-bottom: 1em;
   font-family: var(--sans);
   font-size: 1rem;
@@ -651,7 +826,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 1.25rem 1.5rem;
+  padding: 1.4rem 1.5rem;
   margin-bottom: 0.75rem;
 }
 .timeline-current .timeline-content { border-color: var(--vmark); }
@@ -674,7 +849,13 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 .timeline-notes { font-size: 0.9375rem; color: var(--ink-muted); margin: 0.4rem 0 0.6rem; }
 
-.timeline-actions { display: flex; gap: 0.5rem; }
+.timeline-actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.timeline-path {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
 
 .text-muted { color: var(--ink-muted); }
 
@@ -709,18 +890,26 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
     flex-wrap: wrap;
   }
   .page-header { flex-direction: column; align-items: flex-start; }
-  .stats-grid { grid-template-columns: 1fr 1fr; }
+  .stats-grid { grid-template-columns: 1fr; }  /* 3 cards: stack, don't orphan */
   .activity-content { flex-direction: column; gap: 0.2rem; }
 }
 
+/* Touch devices: small action buttons need a bigger tap target than their
+   compact desktop padding gives (~28px -> 44px). */
+@media (pointer: coarse) {
+  .btn-sm { min-height: 44px; }
+}
+
 /* ------------------------------------------------- detail + form pages */
-.form-container, .info-box {
+.form-container {
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 2rem;
+  padding: var(--space-8);
   max-width: 800px;
 }
+/* not a card: a spaced section whose heading sits above the version grid card */
+.info-box { max-width: 800px; margin-top: 1.75rem; }
 
 .form-control {
   width: 100%;
@@ -739,7 +928,7 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
 .required { color: var(--err); }
 
 .alert-info { background: var(--accent-wash); border-color: var(--accent); color: var(--accent); }
-.badge-warning { background: var(--err-wash); color: var(--vmark); background: #a35a0e1a; }
+.badge-warning { background: var(--vmark-wash); color: var(--vmark); }
 
 .btn-info { background: transparent; color: var(--accent); border-color: var(--accent); }
 .btn-info:hover { background: var(--accent); color: var(--accent-ink); }
@@ -747,8 +936,8 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
 /* key: value metadata rendered in the frontmatter voice */
 .info-grid, .version-info-grid {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.5rem 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 0.75rem 1.5rem;
   font-family: var(--mono);
   font-size: 0.9375rem;
   background: var(--bg-raised);
@@ -769,7 +958,7 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 1.25rem 1.5rem;
+  padding: 1.4rem 1.5rem;
   transition: border-color 120ms ease;
 }
 .plan-file-card:hover { border-color: var(--accent); }
@@ -953,9 +1142,19 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
 :root[data-reading-measure="comfortable"] { --reading-measure: 76ch; }
 :root[data-reading-measure="wide"]        { --reading-measure: 96ch; }
 
-/* Presets restyle the reading pane itself. "default" inherits the app theme. */
+/* Presets restyle the reading pane itself. "default" inherits the app theme.
+   Book/Night set a full local palette (overriding the variables the child
+   elements use) so code blocks, tables, and quotes stay consistent regardless
+   of the OS light/dark theme. */
 :root[data-reading-preset="book"] .markdown-content {
   --reading-font: var(--serif);
+  --ink: #2c2620;
+  --ink-muted: #6b5f48;
+  --bg-raised: #efe7d4;
+  --accent: #8a4a12;
+  --accent-wash: #8a4a1214;
+  --line: #e0d6bf;
+  --line-strong: #cdbf9f;
   background: #f6f1e6;
   color: #2c2620;
   padding: 2.25rem 2.75rem;
@@ -964,6 +1163,13 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
 }
 :root[data-reading-preset="night"] .markdown-content {
   --reading-font: var(--serif);
+  --ink: #d3dae4;
+  --ink-muted: #8b9bb0;
+  --bg-raised: #1a2230;
+  --accent: #82b3e3;
+  --accent-wash: #82b3e31a;
+  --line: #273247;
+  --line-strong: #37455f;
   background: #10151d;
   color: #d3dae4;
   padding: 2.25rem 2.75rem;
@@ -985,8 +1191,8 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 0.75rem;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  padding: var(--space-3);
+  box-shadow: var(--shadow-md);
 }
 .reading-panel[hidden] { display: none; }
 .reading-row { margin: 0.35rem 0; }
@@ -1014,4 +1220,187 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
   color: var(--accent);
   background: var(--accent-wash);
   border-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- toasts
+   Client-side notifications. The left accent bar echoes the version-grid
+   annotation motif; a single status colour is the only accent. */
+.toast-region {
+  position: fixed;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(92vw, 22rem);
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  box-shadow: var(--shadow-lg);
+  color: var(--ink);
+  font-size: 0.9375rem;
+  animation: toast-in var(--dur) var(--ease);
+}
+.toast--success { border-left-color: var(--ok); }
+.toast--error   { border-left-color: var(--err); }
+.toast--warning { border-left-color: var(--vmark); }
+.toast--info    { border-left-color: var(--accent); }
+.toast__body { flex: 1; line-height: 1.45; }
+.toast__close {
+  flex-shrink: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0;
+}
+.toast__close:hover { color: var(--ink); }
+.toast.is-leaving { animation: toast-out var(--dur) var(--ease) forwards; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(var(--space-2)); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes toast-out {
+  to { opacity: 0; transform: translateY(var(--space-2)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast, .toast.is-leaving { animation: none; }
+}
+
+/* ---- command palette (Cmd/Ctrl+K) ---- */
+.cmdk {
+  width: min(92vw, 34rem);
+  max-height: 70vh;
+  margin: 12vh auto auto;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.cmdk::backdrop { background: rgba(0, 0, 0, 0.4); }
+.cmdk-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1.05rem;
+  padding: var(--space-4);
+  outline: none;
+}
+.cmdk-input::placeholder { color: var(--ink-muted); }
+.cmdk-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2);
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.cmdk-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.cmdk-item[aria-selected="true"] { background: var(--accent-wash); }
+.cmdk-kind {
+  flex-shrink: 0;
+  width: 3.5rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+}
+.cmdk-name { color: var(--ink); }
+.cmdk-ctx {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+.cmdk-empty {
+  padding: var(--space-4);
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 0.875rem;
+}
+.cmdk-hint {
+  margin: 0;
+  border-top: 1px solid var(--line);
+  padding: var(--space-2) var(--space-4);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+}
+.cmdk-hint kbd {
+  font-family: var(--mono);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 0.3em;
+  margin: 0 0.1em;
+}
+
+/* ---- craft signals (Tier 3) ---- */
+
+/* Selection picks up the blueprint accent wash. */
+::selection { background: var(--accent-wash); }
+
+/* Theme-aware scrollbars: a quiet thumb on a transparent track. */
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 6px;
+  border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ink-muted); }
+
+/* Numeric data (counts, versions, dates) aligns with tabular figures. */
+.stat-value,
+.badge,
+.version-badge,
+.data-table td,
+.cmdk-kind,
+.pager span { font-variant-numeric: tabular-nums; }
+
+/* Print a plan as a document: drop all the app chrome, keep the reading column. */
+@media print {
+  .navbar,
+  .footer,
+  .breadcrumb,
+  .header-actions,
+  .reading-settings,
+  .version-bar,
+  .skip-link,
+  .theme-toggle,
+  .cmdk-trigger,
+  .cmdk,
+  .help-dialog,
+  .toast-region { display: none !important; }
+  body { background: #fff; color: #000; }
+  .main-content { min-height: 0; }
+  .markdown-content { max-width: none; }
+  a { text-decoration: none; color: #000; }
 }

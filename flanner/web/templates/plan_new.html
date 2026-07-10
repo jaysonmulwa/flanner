@@ -27,7 +27,10 @@
                     value="{{ name or '' }}"
                     required
                     placeholder="architecture"
+                    data-check-unique="plan"
+                    data-check-scope="{{ project.name }}"
                 >
+                <small class="field-error" role="alert" hidden></small>
                 <small class="form-help">
                     Name without extension (e.g., "architecture", "api-design", "requirements")
                 </small>

@@ -18,33 +18,33 @@
                         aria-expanded="false" aria-controls="reading-panel" title="Reading settings">
                     Aa
                 </button>
-                <div class="reading-panel" id="reading-panel" hidden>
-                    <div class="reading-row"><span>Preset</span>
-                        <div class="reading-seg" data-reading="preset">
+                <div class="reading-panel" id="reading-panel" hidden role="group" aria-label="Reading settings">
+                    <div class="reading-row"><span id="rl-preset">Preset</span>
+                        <div class="reading-seg" data-reading="preset" role="group" aria-labelledby="rl-preset">
                             <button type="button" data-value="default">Default</button>
                             <button type="button" data-value="book">Book</button>
                             <button type="button" data-value="night">Night</button>
                             <button type="button" data-value="plain">Plain</button>
                         </div>
                     </div>
-                    <div class="reading-row"><span>Font</span>
-                        <div class="reading-seg" data-reading="font">
+                    <div class="reading-row"><span id="rl-font">Font</span>
+                        <div class="reading-seg" data-reading="font" role="group" aria-labelledby="rl-font">
                             <button type="button" data-value="serif">Serif</button>
                             <button type="button" data-value="sans">Sans</button>
                             <button type="button" data-value="mono">Mono</button>
                             <button type="button" data-value="system">System</button>
                         </div>
                     </div>
-                    <div class="reading-row"><span>Size</span>
-                        <div class="reading-seg" data-reading="size">
+                    <div class="reading-row"><span id="rl-size">Size</span>
+                        <div class="reading-seg" data-reading="size" role="group" aria-labelledby="rl-size">
                             <button type="button" data-value="s">S</button>
                             <button type="button" data-value="m">M</button>
                             <button type="button" data-value="l">L</button>
                             <button type="button" data-value="xl">XL</button>
                         </div>
                     </div>
-                    <div class="reading-row"><span>Width</span>
-                        <div class="reading-seg" data-reading="measure">
+                    <div class="reading-row"><span id="rl-measure">Width</span>
+                        <div class="reading-seg" data-reading="measure" role="group" aria-labelledby="rl-measure">
                             <button type="button" data-value="narrow">Narrow</button>
                             <button type="button" data-value="comfortable">Normal</button>
                             <button type="button" data-value="wide">Wide</button>
@@ -64,7 +64,7 @@
     <!-- Version Info -->
     <div class="version-bar">
         <div class="version-info">
-            <span class="version-label">Version:</span>
+            <label class="version-label" for="version-selector">Version:</label>
             <select id="version-selector" class="version-select" onchange="changeVersion(this.value)">
                 {% for v in all_versions %}
                 <option value="{{ v.version }}" {% if v.version == version.version %}selected{% endif %}>

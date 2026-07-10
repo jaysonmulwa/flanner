@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flanner"
-version = "0.7.0"
+version = "0.7.1"
 description = "Plan file management for AI assistants via MCP"
 authors = [{ name = "Jayson Mulwa", email = "jayson.mulwa@gmail.com" }]
 license = "MIT"
@@ -36,6 +36,7 @@ dependencies = [
     "jinja2>=3.1,<4",
     "python-multipart>=0.0.6,<0.1",
     "markdown>=3.5,<4",
+    "nh3>=0.2,<1",
     "pygments>=2.17,<3",
     "pydantic>=2.5,<3",
     "mcp>=1.0,<2",

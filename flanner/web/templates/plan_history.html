@@ -90,9 +90,7 @@
                     <a href="/plans/{{ plan_file.id }}?version={{ version.version }}" class="btn btn-sm btn-primary">
                         View
                     </a>
-                    <a href="#" class="btn btn-sm btn-secondary" title="File path">
-                        {{ version.file_path|basename }}
-                    </a>
+                    <code class="timeline-path" title="{{ version.file_path }}">{{ version.file_path|basename }}</code>
                 </div>
             </div>
         </div>

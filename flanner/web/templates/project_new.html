@@ -24,7 +24,9 @@
                     value="{{ name or '' }}"
                     required
                     placeholder="my-awesome-project"
+                    data-check-unique="project"
                 >
+                <small class="field-error" role="alert" hidden></small>
                 <small class="form-help">A unique name for your project (lowercase, hyphens allowed)</small>
             </div>
 

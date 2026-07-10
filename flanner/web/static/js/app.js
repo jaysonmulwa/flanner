@@ -121,6 +121,249 @@ document.addEventListener('DOMContentLoaded', function () {
             toggle.setAttribute('aria-expanded', 'false');
         }
     });
+
+    // Esc closes the popover and returns focus to its trigger.
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !panel.hasAttribute('hidden')) {
+            panel.setAttribute('hidden', '');
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.focus();
+        }
+    });
+
+    // Arrow keys move focus within each segmented control.
+    panel.querySelectorAll('.reading-seg').forEach(function (seg) {
+        seg.addEventListener('keydown', function (e) {
+            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+            const btns = Array.from(seg.querySelectorAll('button'));
+            const i = btns.indexOf(document.activeElement);
+            if (i < 0) return;
+            e.preventDefault();
+            const n = btns.length;
+            btns[e.key === 'ArrowRight' ? (i + 1) % n : (i - 1 + n) % n].focus();
+        });
+    });
+});
+
+// Theme toggle: cycles system -> light -> dark, persisted. The no-flash script
+// in base.html applies the saved theme before first paint.
+document.addEventListener('DOMContentLoaded', function () {
+    const btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    const GLYPH = { system: '◐', light: '○', dark: '●' };
+    const d = document.documentElement;
+
+    function current() {
+        try {
+            const t = localStorage.getItem('flanner.theme');
+            return (t === 'light' || t === 'dark') ? t : 'system';
+        } catch (e) { return 'system'; }
+    }
+    function render(mode) {
+        btn.firstElementChild.textContent = GLYPH[mode];
+        btn.setAttribute('aria-label', 'Theme: ' + mode);
+        btn.title = 'Theme: ' + mode + ' (click to change)';
+    }
+    function apply(mode) {
+        if (mode === 'system') { delete d.dataset.theme; } else { d.dataset.theme = mode; }
+        try {
+            if (mode === 'system') localStorage.removeItem('flanner.theme');
+            else localStorage.setItem('flanner.theme', mode);
+        } catch (e) {}
+        render(mode);
+    }
+    render(current());
+    btn.addEventListener('click', function () {
+        const order = ['system', 'light', 'dark'];
+        apply(order[(order.indexOf(current()) + 1) % 3]);
+    });
+});
+
+// Command palette (Cmd/Ctrl+K): jump to any project or plan.
+document.addEventListener('DOMContentLoaded', function () {
+    const dlg = document.getElementById('cmdk');
+    const input = document.getElementById('cmdk-input');
+    const list = document.getElementById('cmdk-list');
+    if (!dlg || !input || !list || typeof dlg.showModal !== 'function') return;
+
+    let index = null;   // cached search index
+    let items = [];      // current filtered results
+    let active = 0;
+
+    async function loadIndex() {
+        if (index) return;
+        try { index = await (await fetch('/api/search')).json(); } catch (e) { index = []; }
+    }
+
+    function render(query) {
+        const q = query.trim().toLowerCase();
+        const all = index || [];
+        items = (q
+            ? all.filter(function (it) {
+                return (it.name + ' ' + (it.context || '')).toLowerCase().indexOf(q) !== -1;
+            })
+            : all
+        ).slice(0, 20);
+        active = 0;
+        list.innerHTML = '';
+        items.forEach(function (it, i) {
+            const li = document.createElement('li');
+            li.className = 'cmdk-item';
+            li.id = 'cmdk-opt-' + i;
+            li.setAttribute('role', 'option');
+            const kind = document.createElement('span');
+            kind.className = 'cmdk-kind';
+            kind.textContent = it.type;
+            const name = document.createElement('span');
+            name.className = 'cmdk-name';
+            name.textContent = it.name;
+            li.append(kind, name);
+            if (it.context) {
+                const ctx = document.createElement('span');
+                ctx.className = 'cmdk-ctx';
+                ctx.textContent = it.context;
+                li.appendChild(ctx);
+            }
+            li.addEventListener('click', function () { go(i); });
+            list.appendChild(li);
+        });
+        if (!items.length) {
+            const empty = document.createElement('li');
+            empty.className = 'cmdk-empty';
+            empty.textContent = 'No matches';
+            list.appendChild(empty);
+        }
+        updateActive();
+    }
+
+    function updateActive() {
+        const els = list.querySelectorAll('.cmdk-item');
+        els.forEach(function (li, i) { li.setAttribute('aria-selected', String(i === active)); });
+        if (els[active] && els[active].scrollIntoView) els[active].scrollIntoView({ block: 'nearest' });
+        input.setAttribute('aria-activedescendant', items[active] ? 'cmdk-opt-' + active : '');
+    }
+
+    function go(i) {
+        const it = items[i];
+        if (it) window.location.href = it.url;
+    }
+
+    async function open() {
+        await loadIndex();
+        input.value = '';
+        render('');
+        if (!dlg.open) dlg.showModal();
+        input.focus();
+    }
+
+    document.addEventListener('keydown', function (e) {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+            open();
+        }
+    });
+    const trigger = document.getElementById('cmdk-open');
+    if (trigger) trigger.addEventListener('click', open);
+    input.addEventListener('input', function () { render(input.value); });
+    input.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, items.length - 1); updateActive(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); updateActive(); }
+        else if (e.key === 'Enter') { e.preventDefault(); go(active); }
+    });
+    dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
+});
+
+// List filter + sort: client-side, over the rendered page. Any [data-listgroup]
+// with a [data-list-filter] input and/or [data-list-sort] select reorders and
+// hides its [data-list-item] children by their data-* attributes.
+// ponytail: operates on the current page (50 items); global search is Cmd+K.
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('[data-listgroup]').forEach(function (group) {
+        const list = group.querySelector('[data-list]');
+        if (!list) return;
+        const filter = group.querySelector('[data-list-filter]');
+        const sort = group.querySelector('[data-list-sort]');
+        const empty = group.querySelector('[data-list-empty]');
+        const items = function () { return Array.from(list.querySelectorAll('[data-list-item]')); };
+
+        function applyFilter() {
+            const q = (filter ? filter.value : '').toLowerCase().trim();
+            let shown = 0;
+            items().forEach(function (it) {
+                const hay = (it.dataset.name || it.textContent).toLowerCase();
+                const hit = !q || hay.indexOf(q) !== -1;
+                it.hidden = !hit;
+                if (hit) shown++;
+            });
+            if (empty) empty.hidden = shown !== 0;
+        }
+
+        function applySort() {
+            if (!sort || !sort.value) return;
+            const parts = sort.value.split(':');
+            const key = parts[0];
+            const mul = parts[1] === 'desc' ? -1 : 1;
+            items().sort(function (a, b) {
+                const av = a.dataset[key] || '';
+                const bv = b.dataset[key] || '';
+                const an = Number(av), bn = Number(bv);
+                const numeric = av !== '' && bv !== '' && !isNaN(an) && !isNaN(bn);
+                const cmp = numeric ? an - bn : av.localeCompare(bv);
+                return cmp * mul;
+            }).forEach(function (it) { list.appendChild(it); });
+        }
+
+        if (filter) filter.addEventListener('input', applyFilter);
+        if (sort) sort.addEventListener('change', function () { applySort(); applyFilter(); });
+        applySort();
+    });
+});
+
+// Prefetch internal pages on hover, so a click feels instant.
+document.addEventListener('DOMContentLoaded', function () {
+    const seen = new Set();
+    document.body.addEventListener('mouseover', function (e) {
+        const a = e.target.closest('a[href^="/"]');
+        if (!a) return;
+        const href = a.getAttribute('href');
+        if (!href || seen.has(href) || href.indexOf('/static/') === 0) return;
+        seen.add(href);
+        const link = document.createElement('link');
+        link.rel = 'prefetch';
+        link.href = href;
+        document.head.appendChild(link);
+    });
+});
+
+// Inline uniqueness check: warn before submit if a project/plan name is taken,
+// instead of only learning it from the server round-trip. Reuses /api/search.
+document.addEventListener('DOMContentLoaded', function () {
+    const inputs = document.querySelectorAll('[data-check-unique]');
+    if (!inputs.length) return;
+    let index = null;
+    async function taken(type, scope) {
+        if (!index) {
+            try { index = await (await fetch('/api/search')).json(); } catch (e) { index = []; }
+        }
+        return index
+            .filter(function (i) { return i.type === type && (!scope || i.context === scope); })
+            .map(function (i) { return i.name.toLowerCase(); });
+    }
+    inputs.forEach(function (input) {
+        const err = input.parentElement.querySelector('.field-error');
+        let names = null;
+        async function check() {
+            if (names === null) names = await taken(input.dataset.checkUnique, input.dataset.checkScope || '');
+            const v = input.value.trim().toLowerCase();
+            const dup = !!v && names.indexOf(v) !== -1;
+            input.setAttribute('aria-invalid', String(dup));
+            if (err) {
+                err.hidden = !dup;
+                err.textContent = dup ? 'That name is already taken.' : '';
+            }
+        }
+        input.addEventListener('input', check);
+    });
 });
 
 // Confirmation dialogs
@@ -135,47 +378,45 @@ function copyToClipboard(text) {
     });
 }
 
-// Show notification
+// Toasts: client-side notifications in a bottom-right, aria-live region.
+// Styling and motion live in styles.css (.toast*); this only builds the nodes.
 function showNotification(message, type = 'info') {
-    const notification = document.createElement('div');
-    notification.className = `alert alert-${type}`;
-    notification.innerHTML = `
-        <i class="fas fa-${type === 'success' ? 'check-circle' : 'info-circle'}"></i>
-        ${message}
-    `;
-    notification.style.cssText = `
-        position: fixed;
-        top: 1rem;
-        right: 1rem;
-        z-index: 9999;
-        min-width: 250px;
-        animation: slideIn 0.3s ease-out;
-    `;
-
-    document.body.appendChild(notification);
-
-    setTimeout(() => {
-        notification.style.opacity = '0';
-        notification.style.transform = 'translateX(100%)';
-        setTimeout(() => notification.remove(), 300);
-    }, 3000);
-}
-
-// Add slide-in animation
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from {
-            opacity: 0;
-            transform: translateX(100%);
-        }
-        to {
-            opacity: 1;
-            transform: translateX(0);
-        }
+    let region = document.querySelector('.toast-region');
+    if (!region) {
+        region = document.createElement('div');
+        region.className = 'toast-region';
+        region.setAttribute('role', 'status');
+        region.setAttribute('aria-live', 'polite');
+        document.body.appendChild(region);
     }
-`;
-document.head.appendChild(style);
+
+    const toast = document.createElement('div');
+    toast.className = 'toast toast--' + type;
+
+    const body = document.createElement('div');
+    body.className = 'toast__body';
+    body.textContent = message;
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'toast__close';
+    close.setAttribute('aria-label', 'Dismiss');
+    close.textContent = '×';
+
+    let removed = false;
+    function dismiss() {
+        if (removed) return;
+        removed = true;
+        toast.classList.add('is-leaving');
+        toast.addEventListener('animationend', () => toast.remove(), { once: true });
+        setTimeout(() => toast.remove(), 400);  // fallback if animation is disabled
+    }
+
+    close.addEventListener('click', dismiss);
+    toast.append(body, close);
+    region.appendChild(toast);
+    setTimeout(dismiss, 4000);
+}
 
 // Handle URL query parameters
 document.addEventListener('DOMContentLoaded', function() {
@@ -189,6 +430,10 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // Keyboard shortcuts
+function inTextField() {
+    const el = document.activeElement;
+    return !!el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
+}
 document.addEventListener('keydown', function(e) {
     // Ctrl+S or Cmd+S to save (prevent default and trigger form submit)
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -196,6 +441,15 @@ document.addEventListener('keydown', function(e) {
         const form = document.querySelector('form');
         if (form) {
             form.submit();
+        }
+        return;
+    }
+    // "?" opens the keyboard-shortcuts help (but not while typing)
+    if (e.key === '?' && !inTextField()) {
+        const help = document.getElementById('help');
+        if (help && typeof help.showModal === 'function' && !help.open) {
+            e.preventDefault();
+            help.showModal();
         }
     }
 });

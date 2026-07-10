@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID
 
 import markdown
+import nh3
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -21,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import __version__
 from .database import count_plan_files as db_count_plan_files
+from .database import count_plan_files_recent as db_count_plan_files_recent
 from .database import count_projects as db_count_projects
 from .database import create_plan_file as db_create_plan_file
 from .database import (
@@ -77,19 +79,78 @@ def ensure_db() -> None:
         init_database()
 
 
+# Tags/attributes kept when sanitizing rendered markdown. Everything markdown
+# produces (including codehilite's span/class and heading ids) is allowed; the
+# sanitizer strips <script>, event handlers, javascript: URLs, and <style>.
+_SANITIZE_TAGS = {
+    "a",
+    "abbr",
+    "b",
+    "blockquote",
+    "br",
+    "code",
+    "del",
+    "div",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "hr",
+    "i",
+    "img",
+    "li",
+    "ol",
+    "p",
+    "pre",
+    "span",
+    "strong",
+    "sub",
+    "sup",
+    "table",
+    "tbody",
+    "td",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+}
+_SANITIZE_ATTRS = {
+    "a": {"href", "title"},
+    "img": {"src", "alt", "title"},
+    "code": {"class"},
+    "span": {"class"},
+    "pre": {"class"},
+    "div": {"class"},
+    "h1": {"id"},
+    "h2": {"id"},
+    "h3": {"id"},
+    "h4": {"id"},
+    "h5": {"id"},
+    "h6": {"id"},
+    "td": {"align"},
+    "th": {"align"},
+}
+
+
 # Template filters
 def markdown_filter(text: str | None) -> str:
-    """Convert markdown to HTML"""
+    """Render markdown to sanitized HTML.
+
+    The output is inserted with ``|safe``, so it is run through nh3 to strip any
+    raw HTML that could execute (scripts, event handlers, javascript: URLs) while
+    keeping the formatting and code-highlighting markup markdown emits.
+    """
     if not text:
         return ""
 
-    # Configure markdown with extensions
     md = markdown.Markdown(
         extensions=["fenced_code", "codehilite", "tables", "toc", "nl2br"],
         extension_configs={"codehilite": {"css_class": "highlight", "linenums": False}},
     )
-
-    return md.convert(text)
+    return nh3.clean(md.convert(text), tags=_SANITIZE_TAGS, attributes=_SANITIZE_ATTRS)
 
 
 # Add custom filters to Jinja2
@@ -97,9 +158,18 @@ templates.env.filters["markdown"] = markdown_filter
 templates.env.filters["relative_time"] = format_relative_time
 templates.env.filters["basename"] = lambda p: Path(p).name
 
-# Version-stamp static assets so a released upgrade busts the browser cache
-# instead of serving stale CSS/JS.
-templates.env.globals["asset_version"] = __version__
+# Stamp static assets so the browser refetches when they change. The newest
+# mtime under static/ means an edit-then-restart busts the cache even within a
+# release (the version string alone would not, since it only moves on release).
+def _asset_version() -> str:
+    try:
+        newest = max(f.stat().st_mtime for f in STATIC_DIR.rglob("*") if f.is_file())
+        return f"{__version__}-{int(newest)}"
+    except ValueError:
+        return __version__
+
+
+templates.env.globals["asset_version"] = _asset_version()
 
 _STATUS_LABELS = {400: "Bad Request", 404: "Not Found", 500: "Server Error"}
 
@@ -199,6 +269,7 @@ async def dashboard(request: Request) -> HTMLResponse:
     # in Python and an N+1 query per project.
     total_projects = db_count_projects(session)
     total_plans = db_count_plan_files(session)
+    updated_this_week = db_count_plan_files_recent(session, days=7)
     plan_counts = plan_file_counts_by_project(session)
 
     projects = db_list_projects(session, limit=12)
@@ -217,6 +288,7 @@ async def dashboard(request: Request) -> HTMLResponse:
             "projects": projects,
             "total_projects": total_projects,
             "total_plans": total_plans,
+            "updated_this_week": updated_this_week,
             "recent_activity": recent_activity,
         },
     )
@@ -710,6 +782,23 @@ async def api_list_projects() -> list[dict[str, Any]]:
         }
         for p in projects
     ]
+
+
+@app.get("/api/search")
+async def api_search_index() -> list[dict[str, str]]:
+    """Flat index of projects and plans for the command palette."""
+    ensure_db()
+    session = get_session()
+    items: list[dict[str, str]] = []
+    for p in db_list_projects(session):
+        items.append(
+            {"type": "project", "name": p.name, "context": "", "url": f"/projects/{p.id}"}
+        )
+        for pf in p.plan_files:
+            items.append(
+                {"type": "plan", "name": pf.name, "context": p.name, "url": f"/plans/{pf.id}"}
+            )
+    return items
 
 
 @app.get("/api/projects/{project_id}/plans")

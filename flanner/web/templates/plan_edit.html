@@ -62,22 +62,22 @@
                 </a>
             </div>
         </form>
+    </div>
 
-        <div class="info-box">
-            <h3>Version Information</h3>
-            <div class="version-info-grid">
-                <div>
-                    <strong>Current Version:</strong> v{{ version.version }}
-                </div>
-                <div>
-                    <strong>Created By:</strong> {{ version.created_by }}
-                </div>
-                <div>
-                    <strong>Last Updated:</strong> {{ version.created_at|relative_time if version.created_at }}
-                </div>
-                <div>
-                    <strong>New Version Will Be:</strong> v{{ plan_file.current_version + 1 }}
-                </div>
+    <div class="info-box">
+        <h3>Version Information</h3>
+        <div class="version-info-grid">
+            <div>
+                <strong>Current Version:</strong> v{{ version.version }}
+            </div>
+            <div>
+                <strong>Created By:</strong> {{ version.created_by }}
+            </div>
+            <div>
+                <strong>Last Updated:</strong> {{ version.created_at|relative_time if version.created_at }}
+            </div>
+            <div>
+                <strong>New Version Will Be:</strong> v{{ plan_file.current_version + 1 }}
             </div>
         </div>
     </div>

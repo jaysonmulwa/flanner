@@ -6,6 +6,78 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-10
+
+### Added
+- Brand favicon (inline SVG, three-rule document mark) and `theme-color` meta for
+  the light and dark palettes, so the browser chrome matches the page.
+- Craft details: selection uses the accent wash, scrollbars are theme-aware,
+  numeric data (counts, versions, dates) uses tabular figures, and a print
+  stylesheet renders a plan as a clean document (drops the app chrome).
+- Keyboard-shortcuts help sheet: press `?` (outside a text field) for a native
+  dialog listing the shortcuts.
+- Snappier navigation: internal links are prefetched on hover, and supporting
+  browsers get a smooth cross-page transition (disabled under reduced motion).
+- Inline duplicate-name check on the new-project and new-plan forms: typing a
+  name that is already taken warns immediately (reusing the search index)
+  instead of waiting for the server to reject the submit.
+- Filter and sort on the projects list and a project's plan list: a search box
+  narrows the visible rows and a sort control orders by name, created, or last
+  updated. Client-side over the loaded page (global search is the palette).
+- Command palette (Ctrl/Cmd+K, or the nav "Search" button): a native `<dialog>`
+  that fuzzy-filters every project and plan and jumps to it. Arrow keys move the
+  selection, Enter opens, Esc closes; the index is served by a new `/api/search`
+  endpoint. Focus trap, Esc, and backdrop dismissal come from the native dialog,
+  so it adds no library.
+- Web UI design tokens: a 4px-based spacing scale, three elevation tiers, and
+  motion tokens, so spacing and shadows are systematic rather than ad hoc.
+- A real toast component for client-side notifications (bottom-right, aria-live,
+  per-status left accent bar, dismiss button, reduced-motion aware), replacing
+  the previously unstyled notification and built entirely on the tokens.
+
+### Changed
+- Static assets are now stamped `version-<mtime>` (newest file under `static/`)
+  so an edit-and-restart busts the browser cache even within a release;
+  previously the tag was the version alone, so mid-release CSS/JS edits could be
+  served stale.
+- The dashboard's third stat is now "Updated this week" (plans touched in the
+  last 7 days), a real signal, instead of the length of the recent-activity list
+  (which was capped at 10 and so plateaued as a vanity number).
+
+### Security
+- Rendered plan markdown is sanitized (nh3) before being inserted with `|safe`,
+  stripping `<script>`, event handlers, and `javascript:` URLs while keeping the
+  formatting and code-highlight markup. Adds the `nh3` dependency.
+
+### Fixed
+- Web UI review pass:
+  - Mobile: the projects grid no longer forces horizontal page scroll (its
+    `minmax` minimum exceeded the viewport), and rendered markdown tables scroll
+    within their own box instead of the page.
+  - Short form fields (version notes, descriptions) no longer stretch to 320px;
+    only the main content editor is tall.
+  - Reading presets (Book/Night) now style code, tables, and quotes consistently
+    regardless of the OS light/dark theme (they set a full local palette).
+  - Dark mode: the "Disabled" badge and the reading-settings popover shadow are
+    theme-aware instead of hardcoded light values.
+  - Consistency: info/version grids lay out in even columns; card padding is
+    uniform; the first markdown heading no longer gets a stray top gap; the
+    history file-path is a plain code span, not a dead link.
+  - A11y: reading-settings groups are `role="group"` and labelled, and the
+    version selector has a real `<label>`. The reading popover now closes on Esc
+    (returning focus to its button) and its segmented controls move with the
+    arrow keys.
+  - No layout shift when the plan editor upgrades: the plain textarea reserves
+    the same height (60vh) as the CodeMirror that mounts over it.
+  - Mobile: dashboard stats stack (no orphaned third card) and small action
+    buttons get a 44px touch target.
+  - Cosmetic/cleanup: empty project dates show `-` consistently; the recent-
+    activity stat is relabelled; dead `.form-card` and duplicate form-input CSS
+    removed.
+  - Plan editor: the Version Information card was nested inside the form card
+    with its top border flush against the Save button; it is now a separate
+    section below the form, so the button no longer looks joined to it.
+
 ## [0.7.0] - 2026-07-10
 
 ### Added
