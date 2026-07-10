@@ -206,6 +206,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   gap: 0.4rem;
   font-family: var(--mono);
   font-size: 0.9375rem;
+  line-height: 1.55;   /* match <a> and <button> heights (buttons default to `normal`) */
   padding: 0.55rem 1.1rem;
   border: 1px solid transparent;
   border-radius: var(--radius);
