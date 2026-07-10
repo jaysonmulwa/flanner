@@ -158,9 +158,18 @@ templates.env.filters["markdown"] = markdown_filter
 templates.env.filters["relative_time"] = format_relative_time
 templates.env.filters["basename"] = lambda p: Path(p).name
 
-# Version-stamp static assets so a released upgrade busts the browser cache
-# instead of serving stale CSS/JS.
-templates.env.globals["asset_version"] = __version__
+# Stamp static assets so the browser refetches when they change. The newest
+# mtime under static/ means an edit-then-restart busts the cache even within a
+# release (the version string alone would not, since it only moves on release).
+def _asset_version() -> str:
+    try:
+        newest = max(f.stat().st_mtime for f in STATIC_DIR.rglob("*") if f.is_file())
+        return f"{__version__}-{int(newest)}"
+    except ValueError:
+        return __version__
+
+
+templates.env.globals["asset_version"] = _asset_version()
 
 _STATUS_LABELS = {400: "Bad Request", 404: "Not Found", 500: "Server Error"}
 

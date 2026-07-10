@@ -34,6 +34,10 @@ versioning follows [SemVer](https://semver.org/).
   the previously unstyled notification and built entirely on the tokens.
 
 ### Changed
+- Static assets are now stamped `version-<mtime>` (newest file under `static/`)
+  so an edit-and-restart busts the browser cache even within a release;
+  previously the tag was the version alone, so mid-release CSS/JS edits could be
+  served stale.
 - The dashboard's third stat is now "Updated this week" (plans touched in the
   last 7 days), a real signal, instead of the length of the recent-activity list
   (which was capped at 10 and so plateaued as a vanity number).
