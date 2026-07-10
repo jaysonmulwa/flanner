@@ -9,13 +9,19 @@
 
 A plan-file manager for AI coding agents, wired into Claude Code and other assistants over MCP (Model Context Protocol).
 
-AI agents write markdown constantly: design docs, migration plans, architecture notes. It piles up fast, scattered across your repo, quietly going stale, and easy to commit by accident. Flanner gives those files one home, versions them automatically as the agent revises, and keeps them out of git until you decide otherwise, with a browsable reading view and an audit trail on top.
-
-Today Flanner is local-first; the goal is cloud-hosted plans: shared workspaces for easier collaboration, effectively unlimited storage and history, and clean links to the tools teams already work in, from product trackers and chat to second brains like Notion.
-
 <div align="center">
 <img src="docs/assets/demo.gif" alt="flanner: versioned plan files linked to Linear issues, in the web dashboard" width="840">
 </div>
+
+## Why
+
+AI agents write markdown constantly: design docs, migration plans, architecture notes. It piles up fast, scattered across your repo, quietly going stale, and easy to commit by accident. Flanner gives those files one home, versions them automatically as the agent revises, and keeps them out of git until you decide otherwise, with a browsable reading view and an audit trail on top.
+
+## No, I'm not convinced. But why?
+
+Those plan files pile up in two directions at once: scattered across your projects locally, and scattered across open issues in your project-management tool. Flanner is the choke point for both, keeping you organized on disk and linked to the issue each plan belongs to.
+
+Today Flanner is local-first; the goal is cloud-hosted plans: shared workspaces for easier collaboration, effectively unlimited storage and history, and clean links to the tools teams already work in, from product trackers and chat to second brains like Notion.
 
 ## Features
 
