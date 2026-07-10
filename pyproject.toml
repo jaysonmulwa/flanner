@@ -76,8 +76,9 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S"]
 [tool.ruff.lint.per-file-ignores]
-# assert and hardcoded tmp paths are fine in tests and benchmarks
-"tests/*" = ["S101", "S108", "S603", "S607"]
+# assert, hardcoded tmp paths, and a 0.0.0.0 bind literal (to test the
+# non-local-bind warning) are fine in tests and benchmarks
+"tests/*" = ["S101", "S104", "S108", "S603", "S607"]
 "benchmarks/*" = ["S101", "S603", "S607"]
 
 [tool.setuptools.packages.find]

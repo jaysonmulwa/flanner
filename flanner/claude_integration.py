@@ -7,6 +7,7 @@ Handles automatic registration of MCP server with Claude Code.
 import json
 import logging
 import platform
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -111,16 +112,20 @@ def get_local_server_config() -> dict[str, Any]:
     """
     Get the configuration for the local MCP server.
 
-    Uses the `flanner-mcp` console script (installed with the package) rather
-    than `python -m flanner.server`, so the invocation does not depend on which
-    `python` is on the client's PATH. Equivalent either way.
+    Uses the absolute path of the interpreter that ran `flanner init`
+    (``sys.executable``) with ``-m flanner.server``. That interpreter is the one
+    flanner is installed into, so the invocation is independent of the client
+    app's PATH and can't hit a "module not found" from a stray `python`. Bare
+    `flanner-mcp` (or bare `python`) would need the Scripts/bin dir on the GUI
+    app's PATH, which venv/pipx installs usually aren't. Re-run `flanner init`
+    if the environment moves.
 
     Returns:
         Server configuration dictionary
     """
     return {
-        "command": "flanner-mcp",
-        "args": [],
+        "command": sys.executable,
+        "args": ["-m", "flanner.server"],
         "env": {
             # Add any environment variables if needed
         },

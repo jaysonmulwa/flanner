@@ -12,8 +12,10 @@ versioning follows [SemVer](https://semver.org/).
 - `server.json` manifest for submitting to the MCP registry
 
 ### Changed
-- `flanner init` registers the MCP server as `flanner-mcp` instead of
-  `python -m flanner.server` (cleaner config; not dependent on the client's `python`)
+- `flanner init` registers the MCP server with the absolute interpreter path
+  (`sys.executable -m flanner.server`) instead of a bare command, so the client
+  app spawns it regardless of its PATH (venv/pipx installs are not on the GUI
+  app's PATH)
 
 ## [0.4.1] - 2026-07-09
 

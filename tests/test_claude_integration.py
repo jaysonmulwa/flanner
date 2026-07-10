@@ -1,5 +1,7 @@
 """Claude Code MCP registration config tests (no filesystem writes)."""
 
+import sys
+
 from flanner.claude_integration import (
     get_claude_config_path,
     get_cloud_server_config,
@@ -13,8 +15,8 @@ def test_config_path_detection():
 
 def test_local_server_config():
     config = get_local_server_config()
-    assert config["command"] == "flanner-mcp"
-    assert config["args"] == []
+    assert config["command"] == sys.executable
+    assert config["args"] == ["-m", "flanner.server"]
 
 
 def test_cloud_server_config():

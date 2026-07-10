@@ -78,10 +78,13 @@ numbers on Windows 11, Python 3.12, SQLite on NVMe: `create_project` ~36 ms,
 ## Releasing
 
 1. Move the `[Unreleased]` CHANGELOG entries under a new version heading.
-2. Bump `version` in `pyproject.toml` and `flanner/__init__.py`.
+2. Bump `version` in `pyproject.toml`, `flanner/__init__.py`, and `server.json`
+   (both the top-level `version` and `packages[0].version`).
 3. Commit, then tag and push: `git tag vX.Y.Z && git push origin main --tags`.
 4. Publish a GitHub Release for the tag. The `publish` workflow then builds the
    package and uploads it to PyPI via Trusted Publishing (OIDC, no tokens).
+5. Only submit `server.json` to the MCP registry *after* that version is live on
+   PyPI; its `packages[0].version` must resolve to a published release.
 
 The publish job runs in the `pypi` GitHub Environment. Add a **required
 reviewer** to that environment (repo *Settings -> Environments -> pypi ->
