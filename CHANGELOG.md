@@ -7,6 +7,11 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Editing a plan in the web UI no longer corrupts its line endings. Browser
+  forms submit CRLF; the file was written in text mode on Windows, doubling the
+  carriage returns (`\r\r\n`) and gaining a blank line on every save. Plans are
+  now normalized to LF and written without OS newline translation, and the body
+  is normalized before hashing so an unchanged plan is not seen as modified.
 - `flanner init` now also registers the MCP server with **Claude Code** (the
   CLI) by writing a project `.mcp.json`, not only Claude Desktop. Claude Code
   reads `.mcp.json`, so previously CLI users ran `init` and never saw the flanner

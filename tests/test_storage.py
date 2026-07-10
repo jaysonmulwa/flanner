@@ -37,6 +37,18 @@ def test_save_and_load_plan_file(tmp_path):
     assert load_plan_file_full(path) == CONTENT
 
 
+def test_save_normalizes_crlf_to_lf(tmp_path):
+    # Browser form submissions arrive as CRLF; the file must end up LF-only so it
+    # does not gain a stray CR (and a blank line) on every round-trip.
+    crlf = "---\r\nmcp_plan_file: true\r\n---\r\n\r\n# Body\r\n\r\ntext\r\n"
+    path = save_plan_file_with_frontmatter(str(tmp_path), ".plans", "p_v1.md", crlf)
+    raw = open(path, "rb").read()
+    assert b"\r" not in raw  # no carriage returns at all
+    # Re-saving the same CRLF content is byte-stable (idempotent).
+    save_plan_file_with_frontmatter(str(tmp_path), ".plans", "p_v1.md", crlf)
+    assert open(path, "rb").read() == raw
+
+
 def test_load_plan_file_missing_raises(tmp_path):
     missing = str(tmp_path / "nope.md")
     with pytest.raises(PlanFileNotFoundError):

@@ -49,9 +49,13 @@ def save_plan_file_with_frontmatter(
 
     file_path = full_plan_path / file_name
 
-    # Write file
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(content)
+    # Normalize to LF and write without OS newline translation. Browsers submit
+    # textarea content as CRLF; text-mode writing on Windows would translate the
+    # LF again, yielding CRLF-CR (\r\r\n). On the next read universal-newlines
+    # turns that into an extra blank line, so the file degrades on every edit.
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    with open(file_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(normalized)
 
     return str(file_path)
 

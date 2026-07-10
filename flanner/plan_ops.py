@@ -40,6 +40,11 @@ def write_version(
         # Callers guard this and return a friendly message; belt-and-suspenders.
         raise DatabaseError(f"Project '{project.name}' has no project_root configured")
 
+    # Normalize line endings before hashing and saving so the stored hash
+    # matches the LF content that is written and later read back (CRLF from web
+    # form submissions would otherwise make an unchanged plan look modified).
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+
     frontmatter_str = generate_frontmatter(
         project_id=project.id,
         project_name=project.name,

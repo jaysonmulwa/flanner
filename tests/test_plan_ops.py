@@ -45,6 +45,40 @@ def test_write_version_saves_file_and_records_row(db, tmp_path):
     assert "# Design" in written
 
 
+def test_write_version_crlf_body_matches_lf_hash(db, tmp_path):
+    # A CRLF body (as a browser submits) must hash and store identically to the
+    # LF equivalent, so an unchanged plan is not seen as modified and the file
+    # never accumulates carriage returns.
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    session = get_session()
+    project = _project(session, root, project_root=root)
+    lf = create_plan_file(session, project_id=project.id, name="lf")
+    crlf = create_plan_file(session, project_id=project.id, name="crlf")
+
+    v_lf = write_version(
+        session,
+        project=project,
+        plan_file=lf,
+        version=1,
+        content="# T\n\nbody\n",
+        created_by="t",
+        notes="",
+    )
+    v_crlf = write_version(
+        session,
+        project=project,
+        plan_file=crlf,
+        version=1,
+        content="# T\r\n\r\nbody\r\n",
+        created_by="t",
+        notes="",
+    )
+    assert v_lf.content_hash == v_crlf.content_hash
+    assert b"\r" not in (root / ".plans" / "crlf_v1.md").read_bytes()
+
+
 def test_write_version_rejects_project_without_root(db):
     session = get_session()
     project = _project(session, root=None, project_root=None)
