@@ -974,6 +974,348 @@ def get_jira_config_tool(project_id: str) -> dict[str, Any]:
         return {"configured": False, "message": "JIRA not configured for this project"}
 
 
+# Linear Integration Tools
+
+
+@mcp.tool()
+def configure_linear_tool(project_id: str, workspace: str) -> dict[str, Any]:
+    """
+    Configure Linear integration for a project.
+
+    Args:
+        project_id: UUID of the project (as string)
+        workspace: Linear workspace slug or URL (e.g. "acme" or
+            https://linear.app/acme)
+
+    Returns:
+        Configuration result with the stored workspace slug
+    """
+    from .database import create_linear_config
+    from .linear_utils import is_valid_linear_workspace, normalize_linear_workspace
+
+    ensure_database()
+    session = get_session()
+
+    if not is_valid_linear_workspace(workspace):
+        return {
+            "error": True,
+            "message": f"Invalid Linear workspace: {workspace}. Expected a slug like 'acme'.",
+        }
+
+    try:
+        project_uuid = UUID(project_id)
+    except ValueError:
+        return {"error": True, "message": f"Invalid UUID: {project_id}"}
+
+    project = get_project(session, project_uuid)
+    if not project:
+        return {"error": True, "message": f"Project with ID {project_id} not found"}
+
+    try:
+        slug = normalize_linear_workspace(workspace)
+        config = create_linear_config(session, project_uuid, slug)
+        return {
+            "id": str(config.id),
+            "project_id": str(config.project_id),
+            "workspace": config.workspace,
+            "message": f"Linear configuration updated for project '{project.name}'",
+        }
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+@mcp.tool()
+def link_plan_to_linear_tool(
+    plan_file_id: str,
+    linear_issue_id: str,
+    notes: str | None = None,
+    verify: bool = True,
+    attach_url: str | None = None,
+) -> dict[str, Any]:
+    """
+    Link a plan file to a Linear issue.
+
+    If LINEAR_API_KEY is set and verify is true, the issue is checked against
+    the Linear API and its title/state are cached. A missing issue is an error;
+    a network failure falls back to a link-only record with a warning. When
+    attach_url is given, that URL is attached to the Linear issue.
+
+    Args:
+        plan_file_id: UUID of the plan file (as string)
+        linear_issue_id: Linear issue identifier (e.g. ENG-123)
+        notes: Optional notes about the link
+        verify: Verify/enrich via the Linear API when a key is configured
+        attach_url: Optional URL to attach to the Linear issue
+
+    Returns:
+        Link result with the Linear issue URL and any cached title/state
+    """
+    from .database import create_linear_link, get_linear_config
+    from .linear_api import attach_url_to_issue, fetch_issue_by_identifier, get_api_key
+    from .linear_utils import (
+        format_linear_issue_id,
+        generate_linear_issue_url,
+        is_valid_linear_issue_id,
+    )
+
+    ensure_database()
+    session = get_session()
+
+    issue_id = format_linear_issue_id(linear_issue_id)
+    if not is_valid_linear_issue_id(issue_id):
+        return {
+            "error": True,
+            "message": f"Invalid Linear issue id: {linear_issue_id}. Expected format: ENG-123",
+        }
+
+    try:
+        plan_file_uuid = UUID(plan_file_id)
+    except ValueError:
+        return {"error": True, "message": f"Invalid UUID: {plan_file_id}"}
+
+    plan_file = get_plan_file(session, plan_file_uuid)
+    if not plan_file:
+        return {"error": True, "message": f"Plan file with ID {plan_file_id} not found"}
+
+    config = get_linear_config(session, plan_file.project_id)
+    api_key = get_api_key()
+    issue_title: str | None = None
+    issue_state: str | None = None
+    warning: str | None = None
+
+    if verify and api_key:
+        from .exceptions import LinearError
+
+        try:
+            issue = fetch_issue_by_identifier(issue_id, api_key)
+            if issue is None:
+                return {"error": True, "message": f"Linear issue {issue_id} not found"}
+            issue_title = issue["title"]
+            issue_state = issue["state"]
+            if attach_url and issue.get("id"):
+                attach_url_to_issue(issue["id"], attach_url, plan_file.name, api_key)
+        except LinearError as e:
+            warning = f"Linked without verification: {e}"
+
+    try:
+        link = create_linear_link(
+            session,
+            plan_file_uuid,
+            issue_id,
+            issue_title=issue_title,
+            issue_state=issue_state,
+            notes=notes,
+            created_by="claude",
+        )
+    except ValueError as e:
+        return {"error": True, "message": str(e)}
+    except Exception as e:
+        return {"error": True, "message": f"Failed to create link: {str(e)}"}
+
+    result: dict[str, Any] = {
+        "id": str(link.id),
+        "plan_file_id": str(link.plan_file_id),
+        "linear_issue_id": link.linear_issue_id,
+        "issue_title": link.issue_title,
+        "issue_state": link.issue_state,
+        "notes": link.notes,
+        "linear_url": generate_linear_issue_url(config.workspace, issue_id) if config else None,
+        "created_at": link.created_at.isoformat() if link.created_at else None,
+        "message": f"Linked '{plan_file.name}' to {issue_id}",
+    }
+    if warning:
+        result["warning"] = warning
+    return result
+
+
+@mcp.tool()
+def get_linear_links_tool(plan_file_id: str) -> dict[str, Any]:
+    """
+    Get all Linear links for a plan file.
+
+    Args:
+        plan_file_id: UUID of the plan file (as string)
+
+    Returns:
+        List of Linear links with URLs and any cached title/state
+    """
+    from .database import get_linear_config, get_linear_links
+    from .linear_utils import generate_linear_issue_url
+
+    ensure_database()
+    session = get_session()
+
+    try:
+        plan_file_uuid = UUID(plan_file_id)
+    except ValueError:
+        return {"error": True, "message": f"Invalid UUID: {plan_file_id}"}
+
+    plan_file = get_plan_file(session, plan_file_uuid)
+    if not plan_file:
+        return {"error": True, "message": f"Plan file with ID {plan_file_id} not found"}
+
+    links = get_linear_links(session, plan_file_uuid)
+    config = get_linear_config(session, plan_file.project_id)
+
+    return {
+        "plan_file_id": plan_file_id,
+        "plan_file_name": plan_file.name,
+        "links": [
+            {
+                "id": str(link.id),
+                "linear_issue_id": link.linear_issue_id,
+                "issue_title": link.issue_title,
+                "issue_state": link.issue_state,
+                "notes": link.notes,
+                "linear_url": generate_linear_issue_url(config.workspace, link.linear_issue_id)
+                if config
+                else None,
+                "created_at": link.created_at.isoformat() if link.created_at else None,
+                "created_by": link.created_by,
+            }
+            for link in links
+        ],
+        "total_links": len(links),
+    }
+
+
+@mcp.tool()
+def list_linear_links_tool(project_id: str) -> dict[str, Any]:
+    """
+    List all Linear links for all plan files in a project.
+
+    Args:
+        project_id: UUID of the project (as string)
+
+    Returns:
+        List of all Linear links in the project
+    """
+    from .database import get_linear_config, list_all_linear_links
+    from .linear_utils import generate_linear_issue_url
+
+    ensure_database()
+    session = get_session()
+
+    try:
+        project_uuid = UUID(project_id)
+    except ValueError:
+        return {"error": True, "message": f"Invalid UUID: {project_id}"}
+
+    project = get_project(session, project_uuid)
+    if not project:
+        return {"error": True, "message": f"Project with ID {project_id} not found"}
+
+    links = list_all_linear_links(session, project_uuid)
+    config = get_linear_config(session, project_uuid)
+
+    return {
+        "project_id": project_id,
+        "project_name": project.name,
+        "links": [
+            {
+                "plan_file_id": str(link["plan_file_id"]),
+                "plan_file_name": link["plan_file_name"],
+                "linear_link_id": str(link["linear_link_id"]),
+                "linear_issue_id": link["linear_issue_id"],
+                "issue_title": link["issue_title"],
+                "issue_state": link["issue_state"],
+                "notes": link["notes"],
+                "linear_url": generate_linear_issue_url(config.workspace, link["linear_issue_id"])
+                if config
+                else None,
+                "created_at": link["created_at"].isoformat() if link["created_at"] else None,
+                "created_by": link["created_by"],
+            }
+            for link in links
+        ],
+        "total_links": len(links),
+    }
+
+
+@mcp.tool()
+def unlink_linear_issue_tool(
+    plan_file_id: str, linear_issue_id: str | None = None
+) -> dict[str, Any]:
+    """
+    Unlink a Linear issue from a plan file.
+
+    Args:
+        plan_file_id: UUID of the plan file (as string)
+        linear_issue_id: Optional issue id to unlink (if None, unlinks all)
+
+    Returns:
+        Result of the unlink operation
+    """
+    from .database import delete_all_linear_links, delete_linear_link_by_id
+    from .linear_utils import format_linear_issue_id
+
+    ensure_database()
+    session = get_session()
+
+    try:
+        plan_file_uuid = UUID(plan_file_id)
+    except ValueError:
+        return {"error": True, "message": f"Invalid UUID: {plan_file_id}"}
+
+    plan_file = get_plan_file(session, plan_file_uuid)
+    if not plan_file:
+        return {"error": True, "message": f"Plan file with ID {plan_file_id} not found"}
+
+    try:
+        if linear_issue_id:
+            issue_id = format_linear_issue_id(linear_issue_id)
+            deleted = delete_linear_link_by_id(session, plan_file_uuid, issue_id)
+            if deleted:
+                return {"success": True, "message": f"Unlinked '{plan_file.name}' from {issue_id}"}
+            return {"error": True, "message": f"Link to {issue_id} not found"}
+        count = delete_all_linear_links(session, plan_file_uuid)
+        return {
+            "success": True,
+            "message": f"Unlinked {count} Linear issue(s) from '{plan_file.name}'",
+            "count": count,
+        }
+    except Exception as e:
+        return {"error": True, "message": f"Failed to unlink: {str(e)}"}
+
+
+@mcp.tool()
+def get_linear_config_tool(project_id: str) -> dict[str, Any]:
+    """
+    Get Linear configuration for a project.
+
+    Args:
+        project_id: UUID of the project (as string)
+
+    Returns:
+        Linear configuration or a not-configured marker
+    """
+    from .database import get_linear_config
+
+    ensure_database()
+    session = get_session()
+
+    try:
+        project_uuid = UUID(project_id)
+    except ValueError:
+        return {"error": True, "message": f"Invalid UUID: {project_id}"}
+
+    project = get_project(session, project_uuid)
+    if not project:
+        return {"error": True, "message": f"Project with ID {project_id} not found"}
+
+    config = get_linear_config(session, project_uuid)
+    if config:
+        return {
+            "configured": True,
+            "id": str(config.id),
+            "project_id": str(config.project_id),
+            "workspace": config.workspace,
+            "created_at": config.created_at.isoformat() if config.created_at else None,
+            "updated_at": config.updated_at.isoformat() if config.updated_at else None,
+        }
+    return {"configured": False, "message": "Linear not configured for this project"}
+
+
 def main() -> None:
     """Run the MCP server over stdio.
 

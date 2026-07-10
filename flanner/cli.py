@@ -1273,5 +1273,314 @@ def jira_show(plan_name: str, project: str | None) -> None:
         console.print()
 
 
+def _require_session() -> Session:
+    """Open the flanner database or exit 1 if it isn't initialized."""
+    db_path = get_mcp_dir() / "data.db"
+    if not db_path.exists():
+        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
+        raise SystemExit(1)
+    init_database(str(db_path))
+    return get_session()
+
+
+def _resolve_project_or_cwd(session: Session, project: str | None) -> ProjectModel | None:
+    """Find a project by name, or by the git root of the current directory."""
+    if project:
+        return get_project_by_name(session, project)
+    from .database import get_project_by_root
+
+    git_root = find_git_root(os.getcwd())
+    return get_project_by_root(session, git_root) if git_root else None
+
+
+@cli.group()
+def linear() -> None:
+    """Linear integration commands"""
+    pass
+
+
+@linear.command("config")
+@click.argument("project_name")
+@click.option("--workspace", required=True, help="Linear workspace slug or URL (e.g. acme)")
+def linear_config(project_name: str, workspace: str) -> None:
+    """Configure Linear integration for a project"""
+    from .database import create_linear_config
+    from .linear_utils import is_valid_linear_workspace, normalize_linear_workspace
+
+    if not is_valid_linear_workspace(workspace):
+        console.print(f"ERROR Invalid Linear workspace: {workspace}", style="red")
+        console.print("  Expected a slug like 'acme' or a linear.app URL", style="yellow")
+        raise SystemExit(1)
+
+    session = _require_session()
+    proj = get_project_by_name(session, project_name)
+    if not proj:
+        console.print(f"ERROR Project '{project_name}' not found", style="red")
+        raise SystemExit(1)
+
+    try:
+        slug = normalize_linear_workspace(workspace)
+        config = create_linear_config(session, proj.id, slug)
+        console.print(
+            f"\nOK Linear configuration updated for project '{project_name}'", style="green"
+        )
+        console.print(f"  Workspace: {config.workspace}", style="white")
+    except Exception as e:
+        console.print(f"ERROR Failed to configure Linear: {e}", style="red")
+
+
+@linear.command("link")
+@click.argument("plan_name")
+@click.option("--issue", required=True, help="Linear issue id (e.g., ENG-123)")
+@click.option("--notes", default=None, help="Notes about the link")
+@click.option("--project", default=None, help="Project name (uses current directory if omitted)")
+@click.option("--no-verify", "no_verify", is_flag=True, help="Skip Linear API verification")
+@click.option("--attach-url", default=None, help="URL to attach to the Linear issue")
+def linear_link_cmd(
+    plan_name: str,
+    issue: str,
+    notes: str | None,
+    project: str | None,
+    no_verify: bool,
+    attach_url: str | None,
+) -> None:
+    """Link a plan file to a Linear issue.
+
+    With LINEAR_API_KEY set, the issue is verified and its title/state cached
+    (unless --no-verify). A missing issue aborts; a network error links anyway.
+    """
+    from .database import create_linear_link, get_linear_config
+    from .exceptions import LinearError
+    from .linear_api import attach_url_to_issue, fetch_issue_by_identifier, get_api_key
+    from .linear_utils import (
+        format_linear_issue_id,
+        generate_linear_issue_url,
+        is_valid_linear_issue_id,
+    )
+
+    issue_id = format_linear_issue_id(issue)
+    if not is_valid_linear_issue_id(issue_id):
+        console.print(f"ERROR Invalid Linear issue id: {issue}", style="red")
+        console.print("  Expected format: ENG-123 (team key, dash, number)", style="yellow")
+        raise SystemExit(1)
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        console.print(
+            "ERROR Project not found. Specify --project or run from project directory", style="red"
+        )
+        raise SystemExit(1)
+
+    plan_file = next((pf for pf in proj.plan_files if pf.name == plan_name), None)
+    if not plan_file:
+        console.print(f"ERROR Plan '{plan_name}' not found in project '{proj.name}'", style="red")
+        raise SystemExit(1)
+
+    api_key = get_api_key()
+    issue_title: str | None = None
+    issue_state: str | None = None
+    if not no_verify and api_key:
+        try:
+            fetched = fetch_issue_by_identifier(issue_id, api_key)
+            if fetched is None:
+                console.print(f"ERROR Linear issue {issue_id} not found", style="red")
+                raise SystemExit(1)
+            issue_title = fetched["title"]
+            issue_state = fetched["state"]
+            if attach_url and fetched.get("id"):
+                attach_url_to_issue(fetched["id"], attach_url, plan_file.name, api_key)
+                console.print(f"  Attached {attach_url} to {issue_id}", style="white")
+        except LinearError as e:
+            console.print(f"  WARN {e}; linking without verification", style="yellow")
+
+    try:
+        create_linear_link(session, plan_file.id, issue_id, issue_title, issue_state, notes)
+        console.print(f"\nOK Linked '{plan_name}' to {issue_id}", style="green")
+
+        config = get_linear_config(session, proj.id)
+        if config:
+            url = generate_linear_issue_url(config.workspace, issue_id)
+            console.print(f"  URL: {url}", style="cyan")
+        if issue_title:
+            console.print(f"  Issue: [{issue_state}] {issue_title}", style="white")
+        if notes:
+            console.print(f"  Notes: {notes}", style="white")
+    except ValueError as e:
+        console.print(f"ERROR {e}", style="red")
+    except Exception as e:
+        console.print(f"ERROR Failed to create link: {e}", style="red")
+
+
+@linear.command("unlink")
+@click.argument("plan_name")
+@click.option("--issue", default=None, help="Issue id to unlink (unlinks all if omitted)")
+@click.option("--all", "unlink_all", is_flag=True, help="Unlink all Linear issues")
+@click.option("--project", default=None, help="Project name")
+def linear_unlink(
+    plan_name: str, issue: str | None, unlink_all: bool, project: str | None
+) -> None:
+    """Unlink a plan file from Linear issue(s)"""
+    from .database import delete_all_linear_links, delete_linear_link_by_id
+    from .linear_utils import format_linear_issue_id
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        console.print("ERROR Project not found", style="red")
+        raise SystemExit(1)
+
+    plan_file = next((pf for pf in proj.plan_files if pf.name == plan_name), None)
+    if not plan_file:
+        console.print(f"ERROR Plan '{plan_name}' not found", style="red")
+        raise SystemExit(1)
+
+    try:
+        if unlink_all or not issue:
+            count = delete_all_linear_links(session, plan_file.id)
+            if count > 0:
+                console.print(
+                    f"\nOK Unlinked {count} Linear issue(s) from '{plan_name}'", style="green"
+                )
+            else:
+                console.print(f"\n No Linear links found for '{plan_name}'", style="yellow")
+        else:
+            issue_id = format_linear_issue_id(issue)
+            if delete_linear_link_by_id(session, plan_file.id, issue_id):
+                console.print(f"\nOK Unlinked '{plan_name}' from {issue_id}", style="green")
+            else:
+                console.print(f"\nERROR Link to {issue_id} not found", style="yellow")
+    except Exception as e:
+        console.print(f"ERROR Failed to unlink: {e}", style="red")
+
+
+@linear.command("links")
+@click.option("--project", default=None, help="Project name (shows all projects if omitted)")
+def linear_links(project: str | None) -> None:
+    """List all Linear links"""
+    from .database import list_all_linear_links
+
+    session = _require_session()
+    if project:
+        proj = get_project_by_name(session, project)
+        if not proj:
+            console.print(f"ERROR Project '{project}' not found", style="red")
+            raise SystemExit(1)
+        projects = [proj]
+    else:
+        projects = db_list_projects(session)
+
+    if not projects:
+        console.print("No projects found", style="yellow")
+        return
+
+    for proj in projects:
+        links = list_all_linear_links(session, proj.id)
+        if not links:
+            if len(projects) == 1:
+                console.print(f"\nNo Linear links found for project '{proj.name}'", style="yellow")
+            continue
+
+        console.print(f"\n{proj.name}:", style="cyan bold")
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Plan File")
+        table.add_column("Linear Issue")
+        table.add_column("State")
+        table.add_column("Created")
+        for link in links:
+            table.add_row(
+                link["plan_file_name"],
+                link["linear_issue_id"],
+                link["issue_state"] or "--",
+                link["created_at"].strftime("%Y-%m-%d") if link["created_at"] else "N/A",
+            )
+        console.print(table)
+
+
+@linear.command("show")
+@click.argument("plan_name")
+@click.option("--project", default=None, help="Project name")
+def linear_show(plan_name: str, project: str | None) -> None:
+    """Show detailed Linear links for a plan file"""
+    from .database import get_linear_config, get_linear_links
+    from .linear_utils import generate_linear_issue_url
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        console.print("ERROR Project not found", style="red")
+        raise SystemExit(1)
+
+    plan_file = next((pf for pf in proj.plan_files if pf.name == plan_name), None)
+    if not plan_file:
+        console.print(f"ERROR Plan '{plan_name}' not found", style="red")
+        raise SystemExit(1)
+
+    links = get_linear_links(session, plan_file.id)
+    if not links:
+        console.print(f"\nNo Linear links found for '{plan_name}'", style="yellow")
+        return
+
+    console.print(f"\nPlan: {plan_name}", style="cyan bold")
+    console.print("Linear Links:\n", style="white")
+    config = get_linear_config(session, proj.id)
+    for link in links:
+        console.print(f"  - {link.linear_issue_id}", style="green")
+        if link.issue_state or link.issue_title:
+            console.print(
+                f"    Issue: [{link.issue_state or '?'}] {link.issue_title or ''}", style="white"
+            )
+        if config:
+            url = generate_linear_issue_url(config.workspace, link.linear_issue_id)
+            console.print(f"    URL: {url}", style="cyan")
+        if link.notes:
+            console.print(f"    Notes: {link.notes}", style="white")
+
+
+@linear.command("refresh")
+@click.argument("plan_name")
+@click.option("--project", default=None, help="Project name")
+def linear_refresh(plan_name: str, project: str | None) -> None:
+    """Re-fetch title/state from Linear for a plan's links (needs LINEAR_API_KEY)"""
+    from .database import get_linear_links, update_linear_link_cache
+    from .exceptions import LinearError
+    from .linear_api import fetch_issue_by_identifier, get_api_key
+
+    api_key = get_api_key()
+    if not api_key:
+        console.print("ERROR LINEAR_API_KEY is not set; nothing to refresh", style="red")
+        raise SystemExit(1)
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        console.print("ERROR Project not found", style="red")
+        raise SystemExit(1)
+
+    plan_file = next((pf for pf in proj.plan_files if pf.name == plan_name), None)
+    if not plan_file:
+        console.print(f"ERROR Plan '{plan_name}' not found", style="red")
+        raise SystemExit(1)
+
+    links = get_linear_links(session, plan_file.id)
+    if not links:
+        console.print(f"\nNo Linear links found for '{plan_name}'", style="yellow")
+        return
+
+    console.print(f"\nRefreshing {len(links)} link(s) for '{plan_name}':", style="cyan")
+    for link in links:
+        try:
+            fetched = fetch_issue_by_identifier(link.linear_issue_id, api_key)
+            if fetched is None:
+                console.print(f"  {link.linear_issue_id}: not found", style="yellow")
+                continue
+            update_linear_link_cache(session, link.id, fetched["title"], fetched["state"])
+            console.print(
+                f"  {link.linear_issue_id}: [{fetched['state']}] {fetched['title']}", style="green"
+            )
+        except LinearError as e:
+            console.print(f"  {link.linear_issue_id}: {e}", style="red")
+
+
 if __name__ == "__main__":
     cli()

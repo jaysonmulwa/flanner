@@ -11,18 +11,26 @@ from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parent.parent / "flanner"
 
-FOUNDATION = {"exceptions", "utils", "frontmatter", "git_integration", "jira_utils"}
+FOUNDATION = {
+    "exceptions",
+    "utils",
+    "frontmatter",
+    "git_integration",
+    "jira_utils",
+    "linear_utils",
+}
 ALLOWED = {
     **{m: set() for m in FOUNDATION},
     "database": {"exceptions"},
     "storage": {"exceptions", "frontmatter", "utils"},
     "claude_integration": set(),
-    "server": FOUNDATION | {"database", "storage", "plan_ops"},
+    "linear_api": {"exceptions", "linear_utils"},
+    "server": FOUNDATION | {"database", "storage", "plan_ops", "linear_api"},
     "web": FOUNDATION | {"database", "storage", "plan_ops"},
     "agent_hooks": FOUNDATION | {"database"},
     "plan_ops": FOUNDATION | {"database", "storage"},
     "cli": FOUNDATION
-    | {"database", "storage", "server", "web", "claude_integration", "agent_hooks"},
+    | {"database", "storage", "server", "web", "claude_integration", "agent_hooks", "linear_api"},
     "__main__": {"cli"},
     "__init__": set(),
 }

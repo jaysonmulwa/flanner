@@ -109,11 +109,34 @@ The web UI binds `127.0.0.1` with no authentication. Do not expose it beyond loc
 </details>
 
 <details>
+<summary><b>Issue tracker links (Linear, JIRA)</b></summary>
+
+Link plan files to issues so a plan and its ticket travel together.
+
+```bash
+flanner linear config PROJECT --workspace acme          # linear.app/acme
+flanner linear link PLAN --issue ENG-123 [--notes ...]  # link a plan to an issue
+flanner linear links [--project PROJECT]                # list all links
+flanner linear show PLAN [--project PROJECT]            # links for one plan
+flanner linear unlink PLAN [--issue ENG-123 | --all]
+flanner linear refresh PLAN                             # re-pull title/state (needs API key)
+```
+
+With `LINEAR_API_KEY` set, `link` verifies the issue exists and caches its title
+and state, `--attach-url` attaches a URL to the Linear issue, and `refresh`
+re-pulls live status. Without a key it stays link-only (stores the id, builds
+the URL). The key is read from the environment only, never stored on disk. See
+[docs/LINEAR_INTEGRATION.md](docs/LINEAR_INTEGRATION.md). A parallel `flanner jira`
+group links to JIRA issue keys (link-only).
+
+</details>
+
+<details>
 <summary><b>Architecture</b></summary>
 
 Layering is enforced by `tests/test_architecture.py`:
 
-- **foundation** (`exceptions`, `utils`, `frontmatter`, `git_integration`, `jira_utils`) imports nothing else from the package
+- **foundation** (`exceptions`, `utils`, `frontmatter`, `git_integration`, `jira_utils`, `linear_utils`) imports nothing else from the package; the `linear_api` GraphQL client adds only `exceptions`
 - **data** (`database`, `storage`) sits on the foundation only
 - **composition roots** (`server` for MCP, `web`, `cli`) wire everything together and do not import each other (except `cli`, which launches both)
 

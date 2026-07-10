@@ -238,6 +238,64 @@ class JiraLinkModel(Base):
         )
 
 
+class LinearConfigModel(Base):
+    """Linear configuration model - stores the workspace slug per project"""
+
+    __tablename__ = "linear_config"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        GUID, ForeignKey("projects.id"), unique=True, nullable=False, index=True
+    )
+    # Workspace URL slug (Linear's urlKey), e.g. "acme" in linear.app/acme/...
+    workspace: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
+
+    # Relationships
+    project: Mapped["ProjectModel"] = relationship(
+        "ProjectModel", backref="linear_config", uselist=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<LinearConfig(id={self.id}, project_id={self.project_id}, "
+            f"workspace='{self.workspace}')>"
+        )
+
+
+class LinearLinkModel(Base):
+    """Linear link model - links plan files to Linear issues"""
+
+    __tablename__ = "linear_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    plan_file_id: Mapped[uuid.UUID] = mapped_column(
+        GUID, ForeignKey("plan_files.id"), nullable=False, index=True
+    )
+    # e.g., ENG-123
+    linear_issue_id: Mapped[str] = mapped_column(String, nullable=False)
+    # Cached from the Linear API when a key is configured (Tier 2); may be stale.
+    issue_title: Mapped[str | None] = mapped_column(String)
+    issue_state: Mapped[str | None] = mapped_column(String)
+    # User notes about the link
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
+    # Who created the link
+    created_by: Mapped[str] = mapped_column(String, default="user", nullable=True)
+
+    # Relationships
+    plan_file: Mapped["PlanFileModel"] = relationship("PlanFileModel", backref="linear_links")
+
+    def __repr__(self) -> str:
+        return (
+            f"<LinearLink(id={self.id}, plan_file_id={self.plan_file_id}, "
+            f"issue_id='{self.linear_issue_id}')>"
+        )
+
+
 # Database session management
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
@@ -937,6 +995,162 @@ def list_all_jira_links(session: Session, project_id: uuid.UUID) -> list[dict[st
                     "jira_link_id": link.id,
                     "jira_issue_key": link.jira_issue_key,
                     "jira_issue_type": link.jira_issue_type,
+                    "notes": link.notes,
+                    "created_at": link.created_at,
+                    "created_by": link.created_by,
+                }
+            )
+
+    return results
+
+
+# Linear Configuration Operations
+
+
+def create_linear_config(
+    session: Session, project_id: uuid.UUID, workspace: str
+) -> LinearConfigModel:
+    """
+    Create or update Linear configuration (workspace slug) for a project.
+
+    Raises:
+        NotFoundError: If the project doesn't exist.
+    """
+    project = session.query(ProjectModel).filter_by(id=project_id).first()
+    if not project:
+        raise NotFoundError(f"Project with ID {project_id} not found")
+
+    existing = session.query(LinearConfigModel).filter_by(project_id=project_id).first()
+    if existing:
+        existing.workspace = workspace
+        existing.updated_at = _utcnow()
+        _commit(session)
+        session.refresh(existing)
+        return existing
+
+    config = LinearConfigModel(project_id=project_id, workspace=workspace)
+    session.add(config)
+    _commit(session)
+    session.refresh(config)
+    return config
+
+
+def get_linear_config(session: Session, project_id: uuid.UUID) -> LinearConfigModel | None:
+    """Get Linear configuration for a project."""
+    return session.query(LinearConfigModel).filter_by(project_id=project_id).first()
+
+
+# Linear Link Operations
+
+
+def create_linear_link(
+    session: Session,
+    plan_file_id: uuid.UUID,
+    linear_issue_id: str,
+    issue_title: str | None = None,
+    issue_state: str | None = None,
+    notes: str | None = None,
+    created_by: str = "user",
+) -> LinearLinkModel:
+    """
+    Create a Linear link for a plan file.
+
+    Raises:
+        NotFoundError: If the plan file doesn't exist.
+        DuplicateError: If the plan file is already linked to this issue.
+    """
+    plan_file = session.query(PlanFileModel).filter_by(id=plan_file_id).first()
+    if not plan_file:
+        raise NotFoundError(f"Plan file with ID {plan_file_id} not found")
+
+    existing = (
+        session.query(LinearLinkModel)
+        .filter_by(plan_file_id=plan_file_id, linear_issue_id=linear_issue_id)
+        .first()
+    )
+    if existing:
+        raise DuplicateError(f"Plan file is already linked to {linear_issue_id}")
+
+    link = LinearLinkModel(
+        plan_file_id=plan_file_id,
+        linear_issue_id=linear_issue_id,
+        issue_title=issue_title,
+        issue_state=issue_state,
+        notes=notes,
+        created_by=created_by,
+    )
+    session.add(link)
+    _commit(session)
+    session.refresh(link)
+    return link
+
+
+def get_linear_links(session: Session, plan_file_id: uuid.UUID) -> list[LinearLinkModel]:
+    """Get all Linear links for a plan file, newest first."""
+    return (
+        session.query(LinearLinkModel)
+        .filter_by(plan_file_id=plan_file_id)
+        .order_by(LinearLinkModel.created_at.desc())
+        .all()
+    )
+
+
+def update_linear_link_cache(
+    session: Session, link_id: uuid.UUID, issue_title: str | None, issue_state: str | None
+) -> LinearLinkModel | None:
+    """Refresh the cached title/state on a link (used by the API refresh path)."""
+    link = session.query(LinearLinkModel).filter_by(id=link_id).first()
+    if not link:
+        return None
+    link.issue_title = issue_title
+    link.issue_state = issue_state
+    _commit(session)
+    session.refresh(link)
+    return link
+
+
+def delete_linear_link_by_id(
+    session: Session, plan_file_id: uuid.UUID, linear_issue_id: str
+) -> bool:
+    """Delete a single Linear link by plan file + issue identifier."""
+    link = (
+        session.query(LinearLinkModel)
+        .filter_by(plan_file_id=plan_file_id, linear_issue_id=linear_issue_id)
+        .first()
+    )
+    if not link:
+        return False
+    session.delete(link)
+    _commit(session)
+    return True
+
+
+def delete_all_linear_links(session: Session, plan_file_id: uuid.UUID) -> int:
+    """Delete all Linear links for a plan file. Returns the count removed."""
+    links = session.query(LinearLinkModel).filter_by(plan_file_id=plan_file_id).all()
+    count = len(links)
+    for link in links:
+        session.delete(link)
+    _commit(session)
+    return count
+
+
+def list_all_linear_links(session: Session, project_id: uuid.UUID) -> list[dict[str, Any]]:
+    """List all Linear links for every plan file in a project."""
+    plan_files = session.query(PlanFileModel).filter_by(project_id=project_id).all()
+
+    results: list[dict[str, Any]] = []
+    for plan_file in plan_files:
+        links = session.query(LinearLinkModel).filter_by(plan_file_id=plan_file.id).all()
+        for link in links:
+            results.append(
+                {
+                    "plan_file_id": plan_file.id,
+                    "plan_file_name": plan_file.name,
+                    "linear_link_id": link.id,
+                    "linear_issue_id": link.linear_issue_id,
+                    "issue_title": link.issue_title,
+                    "issue_state": link.issue_state,
                     "notes": link.notes,
                     "created_at": link.created_at,
                     "created_by": link.created_by,

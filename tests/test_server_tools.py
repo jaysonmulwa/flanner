@@ -5,10 +5,12 @@ import os
 import pytest
 
 import flanner.database as fdb
+from flanner import linear_api
 from flanner.database import create_plan_file as db_create_plan_file
 from flanner.database import create_project, create_version, get_session
 from flanner.server import (
     configure_jira_tool,
+    configure_linear_tool,
     configure_project_tool,
     create_plan_file_tool,
     create_project_tool,
@@ -16,13 +18,18 @@ from flanner.server import (
     ensure_database,
     get_jira_config_tool,
     get_jira_links_tool,
+    get_linear_config_tool,
+    get_linear_links_tool,
     get_plan_config,
     get_plan_file_tool,
     get_plan_history_tool,
     link_plan_to_jira_tool,
+    link_plan_to_linear_tool,
     list_jira_links_tool,
+    list_linear_links_tool,
     list_plan_files_tool,
     unlink_jira_issue_tool,
+    unlink_linear_issue_tool,
 )
 
 BAD_UUID = "not-a-uuid"
@@ -357,3 +364,103 @@ def test_ensure_database_initializes_when_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(fdb, "_SessionLocal", None)
     ensure_database()
     assert (home / "data.db").exists()
+
+
+# --- linear tools ---
+
+
+@pytest.fixture
+def no_linear_key(monkeypatch):
+    """Ensure the Tier 1 (link-only) path runs regardless of the real env."""
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+
+
+def test_configure_linear(project):
+    result = configure_linear_tool(project["id"], "https://linear.app/Acme/")
+    assert result["workspace"] == "acme"  # slug extracted + lowercased
+
+
+def test_configure_linear_errors(db, project):
+    assert configure_linear_tool(project["id"], "Bad Space")["error"] is True
+    assert configure_linear_tool(BAD_UUID, "acme")["error"] is True
+    assert configure_linear_tool(MISSING_UUID, "acme")["error"] is True
+
+
+def test_link_linear_without_config(plan, no_linear_key):
+    result = link_plan_to_linear_tool(plan["id"], "eng-1", notes="n")
+    assert result["linear_issue_id"] == "ENG-1"  # formatted
+    assert result["linear_url"] is None  # no workspace configured
+    assert result["issue_title"] is None  # no API key -> no enrichment
+
+
+def test_link_linear_with_config_and_duplicate(project, plan, no_linear_key):
+    configure_linear_tool(project["id"], "acme")
+    result = link_plan_to_linear_tool(plan["id"], "ENG-2")
+    assert result["linear_url"] == "https://linear.app/acme/issue/ENG-2"
+    dup = link_plan_to_linear_tool(plan["id"], "ENG-2")
+    assert dup["error"] is True
+
+
+def test_link_linear_errors(db, plan, no_linear_key):
+    assert link_plan_to_linear_tool(plan["id"], "bad id")["error"] is True
+    assert link_plan_to_linear_tool(BAD_UUID, "ENG-1")["error"] is True
+    assert link_plan_to_linear_tool(MISSING_UUID, "ENG-1")["error"] is True
+
+
+def test_link_linear_verify_enriches(plan, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "key")
+    monkeypatch.setattr(
+        linear_api,
+        "fetch_issue_by_identifier",
+        lambda *a, **k: {"id": "u1", "title": "Do it", "state": "In Progress"},
+    )
+    result = link_plan_to_linear_tool(plan["id"], "ENG-7")
+    assert result["issue_title"] == "Do it"
+    assert result["issue_state"] == "In Progress"
+
+
+def test_link_linear_verify_missing_issue(plan, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "key")
+    monkeypatch.setattr(linear_api, "fetch_issue_by_identifier", lambda *a, **k: None)
+    result = link_plan_to_linear_tool(plan["id"], "ENG-404")
+    assert result["error"] is True
+    assert "not found" in result["message"]
+
+
+def test_link_linear_verify_network_error_falls_back(plan, monkeypatch):
+    from flanner.exceptions import LinearError
+
+    monkeypatch.setenv("LINEAR_API_KEY", "key")
+
+    def boom(*a, **k):
+        raise LinearError("offline")
+
+    monkeypatch.setattr(linear_api, "fetch_issue_by_identifier", boom)
+    result = link_plan_to_linear_tool(plan["id"], "ENG-8")
+    assert result["linear_issue_id"] == "ENG-8"
+    assert "warning" in result  # linked without verification
+
+
+def test_get_and_list_linear_links(project, plan, no_linear_key):
+    configure_linear_tool(project["id"], "acme")
+    link_plan_to_linear_tool(plan["id"], "ENG-1")
+    got = get_linear_links_tool(plan["id"])
+    assert got["links"][0]["linear_url"] == "https://linear.app/acme/issue/ENG-1"
+    listed = list_linear_links_tool(project["id"])
+    assert listed["total_links"] == 1
+
+
+def test_unlink_linear(plan, no_linear_key):
+    link_plan_to_linear_tool(plan["id"], "ENG-1")
+    link_plan_to_linear_tool(plan["id"], "ENG-2")
+    assert unlink_linear_issue_tool(plan["id"], "ENG-9")["error"] is True
+    assert unlink_linear_issue_tool(plan["id"], "ENG-1")["success"] is True
+    assert unlink_linear_issue_tool(plan["id"])["count"] == 1
+
+
+def test_get_linear_config_tool(project, no_linear_key):
+    assert get_linear_config_tool(project["id"])["configured"] is False
+    configure_linear_tool(project["id"], "acme")
+    result = get_linear_config_tool(project["id"])
+    assert result["configured"] is True
+    assert result["workspace"] == "acme"

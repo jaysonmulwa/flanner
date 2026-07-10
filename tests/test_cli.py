@@ -84,6 +84,11 @@ def claude_config(tmp_path, monkeypatch):
         ["jira", "unlink", "p"],
         ["jira", "links"],
         ["jira", "show", "p"],
+        ["linear", "config", "p", "--workspace", "acme"],
+        ["linear", "link", "p", "--issue", "ENG-1"],
+        ["linear", "unlink", "p"],
+        ["linear", "links"],
+        ["linear", "show", "p"],
     ],
 )
 def test_commands_require_db(runner, args):
@@ -701,3 +706,119 @@ def test_web_no_warning_on_localhost(runner, initialized, monkeypatch):
     monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
     result = runner.invoke(cli, ["web", "--host", "127.0.0.1", "--port", "0"])
     assert "exposes the web UI" not in result.output
+
+
+# --- linear ---
+
+
+def test_linear_config_valid(runner, project):
+    result = runner.invoke(
+        cli, ["linear", "config", "proj", "--workspace", "https://linear.app/Acme"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "acme" in result.output
+
+
+def test_linear_config_invalid_workspace(runner, project):
+    result = runner.invoke(cli, ["linear", "config", "proj", "--workspace", "Bad Space"])
+    assert result.exit_code == 1
+    assert "Invalid Linear workspace" in result.output
+
+
+def test_linear_link_flow(runner, plan, monkeypatch):
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    runner.invoke(cli, ["linear", "config", "proj", "--workspace", "acme"])
+    result = runner.invoke(
+        cli, ["linear", "link", "myplan", "--issue", "eng-1", "--project", "proj"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Linked 'myplan' to ENG-1" in result.output
+    assert "https://linear.app/acme/issue/ENG-1" in result.output
+
+    dup = runner.invoke(cli, ["linear", "link", "myplan", "--issue", "ENG-1", "--project", "proj"])
+    assert "already linked" in dup.output
+
+
+def test_linear_link_invalid_issue(runner, plan, monkeypatch):
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    result = runner.invoke(
+        cli, ["linear", "link", "myplan", "--issue", "123", "--project", "proj"]
+    )
+    assert result.exit_code == 1
+    assert "Invalid Linear issue id" in result.output
+
+
+def test_linear_link_verify_enriches(runner, plan, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "key")
+    from flanner import linear_api
+
+    monkeypatch.setattr(
+        linear_api,
+        "fetch_issue_by_identifier",
+        lambda *a, **k: {"id": "u1", "title": "Ship it", "state": "Todo"},
+    )
+    result = runner.invoke(
+        cli, ["linear", "link", "myplan", "--issue", "ENG-5", "--project", "proj"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "[Todo] Ship it" in result.output
+
+
+def test_linear_link_verify_missing_issue(runner, plan, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "key")
+    from flanner import linear_api
+
+    monkeypatch.setattr(linear_api, "fetch_issue_by_identifier", lambda *a, **k: None)
+    result = runner.invoke(
+        cli, ["linear", "link", "myplan", "--issue", "ENG-404", "--project", "proj"]
+    )
+    assert result.exit_code == 1
+    assert "not found" in result.output
+
+
+def test_linear_links_and_show(runner, plan, monkeypatch):
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    runner.invoke(cli, ["linear", "config", "proj", "--workspace", "acme"])
+    runner.invoke(cli, ["linear", "link", "myplan", "--issue", "ENG-1", "--project", "proj"])
+
+    listed = runner.invoke(cli, ["linear", "links", "--project", "proj"])
+    assert "ENG-1" in listed.output
+    shown = runner.invoke(cli, ["linear", "show", "myplan", "--project", "proj"])
+    assert "ENG-1" in shown.output
+    assert "https://linear.app/acme/issue/ENG-1" in shown.output
+
+
+def test_linear_unlink(runner, plan, monkeypatch):
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    runner.invoke(cli, ["linear", "link", "myplan", "--issue", "ENG-1", "--project", "proj"])
+    result = runner.invoke(
+        cli, ["linear", "unlink", "myplan", "--issue", "ENG-1", "--project", "proj"]
+    )
+    assert result.exit_code == 0
+    assert "Unlinked 'myplan' from ENG-1" in result.output
+
+
+def test_linear_refresh_requires_key(runner, plan, monkeypatch):
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    result = runner.invoke(cli, ["linear", "refresh", "myplan", "--project", "proj"])
+    assert result.exit_code == 1
+    assert "LINEAR_API_KEY is not set" in result.output
+
+
+def test_linear_refresh_updates_cache(runner, plan, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "key")
+    from flanner import linear_api
+
+    # Link first (no verify) so there is a row to refresh.
+    monkeypatch.setattr(linear_api, "fetch_issue_by_identifier", lambda *a, **k: None)
+    runner.invoke(
+        cli, ["linear", "link", "myplan", "--issue", "ENG-1", "--no-verify", "--project", "proj"]
+    )
+    monkeypatch.setattr(
+        linear_api,
+        "fetch_issue_by_identifier",
+        lambda *a, **k: {"id": "u1", "title": "Now done", "state": "Done"},
+    )
+    result = runner.invoke(cli, ["linear", "refresh", "myplan", "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert "[Done] Now done" in result.output

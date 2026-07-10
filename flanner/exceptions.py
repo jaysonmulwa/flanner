@@ -49,3 +49,7 @@ class ConfigError(FlannerError):
 
 class JiraError(FlannerError):
     """A Jira URL or linkage is invalid."""
+
+
+class LinearError(FlannerError):
+    """A Linear identifier/workspace is invalid, or a Linear API call failed."""

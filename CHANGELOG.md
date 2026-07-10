@@ -6,6 +6,19 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Linear integration. Link plan files to Linear issues (`ENG-123`) via a
+  `flanner linear` CLI group and matching MCP tools, mirroring the JIRA link
+  surface:
+  - Link-only by default: stores the issue id and builds a `linear.app` URL, no
+    network or credentials.
+  - API sync when `LINEAR_API_KEY` is set: `link` verifies the issue exists and
+    caches its title/state, `--attach-url` attaches a URL to the issue, and
+    `flanner linear refresh` re-pulls live status. The key is read from the
+    environment only, never stored on disk. The GraphQL client uses the standard
+    library, so it adds no runtime dependency.
+  - See docs/LINEAR_INTEGRATION.md.
+
 ## [0.5.0] - 2026-07-10
 
 ### Added
