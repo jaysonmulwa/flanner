@@ -6,16 +6,18 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-10
+
 ### Added
 - `flanner-mcp` console script to run the MCP server (equivalent to
   `python -m flanner.server`); cleaner for client configs and registry listings
 - `server.json` manifest for submitting to the MCP registry
 
 ### Changed
-- `flanner init` registers the MCP server with the absolute interpreter path
-  (`sys.executable -m flanner.server`) instead of a bare command, so the client
-  app spawns it regardless of its PATH (venv/pipx installs are not on the GUI
-  app's PATH)
+- `flanner init` and `flanner start` register/print the MCP server config with
+  the absolute interpreter path (`sys.executable -m flanner.server`) instead of
+  a bare command, so the client app spawns it regardless of its PATH (venv/pipx
+  installs are not on the GUI app's PATH)
 
 ## [0.4.1] - 2026-07-09
 
