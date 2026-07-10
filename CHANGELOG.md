@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-10
+
 ### Added
 - Linear integration. Link plan files to Linear issues (`ENG-123`) via a
   `flanner linear` CLI group and matching MCP tools, mirroring the JIRA link
