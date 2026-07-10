@@ -11,6 +11,10 @@ versioning follows [SemVer](https://semver.org/).
   `python -m flanner.server`); cleaner for client configs and registry listings
 - `server.json` manifest for submitting to the MCP registry
 
+### Changed
+- `flanner init` registers the MCP server as `flanner-mcp` instead of
+  `python -m flanner.server` (cleaner config; not dependent on the client's `python`)
+
 ## [0.4.1] - 2026-07-09
 
 ### Fixed

@@ -13,9 +13,8 @@ def test_config_path_detection():
 
 def test_local_server_config():
     config = get_local_server_config()
-    assert config["command"] == "python"
-    assert config["args"] == ["-m", "flanner.server"]
-    assert "cwd" in config
+    assert config["command"] == "flanner-mcp"
+    assert config["args"] == []
 
 
 def test_cloud_server_config():

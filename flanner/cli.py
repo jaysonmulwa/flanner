@@ -236,20 +236,18 @@ def start(port: int) -> None:
     console.print("Add to your Claude Code MCP settings:\n", style="white")
 
     console.print(
-        f"""{{
-  "mcpServers": {{
-    "plan-manager": {{
-      "command": "python",
-      "args": ["-m", "flanner.server"],
-      "cwd": "{Path.cwd()}"
-    }}
-  }}
-}}""",
+        """{
+  "mcpServers": {
+    "flanner": {
+      "command": "flanner-mcp"
+    }
+  }
+}""",
         style="yellow",
     )
 
     console.print("\nOr run the server directly:", style="white")
-    console.print("  python -m flanner.server\n", style="yellow")
+    console.print("  flanner-mcp\n", style="yellow")
 
 
 @cli.command()

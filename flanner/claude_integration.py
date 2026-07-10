@@ -109,18 +109,18 @@ def write_claude_config(config: dict[str, Any]) -> bool:
 
 def get_local_server_config() -> dict[str, Any]:
     """
-    Get the configuration for local MCP server.
+    Get the configuration for the local MCP server.
+
+    Uses the `flanner-mcp` console script (installed with the package) rather
+    than `python -m flanner.server`, so the invocation does not depend on which
+    `python` is on the client's PATH. Equivalent either way.
 
     Returns:
         Server configuration dictionary
     """
-    # Get absolute path to the project directory
-    project_dir = Path(__file__).resolve().parent.parent
-
     return {
-        "command": "python",
-        "args": ["-m", "flanner.server"],
-        "cwd": str(project_dir),
+        "command": "flanner-mcp",
+        "args": [],
         "env": {
             # Add any environment variables if needed
         },

@@ -168,7 +168,7 @@ def test_get_claude_config_info(config_path):
     assert info["config_exists"] is True
     assert info["server_registered"] is True
     assert info["total_servers"] == 1
-    assert info["our_server_config"]["command"] == "python"
+    assert info["our_server_config"]["command"] == "flanner-mcp"
 
 
 def test_get_claude_config_info_path_none(monkeypatch):
