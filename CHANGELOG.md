@@ -20,6 +20,9 @@ versioning follows [SemVer](https://semver.org/).
   - `flanner linear auth` validates the key against Linear and prints the MCP
     server config snippet (with `LINEAR_API_KEY` in its `env`) so the agent's
     server process gets the same access.
+  - Web UI: the plan viewer shows a "Linked Linear issues" panel (id, cached
+    state, title, link), and the project page marks linked plans with a
+    `Linear ×N` badge.
   - See docs/LINEAR_INTEGRATION.md.
 
 ## [0.5.0] - 2026-07-10

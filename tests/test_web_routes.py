@@ -223,3 +223,37 @@ def test_api_delete_project(client, project_id):
 
     assert client.delete(f"/api/projects/{BAD_UUID}").status_code == 400
     assert client.delete(f"/api/projects/{MISSING_UUID}").status_code == 404
+
+
+# --- linear surfacing in the web UI ---
+
+
+def test_plan_view_shows_linear_panel(client, plan_id, project_id):
+    from uuid import UUID
+
+    from flanner.database import create_linear_config, create_linear_link, get_session
+
+    session = get_session()
+    create_linear_config(session, UUID(project_id), "acme")
+    create_linear_link(
+        session, UUID(plan_id), "ENG-42", issue_title="Do it", issue_state="In Progress"
+    )
+
+    html = client.get(f"/plans/{plan_id}").text
+    assert 'class="linear-panel"' in html
+    assert "ENG-42" in html
+    assert "https://linear.app/acme/issue/ENG-42" in html
+    assert "In Progress" in html
+
+
+def test_plan_view_no_panel_when_unlinked(client, plan_id):
+    assert 'class="linear-panel"' not in client.get(f"/plans/{plan_id}").text
+
+
+def test_project_detail_linear_marker(client, plan_id, project_id):
+    from uuid import UUID
+
+    from flanner.database import create_linear_link, get_session
+
+    create_linear_link(get_session(), UUID(plan_id), "ENG-7")
+    assert "linear-marker" in client.get(f"/projects/{project_id}").text

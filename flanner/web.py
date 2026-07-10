@@ -26,11 +26,14 @@ from .database import create_plan_file as db_create_plan_file
 from .database import (
     create_project,
     delete_project,
+    get_linear_config,
+    get_linear_links,
     get_plan_file,
     get_project,
     get_session,
     get_version,
     init_database,
+    list_all_linear_links,
     list_versions,
     plan_file_counts_by_project,
     recent_plan_files,
@@ -39,6 +42,7 @@ from .database import list_plan_files as db_list_plan_files
 from .database import list_projects as db_list_projects
 from .exceptions import DatabaseError
 from .git_integration import find_git_root, update_gitignore, validate_git_repo
+from .linear_utils import generate_linear_issue_url
 from .plan_ops import write_version
 from .storage import ensure_plan_directory_exists, load_plan_file
 from .utils import format_relative_time, hash_content, utcnow
@@ -342,6 +346,12 @@ async def project_detail(request: Request, project_id: str, page: int = 1) -> HT
         session, project_uuid, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE
     )
 
+    # Count Linear links per plan so the list can mark linked plans.
+    linear_counts: dict[str, int] = {}
+    for row in list_all_linear_links(session, project_uuid):
+        key = str(row["plan_file_id"])
+        linear_counts[key] = linear_counts.get(key, 0) + 1
+
     return templates.TemplateResponse(
         request,
         "project_detail.html",
@@ -352,6 +362,7 @@ async def project_detail(request: Request, project_id: str, page: int = 1) -> HT
             "page": page,
             "pages": pages,
             "total": total,
+            "linear_counts": linear_counts,
         },
     )
 
@@ -488,6 +499,21 @@ async def plan_view(
     # Get all versions for version selector
     all_versions = list_versions(session, plan_file_uuid)
 
+    # Linked Linear issues (title/state are cached from the last link/refresh).
+    linear_config = get_linear_config(session, plan_file.project_id)
+    linear_links = [
+        {
+            "issue_id": link.linear_issue_id,
+            "title": link.issue_title,
+            "state": link.issue_state,
+            "notes": link.notes,
+            "url": generate_linear_issue_url(linear_config.workspace, link.linear_issue_id)
+            if linear_config
+            else None,
+        }
+        for link in get_linear_links(session, plan_file_uuid)
+    ]
+
     # Load file content
     try:
         frontmatter_data, body = load_plan_file(version_obj.file_path)
@@ -513,6 +539,7 @@ async def plan_view(
             "version": version_obj,
             "all_versions": all_versions,
             "frontmatter": frontmatter_data,
+            "linear_links": linear_links,
             "content": body,
             "content_html": content_html,
             "render_capped": render_capped,

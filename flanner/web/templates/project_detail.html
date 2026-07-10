@@ -64,6 +64,10 @@
                     <span class="meta-item">
                         {{ plan_file.versions|length if plan_file.versions else plan_file.current_version }} version(s)
                     </span>
+                    {% set lc = linear_counts.get(plan_file.id|string) %}
+                    {% if lc %}
+                    <span class="meta-item"><span class="linear-marker">Linear &times;{{ lc }}</span></span>
+                    {% endif %}
                     <span class="meta-item">
                         Updated {{ plan_file.updated_at|relative_time if plan_file.updated_at else 'never' }}
                     </span>

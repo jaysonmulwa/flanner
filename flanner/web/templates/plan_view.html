@@ -58,6 +58,25 @@
 {% endfor %}---</code></pre>
     </details>
 
+    <!-- Linked Linear issues -->
+    {% if linear_links %}
+    <section class="linear-panel">
+        <h2>Linked Linear issues</h2>
+        {% for link in linear_links %}
+        <div class="linear-item">
+            {% if link.url %}
+            <a href="{{ link.url }}" class="badge" target="_blank" rel="noopener">{{ link.issue_id }}</a>
+            {% else %}
+            <span class="badge">{{ link.issue_id }}</span>
+            {% endif %}
+            <span class="meta-item">{{ link.state or 'not synced' }}</span>
+            {% if link.title %}<span class="linear-title">{{ link.title }}</span>{% endif %}
+            {% if link.notes %}<span class="linear-notes">{{ link.notes }}</span>{% endif %}
+        </div>
+        {% endfor %}
+    </section>
+    {% endif %}
+
     <!-- Main Content -->
     <div class="content-section">
         {% if render_capped %}
