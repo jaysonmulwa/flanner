@@ -59,6 +59,7 @@ def test_dashboard_with_activity(client, plan_id):
     response = client.get("/")
     assert response.status_code == 200
     assert "webplan" in response.text
+    assert "Recent Activity" in response.text  # relabelled from "Recent Updates"
 
 
 def test_create_project_invalid_git_root(client, tmp_path):
@@ -198,6 +199,9 @@ def test_plan_view_has_reading_settings(client, plan_id):
     assert 'id="reading-panel"' in html
     assert 'data-reading="preset"' in html
     assert 'data-reading="font"' in html
+    # a11y: segmented groups are labelled, and the version select has a real label
+    assert 'aria-labelledby="rl-preset"' in html
+    assert 'for="version-selector"' in html
 
 
 def test_plan_update_no_changes(client, plan_id):

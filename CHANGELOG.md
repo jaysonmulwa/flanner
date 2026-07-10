@@ -25,6 +25,13 @@ versioning follows [SemVer](https://semver.org/).
   - Consistency: info/version grids lay out in even columns; card padding is
     uniform; the first markdown heading no longer gets a stray top gap; the
     history file-path is a plain code span, not a dead link.
+  - A11y: reading-settings groups are `role="group"` and labelled, and the
+    version selector has a real `<label>`.
+  - Mobile: dashboard stats stack (no orphaned third card) and small action
+    buttons get a 44px touch target.
+  - Cosmetic/cleanup: empty project dates show `-` consistently; the recent-
+    activity stat is relabelled; dead `.form-card` and duplicate form-input CSS
+    removed.
 
 ## [0.7.0] - 2026-07-10
 

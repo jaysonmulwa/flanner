@@ -14,24 +14,18 @@
     <!-- Stats Cards -->
     <div class="stats-grid">
         <div class="stat-card">
-            <div class="stat-info">
-                <div class="stat-value">{{ total_projects }}</div>
-                <div class="stat-label">Total Projects</div>
-            </div>
+            <div class="stat-value">{{ total_projects }}</div>
+            <div class="stat-label">Total Projects</div>
         </div>
 
         <div class="stat-card">
-            <div class="stat-info">
-                <div class="stat-value">{{ total_plans }}</div>
-                <div class="stat-label">Plan Files</div>
-            </div>
+            <div class="stat-value">{{ total_plans }}</div>
+            <div class="stat-label">Plan Files</div>
         </div>
 
         <div class="stat-card">
-            <div class="stat-info">
-                <div class="stat-value">{{ recent_activity|length }}</div>
-                <div class="stat-label">Recent Updates</div>
-            </div>
+            <div class="stat-value">{{ recent_activity|length }}</div>
+            <div class="stat-label">Recent Activity</div>
         </div>
     </div>
 
@@ -54,7 +48,7 @@
                         {{ project.plan_directory }}
                     </span>
                     <span class="meta-item">
-                        {{ project.created_at.strftime('%Y-%m-%d') if project.created_at }}
+                        {{ project.created_at.strftime('%Y-%m-%d') if project.created_at else '-' }}
                     </span>
                 </div>
                 <div class="project-actions">

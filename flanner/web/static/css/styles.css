@@ -425,14 +425,6 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .empty-state p { font-size: 0.875rem; margin-bottom: 1.25rem; }
 
 /* ---------------------------------------------------------------- forms */
-.form-card {
-  background: var(--bg-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 2rem;
-  max-width: 760px;
-}
-
 .form-group { margin-bottom: 1.1rem; }
 
 .form-group label {
@@ -443,30 +435,11 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   margin-bottom: 0.35rem;
 }
 
-.form-group input[type="text"],
-.form-group input[type="url"],
-.form-group textarea,
-.form-group select {
-  width: 100%;
-  font-family: var(--mono);
-  font-size: 1rem;
-  color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  padding: 0.5rem 0.65rem;
-}
+/* base field styling comes from .form-control (every field carries it);
+   these are the textarea-only extras */
 .form-group textarea { line-height: 1.5; resize: vertical; }
 /* only the main content editor is tall; notes/description honour their `rows` */
 .form-group textarea.markdown-editor { min-height: 320px; }
-
-.form-group input:focus,
-.form-group textarea:focus,
-.form-group select:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 0;
-  border-color: transparent;
-}
 
 .form-help { font-size: 0.875rem; color: var(--ink-muted); margin-top: 0.3rem; }
 
@@ -724,8 +697,14 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
     flex-wrap: wrap;
   }
   .page-header { flex-direction: column; align-items: flex-start; }
-  .stats-grid { grid-template-columns: 1fr 1fr; }
+  .stats-grid { grid-template-columns: 1fr; }  /* 3 cards: stack, don't orphan */
   .activity-content { flex-direction: column; gap: 0.2rem; }
+}
+
+/* Touch devices: small action buttons need a bigger tap target than their
+   compact desktop padding gives (~28px -> 44px). */
+@media (pointer: coarse) {
+  .btn-sm { min-height: 44px; }
 }
 
 /* ------------------------------------------------- detail + form pages */
