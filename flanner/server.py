@@ -402,6 +402,16 @@ def create_plan_file_tool(
             "message": f"Project '{project.name}' has no project_root configured",
         }
 
+    # A name may address a subdirectory (e.g. "auth/login-flow"). Normalize it
+    # here so the stored name, frontmatter, and file path all agree, and reject
+    # path traversal.
+    from .utils import sanitize_plan_path
+
+    try:
+        name = sanitize_plan_path(name)
+    except ValueError as e:
+        return {"error": True, "message": str(e)}
+
     # Create plan file record in database
     try:
         plan_file = db_create_plan_file(

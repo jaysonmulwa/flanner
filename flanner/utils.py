@@ -52,6 +52,25 @@ def sanitize_filename(name: str) -> str:
     return sanitized
 
 
+def sanitize_plan_path(name: str) -> str:
+    """Sanitize a plan name that may address a subdirectory of the plan dir.
+
+    A plan name like ``auth/login-flow`` maps to ``<plan_dir>/auth/login-flow``.
+    Backslashes are normalized to forward slashes, each path segment is run
+    through :func:`sanitize_filename`, and empty/``.`` segments are dropped.
+    Path traversal (any ``..`` segment) and absolute paths are rejected.
+
+    Returns a POSIX-style relative path (no leading slash). Raises ValueError if
+    the name is empty or attempts to escape the plan directory.
+    """
+    segments = [s for s in name.replace("\\", "/").split("/") if s not in ("", ".")]
+    if not segments:
+        raise ValueError(f"Invalid plan name: {name!r}")
+    if any(s == ".." for s in segments):
+        raise ValueError(f"Plan name must not contain '..' (path traversal): {name!r}")
+    return "/".join(sanitize_filename(s) for s in segments)
+
+
 def validate_path(path: str) -> bool:
     """
     Validate that a path doesn't contain directory traversal attempts.
@@ -219,7 +238,8 @@ def generate_file_name(plan_name: str, version: int) -> str:
         version: Version number
 
     Returns:
-        Filename (e.g., "architecture_v2.md")
+        Filename (e.g., "architecture_v2.md", or "auth/login_v2.md" for a plan
+        whose name addresses a subdirectory)
     """
-    sanitized = sanitize_filename(plan_name)
+    sanitized = sanitize_plan_path(plan_name)
     return f"{sanitized}_v{version}.md"

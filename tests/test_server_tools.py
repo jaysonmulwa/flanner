@@ -53,6 +53,24 @@ def plan(project):
     return result
 
 
+def test_create_plan_in_subdirectory(project):
+    import os
+
+    result = create_plan_file_tool(
+        project_id=project["id"], name="auth/login-flow", content="# Login\n"
+    )
+    assert not result.get("error"), result.get("message")
+    assert result["name"] == "auth/login-flow"  # stored name keeps the subpath
+    assert result["file_path"].replace("\\", "/").endswith(".plans/auth/login-flow_v1.md")
+    assert os.path.exists(result["file_path"])  # actually nested on disk
+
+
+def test_create_plan_rejects_path_traversal(project):
+    result = create_plan_file_tool(project_id=project["id"], name="../../escape", content="# X\n")
+    assert result["error"] is True
+    assert "traversal" in result["message"]
+
+
 # --- config ---
 
 

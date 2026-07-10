@@ -896,7 +896,7 @@ def _sync_project(
         console.print("  Plan directory doesn't exist yet", style="yellow")
         return
 
-    md_files = sorted(plan_dir.glob("*.md"))
+    md_files = sorted(plan_dir.rglob("*.md"))  # recurse: plan names may be subpaths
     if not md_files:
         console.print("  No plan files found", style="yellow")
         return

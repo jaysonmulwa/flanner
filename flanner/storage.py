@@ -48,6 +48,8 @@ def save_plan_file_with_frontmatter(
     full_plan_path.mkdir(parents=True, exist_ok=True)
 
     file_path = full_plan_path / file_name
+    # The file name may address a subdirectory (e.g. "auth/login_v1.md").
+    file_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Normalize to LF and write without OS newline translation. Browsers submit
     # textarea content as CRLF; text-mode writing on Windows would translate the
@@ -148,7 +150,9 @@ def list_plan_files_in_directory(directory: str) -> list[str]:
         return []
 
     path = Path(directory)
-    return [f.name for f in path.glob("*.md")]
+    # Recurse and return paths relative to the directory, so plans that live in
+    # subdirectories (e.g. "auth/login_v1.md") are found and identifiable.
+    return [f.relative_to(path).as_posix() for f in sorted(path.rglob("*.md"))]
 
 
 def get_file_stats(file_path: str) -> dict[str, Any] | None:

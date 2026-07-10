@@ -6,6 +6,13 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Plans can live in subdirectories of the plan directory. A plan name may be a
+  subpath (`auth/login-flow` -> `.plans/auth/login-flow_v1.md`); parent
+  directories are created, `sync` discovers nested plans, and the guard hook
+  still protects them. Names are sanitized per segment and path traversal
+  (`..`) is rejected.
+
 ### Changed
 - `flanner web` checks the port first and, if it is taken, prints an actionable
   message (how to pick another port / set `FLANNER_WEB_PORT`) and exits 1,

@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta
 
+import pytest
+
 from flanner.utils import (
     count_words,
     ensure_directory_exists,
@@ -12,6 +14,7 @@ from flanner.utils import (
     get_file_size_formatted,
     hash_content,
     sanitize_filename,
+    sanitize_plan_path,
     truncate_string,
     utcnow,
     validate_path,
@@ -30,6 +33,27 @@ def test_sanitize_filename():
     assert sanitize_filename("..name..") == "name"
     assert sanitize_filename("???") == "unnamed"
     assert sanitize_filename("") == "unnamed"
+
+
+def test_sanitize_plan_path():
+    # Subdirectories are preserved; each segment is sanitized.
+    assert sanitize_plan_path("auth/login-flow") == "auth/login-flow"
+    assert sanitize_plan_path("auth\\login flow") == "auth/login_flow"  # backslash + space
+    assert sanitize_plan_path("a//b/./c") == "a/b/c"  # empty and dot segments dropped
+    assert sanitize_plan_path("plain") == "plain"
+
+
+def test_sanitize_plan_path_rejects_traversal():
+    for bad in ("../escape", "auth/../../etc", ".."):
+        with pytest.raises(ValueError, match="traversal"):
+            sanitize_plan_path(bad)
+    with pytest.raises(ValueError, match="Invalid"):
+        sanitize_plan_path("")
+
+
+def test_generate_file_name_subpath():
+    assert generate_file_name("auth/login", 2) == "auth/login_v2.md"
+    assert generate_file_name("architecture", 1) == "architecture_v1.md"
 
 
 def test_validate_path():

@@ -75,7 +75,13 @@ def test_list_plan_files_in_directory(tmp_path):
     (tmp_path / "a.md").write_text("x")
     (tmp_path / "b.md").write_text("x")
     (tmp_path / "c.txt").write_text("x")
-    assert sorted(list_plan_files_in_directory(str(tmp_path))) == ["a.md", "b.md"]
+    (tmp_path / "auth").mkdir()
+    (tmp_path / "auth" / "login.md").write_text("x")  # nested plan
+    assert sorted(list_plan_files_in_directory(str(tmp_path))) == [
+        "a.md",
+        "auth/login.md",  # returned as a posix subpath, recursively
+        "b.md",
+    ]
 
 
 def test_get_file_stats(tmp_path):
