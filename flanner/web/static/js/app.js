@@ -123,6 +123,40 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 
+// Theme toggle: cycles system -> light -> dark, persisted. The no-flash script
+// in base.html applies the saved theme before first paint.
+document.addEventListener('DOMContentLoaded', function () {
+    const btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    const GLYPH = { system: '◐', light: '○', dark: '●' };
+    const d = document.documentElement;
+
+    function current() {
+        try {
+            const t = localStorage.getItem('flanner.theme');
+            return (t === 'light' || t === 'dark') ? t : 'system';
+        } catch (e) { return 'system'; }
+    }
+    function render(mode) {
+        btn.firstElementChild.textContent = GLYPH[mode];
+        btn.setAttribute('aria-label', 'Theme: ' + mode);
+        btn.title = 'Theme: ' + mode + ' (click to change)';
+    }
+    function apply(mode) {
+        if (mode === 'system') { delete d.dataset.theme; } else { d.dataset.theme = mode; }
+        try {
+            if (mode === 'system') localStorage.removeItem('flanner.theme');
+            else localStorage.setItem('flanner.theme', mode);
+        } catch (e) {}
+        render(mode);
+    }
+    render(current());
+    btn.addEventListener('click', function () {
+        const order = ['system', 'light', 'dark'];
+        apply(order[(order.indexOf(current()) + 1) % 3]);
+    });
+});
+
 // Confirmation dialogs
 function confirmDelete(message) {
     return confirm(message || 'Are you sure you want to delete this item?');

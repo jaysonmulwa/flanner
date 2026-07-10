@@ -202,6 +202,15 @@ def test_design_tokens_and_toast_shipped(client):
     assert "toast-region" in js and "aria-live" in js  # toast built with a live region
 
 
+def test_theme_toggle_and_skip_link(client):
+    html = client.get("/").text
+    assert 'id="theme-toggle"' in html
+    assert 'class="skip-link"' in html and 'href="#main"' in html
+    assert 'aria-current="page"' in html  # active nav item marked
+    css = client.get("/static/css/styles.css").text
+    assert ':root[data-theme="dark"]' in css  # manual dark overrides the OS setting
+
+
 def test_plan_view_has_reading_settings(client, plan_id):
     html = client.get(f"/plans/{plan_id}").text
     assert 'id="reading-panel"' in html

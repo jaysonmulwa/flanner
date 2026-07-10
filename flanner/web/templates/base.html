@@ -6,11 +6,15 @@
     <title>{% block title %}flanner{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}?v={{ asset_version }}">
     <script>
-    // Apply saved reading preferences before first paint to avoid a flash.
+    // Apply saved theme + reading preferences before first paint to avoid a flash.
     (function () {
+      var d = document.documentElement;
+      try {
+        var t = localStorage.getItem('flanner.theme');
+        if (t === 'light' || t === 'dark') d.dataset.theme = t;  // otherwise follow the OS
+      } catch (e) {}
       try {
         var r = JSON.parse(localStorage.getItem('flanner.reading') || '{}');
-        var d = document.documentElement;
         if (r.preset) d.dataset.readingPreset = r.preset;
         if (r.font) d.dataset.readingFont = r.font;
         if (r.size) d.dataset.readingSize = r.size;
@@ -21,6 +25,7 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body>
+    <a class="skip-link" href="#main">Skip to content</a>
     <!-- Navigation -->
     <nav class="navbar">
         <div class="container">
@@ -30,18 +35,20 @@
                 </a>
             </div>
             <ul class="nav-menu">
-                <li><a href="/" {% if request.url.path == '/' %}class="active"{% endif %}>
+                <li><a href="/" {% if request.url.path == '/' %}class="active" aria-current="page"{% endif %}>
                     Dashboard
                 </a></li>
-                <li><a href="/projects" {% if '/projects' in request.url.path %}class="active"{% endif %}>
+                <li><a href="/projects" {% if '/projects' in request.url.path %}class="active" aria-current="page"{% endif %}>
                     Projects
                 </a></li>
             </ul>
+            <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Theme: system"
+                    title="Theme: system"><span aria-hidden="true">◐</span></button>
         </div>
     </nav>
 
     <!-- Main Content -->
-    <main class="main-content">
+    <main id="main" tabindex="-1" class="main-content">
         <div class="container">
             {% if error %}
             <div class="alert alert-error">

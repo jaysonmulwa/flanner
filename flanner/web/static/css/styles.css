@@ -53,9 +53,10 @@
   --ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
+/* blueprint night: applied when the OS is dark AND the user has not forced a
+   theme, or when the user explicitly chooses dark. Light stays the base :root. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    /* palette: blueprint night */
+  :root:not([data-theme]) {
     --bg: #0f141d;
     --bg-raised: #151c29;
     --ink: #d6dde8;
@@ -75,6 +76,26 @@
     --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
     --shadow-lg: 0 20px 56px rgba(0, 0, 0, 0.6);
   }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141d;
+  --bg-raised: #151c29;
+  --ink: #d6dde8;
+  --ink-muted: #8494a9;
+  --line: #27324a;
+  --line-strong: #35435f;
+  --accent: #82b3e3;
+  --accent-ink: #0f141d;
+  --accent-wash: #82b3e31a;
+  --vmark: #dfa45a;
+  --ok: #74c395;
+  --ok-wash: #74c3951a;
+  --err: #e08984;
+  --err-wash: #e089841a;
+  --vmark-wash: #dfa45a1a;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 20px 56px rgba(0, 0, 0, 0.6);
 }
 
 /* ---------------------------------------------------------------- reset */
@@ -155,6 +176,36 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 }
 .nav-menu a:hover { color: var(--ink); background: var(--accent-wash); text-decoration: none; }
 .nav-menu a.active { color: var(--accent); background: var(--accent-wash); }
+
+.theme-toggle {
+  margin-left: var(--space-2);
+  padding: var(--space-2);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--ink-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--ink); background: var(--accent-wash); }
+
+/* skip link: off-screen until focused */
+.skip-link {
+  position: fixed;
+  left: var(--space-2);
+  top: -4rem;
+  z-index: 200;
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg-raised);
+  color: var(--ink);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  transition: top var(--dur) var(--ease);
+}
+.skip-link:focus { top: var(--space-2); text-decoration: none; }
 
 /* ---------------------------------------------------------------- layout */
 .breadcrumb {
