@@ -6,6 +6,13 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Web UI design tokens: a 4px-based spacing scale, three elevation tiers, and
+  motion tokens, so spacing and shadows are systematic rather than ad hoc.
+- A real toast component for client-side notifications (bottom-right, aria-live,
+  per-status left accent bar, dismiss button, reduced-motion aware), replacing
+  the previously unstyled notification and built entirely on the tokens.
+
 ### Security
 - Rendered plan markdown is sanitized (nh3) before being inserted with `|safe`,
   stripping `<script>`, event handlers, and `javascript:` URLs while keeping the

@@ -135,47 +135,45 @@ function copyToClipboard(text) {
     });
 }
 
-// Show notification
+// Toasts: client-side notifications in a bottom-right, aria-live region.
+// Styling and motion live in styles.css (.toast*); this only builds the nodes.
 function showNotification(message, type = 'info') {
-    const notification = document.createElement('div');
-    notification.className = `alert alert-${type}`;
-    notification.innerHTML = `
-        <i class="fas fa-${type === 'success' ? 'check-circle' : 'info-circle'}"></i>
-        ${message}
-    `;
-    notification.style.cssText = `
-        position: fixed;
-        top: 1rem;
-        right: 1rem;
-        z-index: 9999;
-        min-width: 250px;
-        animation: slideIn 0.3s ease-out;
-    `;
-
-    document.body.appendChild(notification);
-
-    setTimeout(() => {
-        notification.style.opacity = '0';
-        notification.style.transform = 'translateX(100%)';
-        setTimeout(() => notification.remove(), 300);
-    }, 3000);
-}
-
-// Add slide-in animation
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from {
-            opacity: 0;
-            transform: translateX(100%);
-        }
-        to {
-            opacity: 1;
-            transform: translateX(0);
-        }
+    let region = document.querySelector('.toast-region');
+    if (!region) {
+        region = document.createElement('div');
+        region.className = 'toast-region';
+        region.setAttribute('role', 'status');
+        region.setAttribute('aria-live', 'polite');
+        document.body.appendChild(region);
     }
-`;
-document.head.appendChild(style);
+
+    const toast = document.createElement('div');
+    toast.className = 'toast toast--' + type;
+
+    const body = document.createElement('div');
+    body.className = 'toast__body';
+    body.textContent = message;
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'toast__close';
+    close.setAttribute('aria-label', 'Dismiss');
+    close.textContent = '×';
+
+    let removed = false;
+    function dismiss() {
+        if (removed) return;
+        removed = true;
+        toast.classList.add('is-leaving');
+        toast.addEventListener('animationend', () => toast.remove(), { once: true });
+        setTimeout(() => toast.remove(), 400);  // fallback if animation is disabled
+    }
+
+    close.addEventListener('click', dismiss);
+    toast.append(body, close);
+    region.appendChild(toast);
+    setTimeout(dismiss, 4000);
+}
 
 // Handle URL query parameters
 document.addEventListener('DOMContentLoaded', function() {

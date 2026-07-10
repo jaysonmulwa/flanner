@@ -194,6 +194,14 @@ def test_codemirror_asset_is_served(client, plan_id):
     assert "CodeMirror" in resp.text
 
 
+def test_design_tokens_and_toast_shipped(client):
+    css = client.get("/static/css/styles.css").text
+    assert "--space-4:" in css and "--shadow-md:" in css  # spacing + elevation tokens
+    assert ".toast-region" in css and ".toast--success" in css  # toast component
+    js = client.get("/static/js/app.js").text
+    assert "toast-region" in js and "aria-live" in js  # toast built with a live region
+
+
 def test_plan_view_has_reading_settings(client, plan_id):
     html = client.get(f"/plans/{plan_id}").text
     assert 'id="reading-panel"' in html
