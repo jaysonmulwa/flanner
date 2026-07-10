@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.jaysonmulwa/flanner",
+  "description": "Keeps AI coding agents' plan and design markdown organized: places it in a managed directory, adds a YAML header, versions every revision, and enforces it with a guard hook. Works with Claude Code and Codex.",
+  "status": "active",
+  "repository": {
+    "url": "https://github.com/jaysonmulwa/flanner",
+    "source": "github"
+  },
+  "version": "0.4.1",
+  "websiteUrl": "https://flanner.io",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "flanner",
+      "version": "0.4.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

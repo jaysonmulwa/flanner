@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `flanner-mcp` console script to run the MCP server (equivalent to
+  `python -m flanner.server`); cleaner for client configs and registry listings
+- `server.json` manifest for submitting to the MCP registry
+
 ## [0.4.1] - 2026-07-09
 
 ### Fixed

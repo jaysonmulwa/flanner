@@ -974,8 +974,17 @@ def get_jira_config_tool(project_id: str) -> dict[str, Any]:
         return {"configured": False, "message": "JIRA not configured for this project"}
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Run the MCP server over stdio.
+
+    Entry point for the `flanner-mcp` console script and for
+    `python -m flanner.server`.
+    """
     # Initialize the database before serving: tools assume a live session,
     # and an MCP client's first call is otherwise "Database not initialized"
     ensure_database()
     mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()

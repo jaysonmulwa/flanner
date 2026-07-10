@@ -56,6 +56,7 @@ dev = [
 
 [project.scripts]
 flanner = "flanner.cli:cli"
+flanner-mcp = "flanner.server:main"
 
 [project.urls]
 Homepage = "https://flanner.io"
