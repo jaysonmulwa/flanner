@@ -7,6 +7,11 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Command palette (Ctrl/Cmd+K, or the nav "Search" button): a native `<dialog>`
+  that fuzzy-filters every project and plan and jumps to it. Arrow keys move the
+  selection, Enter opens, Esc closes; the index is served by a new `/api/search`
+  endpoint. Focus trap, Esc, and backdrop dismissal come from the native dialog,
+  so it adds no library.
 - Web UI design tokens: a 4px-based spacing scale, three elevation tiers, and
   motion tokens, so spacing and shadows are systematic rather than ad hoc.
 - A real toast component for client-side notifications (bottom-right, aria-live,

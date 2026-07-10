@@ -772,6 +772,23 @@ async def api_list_projects() -> list[dict[str, Any]]:
     ]
 
 
+@app.get("/api/search")
+async def api_search_index() -> list[dict[str, str]]:
+    """Flat index of projects and plans for the command palette."""
+    ensure_db()
+    session = get_session()
+    items: list[dict[str, str]] = []
+    for p in db_list_projects(session):
+        items.append(
+            {"type": "project", "name": p.name, "context": "", "url": f"/projects/{p.id}"}
+        )
+        for pf in p.plan_files:
+            items.append(
+                {"type": "plan", "name": pf.name, "context": p.name, "url": f"/plans/{pf.id}"}
+            )
+    return items
+
+
 @app.get("/api/projects/{project_id}/plans")
 async def api_list_plan_files(project_id: str) -> list[dict[str, Any]]:
     """API: List plan files for a project"""

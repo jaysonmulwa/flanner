@@ -157,6 +157,100 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 
+// Command palette (Cmd/Ctrl+K): jump to any project or plan.
+document.addEventListener('DOMContentLoaded', function () {
+    const dlg = document.getElementById('cmdk');
+    const input = document.getElementById('cmdk-input');
+    const list = document.getElementById('cmdk-list');
+    if (!dlg || !input || !list || typeof dlg.showModal !== 'function') return;
+
+    let index = null;   // cached search index
+    let items = [];      // current filtered results
+    let active = 0;
+
+    async function loadIndex() {
+        if (index) return;
+        try { index = await (await fetch('/api/search')).json(); } catch (e) { index = []; }
+    }
+
+    function render(query) {
+        const q = query.trim().toLowerCase();
+        const all = index || [];
+        items = (q
+            ? all.filter(function (it) {
+                return (it.name + ' ' + (it.context || '')).toLowerCase().indexOf(q) !== -1;
+            })
+            : all
+        ).slice(0, 20);
+        active = 0;
+        list.innerHTML = '';
+        items.forEach(function (it, i) {
+            const li = document.createElement('li');
+            li.className = 'cmdk-item';
+            li.id = 'cmdk-opt-' + i;
+            li.setAttribute('role', 'option');
+            const kind = document.createElement('span');
+            kind.className = 'cmdk-kind';
+            kind.textContent = it.type;
+            const name = document.createElement('span');
+            name.className = 'cmdk-name';
+            name.textContent = it.name;
+            li.append(kind, name);
+            if (it.context) {
+                const ctx = document.createElement('span');
+                ctx.className = 'cmdk-ctx';
+                ctx.textContent = it.context;
+                li.appendChild(ctx);
+            }
+            li.addEventListener('click', function () { go(i); });
+            list.appendChild(li);
+        });
+        if (!items.length) {
+            const empty = document.createElement('li');
+            empty.className = 'cmdk-empty';
+            empty.textContent = 'No matches';
+            list.appendChild(empty);
+        }
+        updateActive();
+    }
+
+    function updateActive() {
+        const els = list.querySelectorAll('.cmdk-item');
+        els.forEach(function (li, i) { li.setAttribute('aria-selected', String(i === active)); });
+        if (els[active] && els[active].scrollIntoView) els[active].scrollIntoView({ block: 'nearest' });
+        input.setAttribute('aria-activedescendant', items[active] ? 'cmdk-opt-' + active : '');
+    }
+
+    function go(i) {
+        const it = items[i];
+        if (it) window.location.href = it.url;
+    }
+
+    async function open() {
+        await loadIndex();
+        input.value = '';
+        render('');
+        if (!dlg.open) dlg.showModal();
+        input.focus();
+    }
+
+    document.addEventListener('keydown', function (e) {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+            open();
+        }
+    });
+    const trigger = document.getElementById('cmdk-open');
+    if (trigger) trigger.addEventListener('click', open);
+    input.addEventListener('input', function () { render(input.value); });
+    input.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, items.length - 1); updateActive(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); updateActive(); }
+        else if (e.key === 'Enter') { e.preventDefault(); go(active); }
+    });
+    dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
+});
+
 // Confirmation dialogs
 function confirmDelete(message) {
     return confirm(message || 'Are you sure you want to delete this item?');

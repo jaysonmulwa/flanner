@@ -42,6 +42,8 @@
                     Projects
                 </a></li>
             </ul>
+            <button type="button" class="cmdk-trigger" id="cmdk-open" aria-label="Search (Ctrl+K)"
+                    title="Search projects and plans (Ctrl+K)"><span>Search</span><kbd>⌘K</kbd></button>
             <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Theme: system"
                     title="Theme: system"><span aria-hidden="true">◐</span></button>
         </div>
@@ -79,6 +81,15 @@
             <p class="footer-credit">Made with ❤️ by <a href="https://github.com/jaysonmulwa">Jayson</a></p>
         </div>
     </footer>
+
+    <!-- Command palette (Cmd/Ctrl+K) -->
+    <dialog id="cmdk" class="cmdk" aria-label="Search projects and plans">
+        <input type="text" id="cmdk-input" class="cmdk-input" role="combobox"
+               aria-controls="cmdk-list" aria-expanded="true" autocomplete="off"
+               spellcheck="false" placeholder="Search projects and plans...">
+        <ul id="cmdk-list" class="cmdk-list" role="listbox" aria-label="Results"></ul>
+        <p class="cmdk-hint"><kbd>↑</kbd><kbd>↓</kbd> navigate &nbsp; <kbd>↵</kbd> open &nbsp; <kbd>esc</kbd> close</p>
+    </dialog>
 
     <script src="{{ url_for('static', path='/js/app.js') }}?v={{ asset_version }}"></script>
     {% block extra_scripts %}{% endblock %}

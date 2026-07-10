@@ -211,6 +211,19 @@ def test_theme_toggle_and_skip_link(client):
     assert ':root[data-theme="dark"]' in css  # manual dark overrides the OS setting
 
 
+def test_command_palette_index_and_markup(client, plan_id, project_id):
+    # the palette dialog and search trigger ship on every page
+    html = client.get("/").text
+    assert 'id="cmdk"' in html and 'id="cmdk-input"' in html
+    assert 'id="cmdk-open"' in html  # discoverable search button in the nav
+    # the search index lists both projects and their plans with jump URLs
+    index = client.get("/api/search").json()
+    proj = next(i for i in index if i["type"] == "project" and i["name"] == "webproj")
+    assert proj["url"] == f"/projects/{project_id}"
+    plan = next(i for i in index if i["type"] == "plan" and i["name"] == "webplan")
+    assert plan["url"] == f"/plans/{plan_id}" and plan["context"] == "webproj"
+
+
 def test_plan_view_has_reading_settings(client, plan_id):
     html = client.get(f"/plans/{plan_id}").text
     assert 'id="reading-panel"' in html
