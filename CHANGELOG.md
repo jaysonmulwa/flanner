@@ -32,6 +32,9 @@ versioning follows [SemVer](https://semver.org/).
   - Cosmetic/cleanup: empty project dates show `-` consistently; the recent-
     activity stat is relabelled; dead `.form-card` and duplicate form-input CSS
     removed.
+  - Plan editor: the Version Information card was nested inside the form card
+    with its top border flush against the Save button; it is now a separate
+    section below the form, so the button no longer looks joined to it.
 
 ## [0.7.0] - 2026-07-10
 

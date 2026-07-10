@@ -708,13 +708,15 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 }
 
 /* ------------------------------------------------- detail + form pages */
-.form-container, .info-box {
+.form-container {
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 2rem;
   max-width: 800px;
 }
+/* not a card: a spaced section whose heading sits above the version grid card */
+.info-box { max-width: 800px; margin-top: 1.75rem; }
 
 .form-control {
   width: 100%;
