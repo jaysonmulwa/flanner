@@ -235,16 +235,12 @@ def start(port: int) -> None:
 
     console.print("Add to your Claude Code MCP settings:\n", style="white")
 
-    console.print(
-        """{
-  "mcpServers": {
-    "flanner": {
-      "command": "flanner-mcp"
-    }
-  }
-}""",
-        style="yellow",
-    )
+    import json
+
+    from .claude_integration import get_local_server_config
+
+    snippet = {"mcpServers": {"flanner": get_local_server_config()}}
+    console.print(json.dumps(snippet, indent=2), style="yellow")
 
     console.print("\nOr run the server directly:", style="white")
     console.print("  flanner-mcp\n", style="yellow")
