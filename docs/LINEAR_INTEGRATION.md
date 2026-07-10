@@ -51,6 +51,18 @@ history), and never logged.
 export LINEAR_API_KEY=lin_api_xxxxxxxx
 ```
 
+Verify the key and get the snippet to paste into your MCP settings:
+
+```bash
+flanner linear auth
+```
+
+`auth` checks the key against Linear (showing who you are), and prints the MCP
+server config block with `LINEAR_API_KEY` in its `env`, so the AI agent's
+`flanner-mcp` process gets the same access (it does not inherit your terminal's
+environment). The key is read from the environment only; `auth` takes no
+argument and stores nothing.
+
 With a key set:
 
 - `linear link` **verifies** the issue exists before linking and **caches** its

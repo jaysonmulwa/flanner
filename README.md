@@ -114,6 +114,7 @@ The web UI binds `127.0.0.1` with no authentication. Do not expose it beyond loc
 Link plan files to issues so a plan and its ticket travel together.
 
 ```bash
+flanner linear auth                                     # verify LINEAR_API_KEY, print MCP snippet
 flanner linear config PROJECT --workspace acme          # linear.app/acme
 flanner linear link PLAN --issue ENG-123 [--notes ...]  # link a plan to an issue
 flanner linear links [--project PROJECT]                # list all links

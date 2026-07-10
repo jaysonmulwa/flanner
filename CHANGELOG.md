@@ -17,6 +17,9 @@ versioning follows [SemVer](https://semver.org/).
     `flanner linear refresh` re-pulls live status. The key is read from the
     environment only, never stored on disk. The GraphQL client uses the standard
     library, so it adds no runtime dependency.
+  - `flanner linear auth` validates the key against Linear and prints the MCP
+    server config snippet (with `LINEAR_API_KEY` in its `env`) so the agent's
+    server process gets the same access.
   - See docs/LINEAR_INTEGRATION.md.
 
 ## [0.5.0] - 2026-07-10

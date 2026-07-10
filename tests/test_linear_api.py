@@ -117,6 +117,22 @@ def test_fetch_issue_by_identifier(monkeypatch):
     assert seen == {"team": "ENG", "number": 5}
 
 
+def test_fetch_viewer(monkeypatch):
+    monkeypatch.setattr(
+        linear_api, "_post", lambda *a, **k: {"viewer": {"name": "Ada", "email": "a@x.com"}}
+    )
+    assert linear_api.fetch_viewer("key") == {"name": "Ada", "email": "a@x.com"}
+
+
+def test_fetch_viewer_bad_key(monkeypatch):
+    def boom(*a, **k):
+        raise LinearError("Authentication required")
+
+    monkeypatch.setattr(linear_api, "_post", boom)
+    with pytest.raises(LinearError):
+        linear_api.fetch_viewer("bad")
+
+
 def test_attach_url_to_issue(monkeypatch):
     monkeypatch.setattr(
         linear_api, "_post", lambda *a, **k: {"attachmentLinkURL": {"success": True}}

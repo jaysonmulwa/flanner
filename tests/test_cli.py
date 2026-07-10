@@ -711,6 +711,41 @@ def test_web_no_warning_on_localhost(runner, initialized, monkeypatch):
 # --- linear ---
 
 
+def test_linear_auth_no_key(runner, monkeypatch):
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    result = runner.invoke(cli, ["linear", "auth"])
+    assert result.exit_code == 1
+    assert "LINEAR_API_KEY is not set" in result.output
+    assert "linear.app/settings/api" in result.output
+
+
+def test_linear_auth_valid(runner, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "lin_api_x")
+    from flanner import linear_api
+
+    monkeypatch.setattr(
+        linear_api, "fetch_viewer", lambda *a, **k: {"name": "Ada", "email": "ada@x.com"}
+    )
+    result = runner.invoke(cli, ["linear", "auth"])
+    assert result.exit_code == 0, result.output
+    assert "Authenticated with Linear as Ada" in result.output
+    assert "LINEAR_API_KEY" in result.output  # prints the MCP env snippet
+
+
+def test_linear_auth_rejected(runner, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "bad")
+    from flanner import linear_api
+    from flanner.exceptions import LinearError
+
+    def boom(*a, **k):
+        raise LinearError("Authentication required")
+
+    monkeypatch.setattr(linear_api, "fetch_viewer", boom)
+    result = runner.invoke(cli, ["linear", "auth"])
+    assert result.exit_code == 1
+    assert "rejected the key" in result.output
+
+
 def test_linear_config_valid(runner, project):
     result = runner.invoke(
         cli, ["linear", "config", "proj", "--workspace", "https://linear.app/Acme"]

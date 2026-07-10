@@ -39,6 +39,8 @@ mutation AttachLink($issueId: String!, $url: String!, $title: String!) {
 }
 """
 
+_VIEWER_QUERY = "query { viewer { name email } }"
+
 
 def get_api_key() -> str | None:
     """Return the Linear API key from the environment, or None if unset."""
@@ -83,6 +85,17 @@ def _post(
 
     result: dict[str, Any] = body.get("data") or {}
     return result
+
+
+def fetch_viewer(api_key: str, timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
+    """
+    Return the authenticated user ({name, email}) for a key.
+
+    Used to validate LINEAR_API_KEY; raises LinearError if the key is rejected.
+    """
+    data = _post({"query": _VIEWER_QUERY}, api_key, timeout)
+    viewer = data.get("viewer") or {}
+    return {"name": viewer.get("name"), "email": viewer.get("email")}
 
 
 def fetch_issue(

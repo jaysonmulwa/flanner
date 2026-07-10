@@ -1329,6 +1329,55 @@ def linear_config(project_name: str, workspace: str) -> None:
         console.print(f"ERROR Failed to configure Linear: {e}", style="red")
 
 
+@linear.command("auth")
+def linear_auth() -> None:
+    """Verify LINEAR_API_KEY and print the MCP server config snippet.
+
+    Reads the key from the environment only (never a flag, never stored), checks
+    it against Linear, and shows the config block to give the AI agent the same
+    access.
+    """
+    import json
+
+    from .claude_integration import get_local_server_config
+    from .exceptions import LinearError
+    from .linear_api import fetch_viewer, get_api_key
+
+    api_key = get_api_key()
+    if not api_key:
+        console.print("ERROR LINEAR_API_KEY is not set", style="red")
+        console.print(
+            "  Create a personal API key at https://linear.app/settings/api, then set it:",
+            style="yellow",
+        )
+        console.print('  PowerShell:  setx LINEAR_API_KEY "lin_api_..."', style="white")
+        console.print("  bash/zsh:    export LINEAR_API_KEY=lin_api_...", style="white")
+        raise SystemExit(1)
+
+    try:
+        viewer = fetch_viewer(api_key)
+    except LinearError as e:
+        console.print(f"ERROR Linear rejected the key: {e}", style="red")
+        raise SystemExit(1) from e
+
+    who = viewer.get("name") or "unknown user"
+    email = viewer.get("email")
+    console.print(f"\nOK Authenticated with Linear as {who}", style="green")
+    if email:
+        console.print(f"  {email}", style="white")
+
+    console.print(
+        "\nYour terminal is ready. To give the AI agent (MCP server) the same access,",
+        style="white",
+    )
+    console.print(
+        "add LINEAR_API_KEY to its env in your Claude Code MCP settings:\n", style="white"
+    )
+    config = get_local_server_config()
+    config["env"] = {"LINEAR_API_KEY": "lin_api_...  (paste your key)"}
+    console.print(json.dumps({"mcpServers": {"flanner": config}}, indent=2), style="yellow")
+
+
 @linear.command("link")
 @click.argument("plan_name")
 @click.option("--issue", required=True, help="Linear issue id (e.g., ENG-123)")
