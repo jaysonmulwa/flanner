@@ -112,6 +112,10 @@ def test_init_creates_project(runner, home, git_repo):
     assert (home / "data.db").exists()
     assert (git_repo / ".plans").is_dir()
     assert ".plans/" in (git_repo / ".gitignore").read_text()
+    # Claude Code CLI registration (.mcp.json) is written even with --skip-claude,
+    # which only skips the Claude Desktop config.
+    mcp_json = json.loads((git_repo / ".mcp.json").read_text())
+    assert mcp_json["mcpServers"]["flanner"]["command"] == "flanner-mcp"
 
 
 def test_init_existing_project(runner, git_repo):

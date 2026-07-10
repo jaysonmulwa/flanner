@@ -186,6 +186,45 @@ def ensure_settings_hook(root: str) -> bool:
     return True
 
 
+# Claude Code (the CLI) reads project-scoped MCP servers from <root>/.mcp.json,
+# not from Claude Desktop's config that `flanner init` registers separately. The
+# portable `flanner-mcp` console script is used (not an absolute interpreter
+# path) so the file is shareable across a team: the CLI inherits the shell PATH
+# where `pip install flanner` put the script.
+MCP_SERVER_NAME = "flanner"
+MCP_SERVER_COMMAND = "flanner-mcp"
+
+
+def ensure_project_mcp_json(root: str) -> bool:
+    """Merge the flanner MCP server into <root>/.mcp.json for Claude Code.
+
+    Idempotent; returns True if the file was changed. Preserves any other
+    servers already declared in the file.
+    """
+    path = Path(root) / ".mcp.json"
+    config: dict[str, Any] = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                config = loaded
+        except json.JSONDecodeError:
+            config = {}
+
+    servers = config.get("mcpServers")
+    if not isinstance(servers, dict):
+        servers = {}
+        config["mcpServers"] = servers
+
+    desired = {"command": MCP_SERVER_COMMAND, "args": []}
+    if servers.get(MCP_SERVER_NAME) == desired:
+        return False
+
+    servers[MCP_SERVER_NAME] = desired
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
 SKILL_NAME = "flanner-plan"
 
 _SKILL_BODY = """---

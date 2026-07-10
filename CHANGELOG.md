@@ -6,6 +6,13 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `flanner init` now also registers the MCP server with **Claude Code** (the
+  CLI) by writing a project `.mcp.json`, not only Claude Desktop. Claude Code
+  reads `.mcp.json`, so previously CLI users ran `init` and never saw the flanner
+  tools under `/mcp`. Existing entries in `.mcp.json` are preserved; the portable
+  `flanner-mcp` command is used so the file is shareable across a team.
+
 ## [0.6.0] - 2026-07-10
 
 ### Added

@@ -76,9 +76,10 @@ def init(
     console.print(f"OK Initialized Flanner at {mcp_dir}", style="green")
     console.print(f"OK Database created at {db_path}", style="green")
 
-    # Register with Claude Code (unless skipped)
+    # Register with Claude Desktop (unless skipped). Claude Code (the CLI) is
+    # handled separately via .mcp.json in _setup_agent_integration below.
     if not skip_claude:
-        console.print("\n[MCP] Registering MCP server with Claude Code...", style="cyan")
+        console.print("\n[MCP] Registering MCP server with Claude Desktop...", style="cyan")
         from .claude_integration import auto_register_on_init
 
         success, message = auto_register_on_init()
@@ -159,6 +160,7 @@ def _setup_agent_integration(project_root: str) -> None:
     from .agent_hooks import (
         AGENT_MD_FILES,
         agent_md_block,
+        ensure_project_mcp_json,
         ensure_settings_hook,
         install_skill,
         upsert_agent_md,
@@ -174,6 +176,10 @@ def _setup_agent_integration(project_root: str) -> None:
         for filename in AGENT_MD_FILES:
             if upsert_agent_md(project_root, filename, block):
                 console.print(f"OK Added flanner block to {filename}", style="green")
+        if ensure_project_mcp_json(project_root):
+            console.print(
+                "OK Registered flanner MCP server in .mcp.json (Claude Code CLI)", style="green"
+            )
         if ensure_settings_hook(project_root):
             console.print("OK Installed guard-write hook in .claude/settings.json", style="green")
         if install_skill(project_root):

@@ -5,6 +5,7 @@ import json
 from flanner.agent_hooks import (
     agent_md_block,
     decide_write,
+    ensure_project_mcp_json,
     ensure_settings_hook,
     install_skill,
     run_guard_write,
@@ -133,6 +134,33 @@ def test_settings_hook_merges_with_existing(db, git_repo):
     settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
     assert settings["permissions"]["allow"] == ["Bash(ls:*)"]  # preserved
     assert settings["hooks"]["PreToolUse"]
+
+
+# --- .mcp.json (Claude Code CLI) ---------------------------------------------
+
+
+def test_project_mcp_json_added_and_idempotent(git_repo):
+    assert ensure_project_mcp_json(str(git_repo)) is True
+    config = json.loads((git_repo / ".mcp.json").read_text(encoding="utf-8"))
+    assert config["mcpServers"]["flanner"] == {"command": "flanner-mcp", "args": []}
+    assert ensure_project_mcp_json(str(git_repo)) is False  # idempotent
+
+
+def test_project_mcp_json_merges_with_existing(git_repo):
+    (git_repo / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"other": {"command": "x"}}}), encoding="utf-8"
+    )
+    assert ensure_project_mcp_json(str(git_repo)) is True
+    config = json.loads((git_repo / ".mcp.json").read_text(encoding="utf-8"))
+    assert config["mcpServers"]["other"] == {"command": "x"}  # preserved
+    assert config["mcpServers"]["flanner"]["command"] == "flanner-mcp"
+
+
+def test_project_mcp_json_recovers_from_malformed(git_repo):
+    (git_repo / ".mcp.json").write_text("{not json", encoding="utf-8")
+    assert ensure_project_mcp_json(str(git_repo)) is True
+    config = json.loads((git_repo / ".mcp.json").read_text(encoding="utf-8"))
+    assert config["mcpServers"]["flanner"]["command"] == "flanner-mcp"
 
 
 # --- skill -------------------------------------------------------------------
