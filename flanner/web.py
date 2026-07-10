@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID
 
 import markdown
+import nh3
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -77,19 +78,78 @@ def ensure_db() -> None:
         init_database()
 
 
+# Tags/attributes kept when sanitizing rendered markdown. Everything markdown
+# produces (including codehilite's span/class and heading ids) is allowed; the
+# sanitizer strips <script>, event handlers, javascript: URLs, and <style>.
+_SANITIZE_TAGS = {
+    "a",
+    "abbr",
+    "b",
+    "blockquote",
+    "br",
+    "code",
+    "del",
+    "div",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "hr",
+    "i",
+    "img",
+    "li",
+    "ol",
+    "p",
+    "pre",
+    "span",
+    "strong",
+    "sub",
+    "sup",
+    "table",
+    "tbody",
+    "td",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+}
+_SANITIZE_ATTRS = {
+    "a": {"href", "title"},
+    "img": {"src", "alt", "title"},
+    "code": {"class"},
+    "span": {"class"},
+    "pre": {"class"},
+    "div": {"class"},
+    "h1": {"id"},
+    "h2": {"id"},
+    "h3": {"id"},
+    "h4": {"id"},
+    "h5": {"id"},
+    "h6": {"id"},
+    "td": {"align"},
+    "th": {"align"},
+}
+
+
 # Template filters
 def markdown_filter(text: str | None) -> str:
-    """Convert markdown to HTML"""
+    """Render markdown to sanitized HTML.
+
+    The output is inserted with ``|safe``, so it is run through nh3 to strip any
+    raw HTML that could execute (scripts, event handlers, javascript: URLs) while
+    keeping the formatting and code-highlighting markup markdown emits.
+    """
     if not text:
         return ""
 
-    # Configure markdown with extensions
     md = markdown.Markdown(
         extensions=["fenced_code", "codehilite", "tables", "toc", "nl2br"],
         extension_configs={"codehilite": {"css_class": "highlight", "linenums": False}},
     )
-
-    return md.convert(text)
+    return nh3.clean(md.convert(text), tags=_SANITIZE_TAGS, attributes=_SANITIZE_ATTRS)
 
 
 # Add custom filters to Jinja2

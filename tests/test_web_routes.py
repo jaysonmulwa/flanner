@@ -40,6 +40,18 @@ def test_markdown_filter():
     assert "<h1" in markdown_filter("# Title")
 
 
+def test_markdown_filter_sanitizes_html():
+    out = markdown_filter('# ok\n\n<script>alert(1)</script>\n\n<a href="javascript:x">j</a>')
+    assert "<script" not in out
+    assert "javascript:" not in out
+    out2 = markdown_filter("<img src=x onerror=alert(1)>")
+    assert "onerror" not in out2
+    # legitimate formatting and code fences survive sanitization
+    assert "<h1" in markdown_filter("# Title")
+    assert "<pre" in markdown_filter("```python\nprint(1)\n```")
+    assert "<table" in markdown_filter("| a | b |\n|---|---|\n| 1 | 2 |")
+
+
 # --- project pages ---
 
 

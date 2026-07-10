@@ -6,6 +6,26 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- Rendered plan markdown is sanitized (nh3) before being inserted with `|safe`,
+  stripping `<script>`, event handlers, and `javascript:` URLs while keeping the
+  formatting and code-highlight markup. Adds the `nh3` dependency.
+
+### Fixed
+- Web UI review pass:
+  - Mobile: the projects grid no longer forces horizontal page scroll (its
+    `minmax` minimum exceeded the viewport), and rendered markdown tables scroll
+    within their own box instead of the page.
+  - Short form fields (version notes, descriptions) no longer stretch to 320px;
+    only the main content editor is tall.
+  - Reading presets (Book/Night) now style code, tables, and quotes consistently
+    regardless of the OS light/dark theme (they set a full local palette).
+  - Dark mode: the "Disabled" badge and the reading-settings popover shadow are
+    theme-aware instead of hardcoded light values.
+  - Consistency: info/version grids lay out in even columns; card padding is
+    uniform; the first markdown heading no longer gets a stray top gap; the
+    history file-path is a plain code span, not a dead link.
+
 ## [0.7.0] - 2026-07-10
 
 ### Added

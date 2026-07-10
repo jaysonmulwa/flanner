@@ -21,6 +21,8 @@
   --ok-wash: #2c7a4b14;
   --err: #b3403a;
   --err-wash: #b3403a14;
+  --vmark-wash: #a35a0e1a;
+  --shadow: 0 6px 24px rgba(45, 40, 30, 0.12);
 
   /* type */
   --mono: ui-monospace, "Cascadia Code", Consolas, "SF Mono", "JetBrains Mono", Menlo, monospace;
@@ -48,6 +50,8 @@
     --ok-wash: #74c3951a;
     --err: #e08984;
     --err-wash: #e089841a;
+    --vmark-wash: #dfa45a1a;
+    --shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
   }
 }
 
@@ -281,7 +285,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* ---------------------------------------------------------------- cards */
 .projects-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
   gap: 1rem;
 }
 
@@ -452,7 +456,9 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   border-radius: var(--radius);
   padding: 0.5rem 0.65rem;
 }
-.form-group textarea { min-height: 320px; line-height: 1.5; resize: vertical; }
+.form-group textarea { line-height: 1.5; resize: vertical; }
+/* only the main content editor is tall; notes/description honour their `rows` */
+.form-group textarea.markdown-editor { min-height: 320px; }
 
 .form-group input:focus,
 .form-group textarea:focus,
@@ -554,7 +560,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   line-height: 1.25;
   margin: 1.6em 0 0.5em;
 }
-.markdown-content h1:first-child { margin-top: 0; }
+.markdown-content > :first-child { margin-top: 0; }
 .markdown-content h1 { font-size: 1.875rem; }
 .markdown-content h2 { font-size: 1.4rem; padding-bottom: 0.25em; border-bottom: 1px solid var(--line); }
 .markdown-content h3 { font-size: 1.1875rem; }
@@ -591,8 +597,11 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 }
 
 .markdown-content table {
+  display: block;              /* let a wide table scroll instead of the page */
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
-  width: 100%;
   margin-bottom: 1em;
   font-family: var(--sans);
   font-size: 1rem;
@@ -651,7 +660,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 1.25rem 1.5rem;
+  padding: 1.4rem 1.5rem;
   margin-bottom: 0.75rem;
 }
 .timeline-current .timeline-content { border-color: var(--vmark); }
@@ -674,7 +683,13 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 .timeline-notes { font-size: 0.9375rem; color: var(--ink-muted); margin: 0.4rem 0 0.6rem; }
 
-.timeline-actions { display: flex; gap: 0.5rem; }
+.timeline-actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.timeline-path {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
 
 .text-muted { color: var(--ink-muted); }
 
@@ -739,7 +754,7 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
 .required { color: var(--err); }
 
 .alert-info { background: var(--accent-wash); border-color: var(--accent); color: var(--accent); }
-.badge-warning { background: var(--err-wash); color: var(--vmark); background: #a35a0e1a; }
+.badge-warning { background: var(--vmark-wash); color: var(--vmark); }
 
 .btn-info { background: transparent; color: var(--accent); border-color: var(--accent); }
 .btn-info:hover { background: var(--accent); color: var(--accent-ink); }
@@ -747,8 +762,8 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
 /* key: value metadata rendered in the frontmatter voice */
 .info-grid, .version-info-grid {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.5rem 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 0.75rem 1.5rem;
   font-family: var(--mono);
   font-size: 0.9375rem;
   background: var(--bg-raised);
@@ -769,7 +784,7 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 1.25rem 1.5rem;
+  padding: 1.4rem 1.5rem;
   transition: border-color 120ms ease;
 }
 .plan-file-card:hover { border-color: var(--accent); }
@@ -953,9 +968,19 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
 :root[data-reading-measure="comfortable"] { --reading-measure: 76ch; }
 :root[data-reading-measure="wide"]        { --reading-measure: 96ch; }
 
-/* Presets restyle the reading pane itself. "default" inherits the app theme. */
+/* Presets restyle the reading pane itself. "default" inherits the app theme.
+   Book/Night set a full local palette (overriding the variables the child
+   elements use) so code blocks, tables, and quotes stay consistent regardless
+   of the OS light/dark theme. */
 :root[data-reading-preset="book"] .markdown-content {
   --reading-font: var(--serif);
+  --ink: #2c2620;
+  --ink-muted: #6b5f48;
+  --bg-raised: #efe7d4;
+  --accent: #8a4a12;
+  --accent-wash: #8a4a1214;
+  --line: #e0d6bf;
+  --line-strong: #cdbf9f;
   background: #f6f1e6;
   color: #2c2620;
   padding: 2.25rem 2.75rem;
@@ -964,6 +989,13 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
 }
 :root[data-reading-preset="night"] .markdown-content {
   --reading-font: var(--serif);
+  --ink: #d3dae4;
+  --ink-muted: #8b9bb0;
+  --bg-raised: #1a2230;
+  --accent: #82b3e3;
+  --accent-wash: #82b3e31a;
+  --line: #273247;
+  --line-strong: #37455f;
   background: #10151d;
   color: #d3dae4;
   padding: 2.25rem 2.75rem;
@@ -986,7 +1018,7 @@ textarea.markdown-editor { min-height: 420px; line-height: 1.55; resize: vertica
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 0.75rem;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow);
 }
 .reading-panel[hidden] { display: none; }
 .reading-row { margin: 0.35rem 0; }
