@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-10
+
 ### Added
 - Web plan editor upgraded to a real code editor (vendored CodeMirror 5, no
   build step, fully offline): line numbers, markdown syntax highlighting,
@@ -50,6 +52,11 @@ versioning follows [SemVer](https://semver.org/).
   reads `.mcp.json`, so previously CLI users ran `init` and never saw the flanner
   tools under `/mcp`. Existing entries in `.mcp.json` are preserved; the portable
   `flanner-mcp` command is used so the file is shareable across a team.
+- Web `--port` is typed as an integer; a CLI-provided port previously arrived as
+  a string, which the port check would have crashed on.
+- Button heights are consistent: `<button class="btn">` used the browser default
+  line-height while `<a class="btn">` inherited the body's, so buttons rendered
+  shorter than link-styled buttons.
 
 ## [0.6.0] - 2026-07-10
 
