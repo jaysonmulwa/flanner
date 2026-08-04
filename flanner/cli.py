@@ -1013,6 +1013,108 @@ def sync(project: str | None, dry_run: bool) -> None:
         console.print("Run without --dry-run to actually import the files", style="cyan")
 
 
+_FRESHNESS_STYLES = {"fresh": "green", "aging": "yellow", "suspect": "dark_orange", "stale": "red"}
+
+
+@cli.command()
+@click.argument("plan_name", required=False)
+@click.option("--project", default=None, help="Project name")
+@click.option(
+    "--output",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+def freshness(plan_name: str | None, project: str | None, output: str) -> None:
+    """Freshness status for plans, with the evidence behind it"""
+    import json as json_module
+
+    from .database import get_version
+    from .database import list_plan_files as db_list_plan_files
+    from .freshness import compute_freshness
+    from .storage import load_plan_file
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        console.print(
+            "ERROR Project not found. Run from inside a project or pass --project.", style="red"
+        )
+        raise SystemExit(1)
+
+    plans = db_list_plan_files(session, proj.id)
+    if plan_name:
+        plans = [p for p in plans if p.name == plan_name]
+        if not plans:
+            console.print(f"ERROR Plan '{plan_name}' not found in '{proj.name}'", style="red")
+            raise SystemExit(1)
+    if not plans:
+        console.print(f"No plan files found for project '{proj.name}'", style="yellow")
+        return
+
+    results = []
+    for plan in plans:
+        version_obj = get_version(session, plan.id, None)
+        if not version_obj:
+            continue
+        try:
+            _, body = load_plan_file(version_obj.file_path)
+        except FileNotFoundError:
+            results.append(
+                (plan, version_obj, {"status": "stale", "reasons": ["plan file missing on disk"]})
+            )
+            continue
+        evidence = compute_freshness(proj.project_root, body, version_obj.created_at)
+        results.append((plan, version_obj, evidence))
+
+    if output == "json":
+        click.echo(
+            json_module.dumps(
+                [
+                    {"plan": p.name, "version": v.version, **e}
+                    for p, v, e in results
+                ],
+                indent=2,
+            )
+        )
+        return
+
+    if plan_name and len(results) == 1:
+        plan, version_obj, evidence = results[0]
+        style = _FRESHNESS_STYLES.get(evidence["status"], "white")
+        console.print(f"\n{plan.name} v{version_obj.version}: ", style="bold", end="")
+        console.print(evidence["status"], style=f"bold {style}")
+        for reason in evidence["reasons"]:
+            console.print(f"  - {reason}")
+        for key in (
+            "anchored_at_commit",
+            "referenced_paths",
+            "referenced_symbols",
+            "invalid_refs",
+            "commits_since_anchor",
+            "churn_scope",
+            "age_days",
+        ):
+            if evidence.get(key) not in (None, []):
+                console.print(f"  {key}: {evidence[key]}", style="dim")
+        return
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Plan")
+    table.add_column("Ver")
+    table.add_column("Status")
+    table.add_column("Evidence")
+    for plan, version_obj, evidence in results:
+        style = _FRESHNESS_STYLES.get(evidence["status"], "white")
+        table.add_row(
+            plan.name,
+            f"v{version_obj.version}",
+            f"[{style}]{evidence['status']}[/{style}]",
+            evidence["reasons"][0] if evidence["reasons"] else "",
+        )
+    console.print(table)
+
+
 @cli.group()
 def jira() -> None:
     """JIRA integration commands"""

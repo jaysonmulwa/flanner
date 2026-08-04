@@ -27,6 +27,7 @@ from .database import list_projects as db_list_projects
 
 # Import our modules
 from .exceptions import DatabaseError
+from .freshness import compute_freshness
 from .git_integration import find_git_root, update_gitignore, validate_git_repo
 from .plan_ops import write_version
 from .storage import (
@@ -718,6 +719,58 @@ def get_plan_history_tool(plan_file_id: str) -> dict[str, Any]:
             for v in versions
         ],
         "total_versions": len(versions),
+    }
+
+
+@mcp.tool()
+def get_plan_freshness_tool(plan_file_id: str) -> dict[str, Any]:
+    """
+    Check whether a plan is still likely true before trusting it.
+
+    Computes an evidence-backed freshness status for the plan's latest
+    version: which paths and symbols it cites, whether those still exist
+    in the repo, and how many commits have touched the cited files since
+    the version was authored.
+
+    Args:
+        plan_file_id: UUID of the plan file (as string)
+
+    Returns:
+        status (fresh | aging | suspect | stale), reasons, and the full
+        evidence record (anchor commit, cited refs, invalid refs, churn)
+    """
+    session = get_session()
+
+    try:
+        plan_file_uuid = UUID(plan_file_id)
+    except ValueError:
+        return {"error": True, "message": f"Invalid UUID: {plan_file_id}"}
+
+    plan_file = get_plan_file(session, plan_file_uuid)
+    if not plan_file:
+        return {"error": True, "message": f"Plan file with ID {plan_file_id} not found"}
+
+    project = get_project(session, plan_file.project_id)
+    if not project:
+        return {"error": True, "message": f"Project for plan {plan_file_id} not found"}
+
+    version_obj = get_version(session, plan_file_uuid, None)
+    if not version_obj:
+        return {"error": True, "message": "No versions found for this plan"}
+
+    try:
+        _, body = load_plan_file(version_obj.file_path)
+    except FileNotFoundError:
+        return {"error": True, "message": f"File not found at {version_obj.file_path}"}
+
+    evidence = compute_freshness(project.project_root, body, version_obj.created_at)
+    return {
+        "plan_file": {
+            "id": str(plan_file.id),
+            "name": plan_file.name,
+            "current_version": plan_file.current_version,
+        },
+        **evidence,
     }
 
 
