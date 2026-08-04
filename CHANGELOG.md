@@ -6,6 +6,20 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-05
+
+### Added
+- Plan freshness: evidence-based drift detection. Every plan version gets a
+  status (`fresh | aging | suspect | stale`) derived from checkable evidence:
+  the paths and symbols it cites, whether those still exist in the repo, an
+  anchor commit resolved from the version's authored time, and how many
+  commits touched the cited files since. Nothing is stored; git access is
+  read-only and fails open (no git degrades to age-only judgment).
+- `flanner freshness [PLAN_NAME]` CLI command: status table for all plans, a
+  full evidence breakdown for one plan, and `--output json` for scripting.
+- `get_plan_freshness_tool` MCP tool so agents can check whether a plan is
+  still likely true before trusting it.
+
 ## [0.7.1] - 2026-07-10
 
 ### Added
