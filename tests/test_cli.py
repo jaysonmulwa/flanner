@@ -888,3 +888,65 @@ def test_setup_registers_and_writes_global_nudge(runner, tmp_path, monkeypatch, 
     assert nudge.exists()
     assert "initialize_project_tool" in nudge.read_text(encoding="utf-8")
     assert "Claude Code CLI not found" in result.output  # took the no-claude branch
+
+
+# --- doctor: catalog/disk reconciliation ---
+
+
+@pytest.fixture
+def written_plan(project, git_repo):
+    """A plan created through the real write path, so its file exists on disk."""
+    from flanner.database import get_project
+    from flanner.plan_ops import create_plan
+
+    session = get_session()
+    proj = get_project(session, project)
+    plan_file, _ = create_plan(
+        session, project=proj, name="written", content="# body\n", created_by="test"
+    )
+    session.commit()
+    return plan_file.id
+
+
+def test_doctor_clean_project(runner, written_plan, git_repo):
+    result = runner.invoke(cli, ["doctor", "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert "agree" in result.output
+
+
+def test_doctor_reports_missing_file(runner, plan):
+    # The `plan` fixture records a version whose file was never written.
+    result = runner.invoke(cli, ["doctor", "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert "missing_file" in result.output
+
+
+def test_doctor_json_output(runner, plan):
+    result = runner.invoke(cli, ["doctor", "--project", "proj", "--output", "json"])
+    assert result.exit_code == 0, result.output
+    findings = json.loads(result.output)
+    assert findings[0]["kind"] == "missing_file"
+    assert findings[0]["repairable"] is False
+
+
+def test_doctor_repair_adopts_orphan(runner, written_plan, git_repo):
+    original = (git_repo / ".plans" / "written_v1.md").read_text(encoding="utf-8")
+    orphan = git_repo / ".plans" / "written_v2.md"
+    orphan.write_text(original.replace("version: 1", "version: 2"), encoding="utf-8")
+
+    result = runner.invoke(cli, ["doctor", "--project", "proj"])
+    assert "orphan_file" in result.output
+    assert "--repair" in result.output  # suggests the fix
+
+    repaired = runner.invoke(cli, ["doctor", "--project", "proj", "--repair"])
+    assert repaired.exit_code == 0, repaired.output
+    assert "Repaired 1" in repaired.output
+
+    after = runner.invoke(cli, ["doctor", "--project", "proj"])
+    assert "agree" in after.output
+
+
+def test_doctor_unknown_project_exits_1(runner, initialized):
+    result = runner.invoke(cli, ["doctor", "--project", "nope"])
+    assert result.exit_code == 1
+    assert "Project not found" in result.output

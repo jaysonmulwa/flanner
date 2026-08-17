@@ -25,6 +25,7 @@ ALLOWED = {
     "storage": {"exceptions", "frontmatter", "utils"},
     "freshness": {"utils"},
     "ipc": set(),
+    "reconcile": FOUNDATION | {"database"},
     "claude_integration": set(),
     "linear_api": {"exceptions", "linear_utils"},
     "server": FOUNDATION
@@ -43,6 +44,7 @@ ALLOWED = {
         "linear_api",
         "freshness",
         "ipc",
+        "reconcile",
     },
     "__main__": {"cli"},
     "__init__": set(),

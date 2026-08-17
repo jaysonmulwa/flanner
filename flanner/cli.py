@@ -1022,6 +1022,87 @@ def sync(project: str | None, dry_run: bool) -> None:
         console.print("Run without --dry-run to actually import the files", style="cyan")
 
 
+_FINDING_STYLES = {
+    "missing_file": "red",
+    "hash_mismatch": "yellow",
+    "unreadable_file": "red",
+    "orphan_file": "cyan",
+    "unknown_plan": "yellow",
+    "stale_current_version": "cyan",
+    "no_project_root": "red",
+}
+
+
+@cli.command()
+@click.option("--project", default=None, help="Project name")
+@click.option("--repair", is_flag=True, help="Adopt orphan files and fix stale version counters")
+@click.option(
+    "--output",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+def doctor(project: str | None, repair: bool, output: str) -> None:
+    """Check the catalog against the plan files on disk"""
+    import json as json_module
+
+    from .reconcile import reconcile_project
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        console.print(
+            "ERROR Project not found. Run from inside a project or pass --project.", style="red"
+        )
+        raise SystemExit(1)
+
+    findings = reconcile_project(session, proj, repair=repair)
+
+    if output == "json":
+        click.echo(
+            json_module.dumps(
+                [
+                    {
+                        "kind": f.kind,
+                        "plan": f.plan,
+                        "detail": f.detail,
+                        "path": f.path,
+                        "repairable": f.repairable,
+                    }
+                    for f in findings
+                ],
+                indent=2,
+            )
+        )
+        return
+
+    if not findings:
+        console.print(f"OK Catalog and plan files agree for '{proj.name}'", style="green")
+        return
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Issue")
+    table.add_column("Plan")
+    table.add_column("Detail")
+    for finding in findings:
+        style = _FINDING_STYLES.get(finding.kind, "white")
+        table.add_row(f"[{style}]{finding.kind}[/{style}]", finding.plan, finding.detail)
+    console.print(table)
+
+    if repair:
+        fixed = sum(1 for f in findings if f.repairable)
+        console.print(f"\nRepaired {fixed} of {len(findings)} findings.", style="green")
+        remaining = [f for f in findings if not f.repairable]
+        if remaining:
+            console.print(
+                f"{len(remaining)} need a human: files are missing or were edited outside "
+                "flanner, so no automatic fix is safe.",
+                style="yellow",
+            )
+    elif any(f.repairable for f in findings):
+        console.print("\nRun 'flanner doctor --repair' to fix the repairable ones.", style="yellow")
+
+
 _FRESHNESS_STYLES = {"fresh": "green", "aging": "yellow", "suspect": "dark_orange", "stale": "red"}
 
 
