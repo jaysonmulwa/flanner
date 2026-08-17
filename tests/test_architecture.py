@@ -25,6 +25,8 @@ ALLOWED = {
     "storage": {"exceptions", "frontmatter", "utils"},
     "freshness": {"utils"},
     "ipc": set(),
+    "identity": set(),
+    "artifacts": {"identity"},
     "reconcile": FOUNDATION | {"database"},
     "services": FOUNDATION
     | {"database", "storage", "plan_ops", "linear_api", "agent_hooks", "ipc"},
