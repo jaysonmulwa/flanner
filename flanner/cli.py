@@ -327,7 +327,7 @@ def status() -> None:
     console.print()
 
 
-@cli.command()
+@cli.command("list")
 @click.option("--project", default=None, help="Project name")
 @click.option(
     "--output",
@@ -335,7 +335,7 @@ def status() -> None:
     default="table",
     help="Output format",
 )
-def list(project: str | None, output: str) -> None:
+def list_cmd(project: str | None, output: str) -> None:
     """List all projects or plan files"""
     import json as json_module
 
@@ -1148,7 +1148,7 @@ def freshness(plan_name: str | None, project: str | None, output: str) -> None:
         console.print(f"ERROR Project '{proj.name}' has no project_root configured", style="red")
         raise SystemExit(1)
 
-    results = []
+    results: list[tuple[Any, Any, dict[str, Any]]] = []
     for plan in plans:
         version_obj = get_version(session, plan.id, None)
         if not version_obj:
@@ -1156,11 +1156,9 @@ def freshness(plan_name: str | None, project: str | None, output: str) -> None:
         try:
             _, body = load_plan_file(version_obj.file_path)
         except FileNotFoundError:
-            missing: dict[str, Any] = {
-                "status": "stale",
-                "reasons": ["plan file missing on disk"],
-            }
-            results.append((plan, version_obj, missing))
+            results.append(
+                (plan, version_obj, {"status": "stale", "reasons": ["plan file missing on disk"]})
+            )
             continue
         evidence = compute_freshness(proj.project_root, body, version_obj.created_at)
         results.append((plan, version_obj, evidence))
