@@ -19,7 +19,11 @@ import contextlib
 import os
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Any
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -29,12 +33,13 @@ from .database import (
     ProjectModel,
     VersionModel,
     create_version,
+    get_plan_file,
     get_version,
     save_artifact,
 )
 from .database import create_plan_file as db_create_plan_file
 from .exceptions import DatabaseError
-from .frontmatter import create_plan_file_content, generate_frontmatter
+from .frontmatter import create_plan_file_content, generate_frontmatter, read_managed
 from .storage import save_plan_file_with_frontmatter
 from .utils import generate_file_name, hash_content, utcnow
 
@@ -297,3 +302,160 @@ def _write_version_unlocked(
         notes=notes,
         artifact_id=artifact.artifact_id,
     )
+
+
+@dataclass(frozen=True)
+class MaterializeResult:
+    """Outcome of turning a synced artifact into a working file."""
+
+    version: VersionModel | None = None
+    reason: str = ""
+    conflict_path: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.version is not None
+
+
+def _conflict_name(plan_name: str, version: int, artifact_id: str) -> str:
+    """A deterministic filename for a version number two devices both used.
+
+    PRD §12.4 requires both artifacts to be retained until someone merges
+    them, so the loser of a filename race is parked under a name derived
+    from its own artifact id: stable, collision-free, and obviously a
+    conflict to anyone looking at the directory.
+    """
+    digest = artifact_id.split(":", 1)[-1][:12]
+    return generate_file_name(f"{plan_name}__conflict-{digest}", version)
+
+
+def materialize_version(
+    session: Session,
+    *,
+    project: ProjectModel,
+    envelope: dict[str, Any],
+    managed_file: bytes,
+) -> MaterializeResult:
+    """Write a peer's verified plan version into this device's working tree.
+
+    The caller has already verified the envelope and payload; this turns an
+    accepted artifact into something a human and an agent can actually open.
+
+    Frontmatter is regenerated rather than copied, because the project ids
+    and name are this device's, while the artifact identity, plan name,
+    version number, author, and timestamp all belong to the version and are
+    preserved exactly. The body is written byte for byte, so the signed
+    content hash still verifies here.
+    """
+    root = project.project_root
+    if root is None:
+        return MaterializeResult(reason=f"Project '{project.name}' has no project_root configured")
+
+    artifact_id = str(envelope.get("artifact_id", ""))
+    try:
+        fm_data, body = read_managed(managed_file.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as e:
+        return MaterializeResult(reason=f"unreadable plan file: {e}")
+
+    if artifacts.hash_text(body) != envelope.get("content_hash"):
+        return MaterializeResult(reason="body does not match the signed content hash")
+
+    plan_name = str(fm_data.get("plan_name") or "")
+    raw_version = fm_data.get("version")
+    if not plan_name or not isinstance(raw_version, int):
+        return MaterializeResult(reason="plan file is missing its name or version")
+    try:
+        plan_uuid = UUID(str(fm_data.get("plan_file_id")))
+    except (ValueError, TypeError):
+        return MaterializeResult(reason="plan file has no usable plan_file_id")
+
+    with plan_write_lock(root, project.plan_directory):
+        existing = (
+            session.query(VersionModel).filter_by(artifact_id=artifact_id).first()
+            if artifact_id
+            else None
+        )
+        if existing is not None:
+            return MaterializeResult(version=existing, reason="already materialized")
+
+        plan_file = get_plan_file(session, plan_uuid)
+        if plan_file is None:
+            clash = (
+                session.query(PlanFileModel)
+                .filter_by(project_id=project.id, name=plan_name)
+                .first()
+            )
+            if clash is not None:
+                # Same human name, different identity: two unrelated plans.
+                # Merging them would silently fuse separate histories.
+                return MaterializeResult(
+                    reason=f"a different plan named '{plan_name}' already exists here"
+                )
+            plan_file = db_create_plan_file(
+                session,
+                project_id=project.id,
+                name=plan_name,
+                description=str(fm_data.get("description") or ""),
+                plan_file_id=plan_uuid,
+            )
+        elif plan_file.project_id != project.id:
+            return MaterializeResult(reason="plan belongs to a different project on this device")
+
+        frontmatter_str = generate_frontmatter(
+            project_id=project.id,
+            project_name=project.name,
+            plan_file_id=plan_file.id,
+            plan_name=plan_name,
+            version=raw_version,
+            created_by=str(fm_data.get("created_by") or "peer"),
+            created_at=_parse_stamp(fm_data.get("created_at")),
+            artifact_id=artifact_id,
+            parents=envelope.get("parents") or None,
+            workspace_id=str(envelope.get("workspace_id") or ""),
+            actor_device_id=str(envelope.get("actor_device_id") or ""),
+        )
+
+        # Never overwrite: a file already sitting on this version number is
+        # either this very artifact or a concurrent one worth keeping.
+        plan_dir = Path(root) / project.plan_directory
+        file_name = generate_file_name(plan_name, raw_version)
+        conflict_path = None
+        target = plan_dir / file_name
+        if target.exists() and artifacts.hash_text(read_managed(target.read_text("utf-8"))[1]) != (
+            artifacts.hash_text(body)
+        ):
+            file_name = _conflict_name(plan_name, raw_version, artifact_id)
+            conflict_path = str(plan_dir / file_name)
+
+        file_path = save_plan_file_with_frontmatter(
+            project_root=root,
+            plan_directory=project.plan_directory,
+            file_name=file_name,
+            content=create_plan_file_content(frontmatter_str, body),
+        )
+        version = create_version(
+            session,
+            plan_file_id=plan_file.id,
+            version=raw_version,
+            file_path=file_path,
+            content_hash=hash_content(body),
+            created_by=str(fm_data.get("created_by") or "peer"),
+            notes=str(fm_data.get("notes") or ""),
+            artifact_id=artifact_id or None,
+        )
+        if raw_version > (plan_file.current_version or 0) and conflict_path is None:
+            plan_file.current_version = raw_version
+            plan_file.updated_at = utcnow()
+        session.commit()
+
+    return MaterializeResult(version=version, conflict_path=conflict_path)
+
+
+def _parse_stamp(raw: Any) -> datetime | None:
+    """The version's own timestamp, so materializing preserves when it was written."""
+    if isinstance(raw, datetime):
+        return raw
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        return None

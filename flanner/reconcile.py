@@ -22,33 +22,11 @@ from sqlalchemy.orm import Session
 
 from .database import PlanFileModel, ProjectModel, VersionModel, create_version, list_versions
 from .database import list_plan_files as db_list_plan_files
-from .frontmatter import parse_frontmatter
+from .frontmatter import read_managed
 from .utils import hash_content
 
 # Findings that repair can fix without ever discarding content.
 REPAIRABLE = {"orphan_file", "stale_current_version"}
-
-_CLOSING_DELIMITER = "\n---\n"
-
-
-def read_managed(text: str) -> tuple[dict[str, Any], str]:
-    """Frontmatter metadata plus the body *exactly* as it was written.
-
-    The frontmatter library strips surrounding whitespace from the body, but
-    the write path hashes the unstripped body, so a parsed body can never
-    reproduce the stored hash. Files are assembled as
-    ``frontmatter + "---\\n" + "\\n" + body``, so the body is recovered by
-    splitting on the closing delimiter and dropping the single separator
-    line. Falls back to the parsed body for anything not in that shape.
-    """
-    fm_data, parsed = parse_frontmatter(text)
-    if not fm_data or not text.startswith("---"):
-        return fm_data, parsed
-    end = text.find(_CLOSING_DELIMITER, 3)
-    if end == -1:
-        return fm_data, parsed
-    after = text[end + len(_CLOSING_DELIMITER) :]
-    return fm_data, after[1:] if after.startswith("\n") else after
 
 
 @dataclass(frozen=True)

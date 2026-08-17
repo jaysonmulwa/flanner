@@ -236,3 +236,26 @@ def increment_version_in_frontmatter(content: str) -> str:
 
     post = frontmatter.Post(body, **fm_data)
     return frontmatter.dumps(post)
+
+
+_CLOSING_DELIMITER = "\n---\n"
+
+
+def read_managed(text: str) -> tuple[dict[str, Any], str]:
+    """Frontmatter metadata plus the body *exactly* as it was written.
+
+    The frontmatter library strips surrounding whitespace from the body, but
+    the write path hashes the unstripped body, so a parsed body can never
+    reproduce the stored hash. Files are assembled as
+    ``frontmatter + "---\\n" + "\\n" + body``, so the body is recovered by
+    splitting on the closing delimiter and dropping the single separator
+    line. Falls back to the parsed body for anything not in that shape.
+    """
+    fm_data, parsed = parse_frontmatter(text)
+    if not fm_data or not text.startswith("---"):
+        return fm_data, parsed
+    end = text.find(_CLOSING_DELIMITER, 3)
+    if end == -1:
+        return fm_data, parsed
+    after = text[end + len(_CLOSING_DELIMITER) :]
+    return fm_data, after[1:] if after.startswith("\n") else after

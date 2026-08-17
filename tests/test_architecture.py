@@ -28,7 +28,7 @@ ALLOWED = {
     "identity": set(),
     "artifacts": {"identity"},
     "workflow": {"artifacts"},
-    "sync": {"artifacts", "database"},
+    "sync": FOUNDATION | {"artifacts", "database"},
     "reconcile": FOUNDATION | {"database"},
     "services": FOUNDATION
     | {"database", "storage", "plan_ops", "linear_api", "agent_hooks", "ipc"},
@@ -37,7 +37,7 @@ ALLOWED = {
     "server": FOUNDATION | {"database", "storage", "freshness", "services"},
     "web": FOUNDATION | {"database", "storage", "plan_ops", "ipc", "services"},
     "agent_hooks": FOUNDATION | {"database"},
-    "plan_ops": FOUNDATION | {"database", "storage"},
+    "plan_ops": FOUNDATION | {"database", "storage", "artifacts"},
     "cli": FOUNDATION
     | {
         "database",
@@ -63,7 +63,16 @@ def internal_imports(path: Path) -> set[str]:
     found = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            if node.level > 0 and node.module:  # from .x import y
+            if node.level > 0 and node.module is None:  # from . import x, y
+                # Relative with no module: a name here is either a
+                # submodule or a symbol from __init__ (e.g. __version__).
+                # Only the former is a boundary crossing. This whole form was
+                # previously invisible, so boundaries could be crossed
+                # without the test noticing.
+                for alias in node.names:
+                    if (PACKAGE / f"{alias.name}.py").exists():
+                        found.add(alias.name)
+            elif node.level > 0 and node.module:  # from .x import y
                 found.add(node.module.split(".")[0])
             elif node.module and node.module.startswith("flanner."):
                 found.add(node.module.split(".")[1])

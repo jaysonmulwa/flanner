@@ -618,6 +618,7 @@ def create_plan_file(
     name: str,
     description: str = "",
     auto_version: bool = True,
+    plan_file_id: uuid.UUID | None = None,
 ) -> PlanFileModel:
     """
     Create a new plan file.
@@ -628,6 +629,8 @@ def create_plan_file(
         name: Plan file name (without .md extension)
         description: Plan file description
         auto_version: Whether to auto-increment version on update
+        plan_file_id: Explicit id, so a plan materialized from a peer keeps
+            the identity it already has on the device that authored it
 
     Returns:
         Created plan file model
@@ -651,6 +654,7 @@ def create_plan_file(
         description=description,
         current_version=1,
         auto_version=auto_version,
+        **({"id": plan_file_id} if plan_file_id is not None else {}),
     )
     session.add(plan_file)
     _commit(session)

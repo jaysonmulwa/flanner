@@ -19,13 +19,15 @@ and over the mesh later without the verification rules changing.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from sqlalchemy.orm import Session
 
 from . import artifacts
 from .artifacts import Artifact
-from .database import get_artifact, list_artifacts, save_artifact
+from .database import VersionModel, get_artifact, list_artifacts, save_artifact
+from .frontmatter import read_managed
 
 PROTOCOL_VERSION = 1
 
@@ -92,6 +94,20 @@ def _parents_of(row: Any) -> tuple[str, ...]:
         return ()
 
 
+def payload_digest(artifact_type: str, payload: bytes) -> str:
+    """The hash an envelope's ``content_hash`` must equal for this payload.
+
+    A plan version travels as its whole managed file, because the receiver
+    needs the plan name and version number to materialize it, while the
+    signed hash covers the body alone (PRD §12.4). Every other artifact
+    type is hashed exactly as delivered.
+    """
+    if artifact_type == artifacts.PLAN_VERSION:
+        _, body = read_managed(payload.decode("utf-8", errors="replace"))
+        return artifacts.hash_text(body)
+    return artifacts.hash_bytes(payload)
+
+
 def missing_artifact_ids(local: Manifest, remote: Manifest) -> set[str]:
     """What the remote holds that we do not.
 
@@ -152,9 +168,13 @@ def ingest_artifact(
     if not public_key:
         return artifacts.Verdict(False, f"no known key for device {artifact.actor_device_id}")
 
-    verdict = artifacts.verify_artifact(artifact, public_key, payload)
+    verdict = artifacts.verify_artifact(artifact, public_key)
     if not verdict:
         return verdict
+    if payload is not None and payload_digest(artifact.artifact_type, payload) != (
+        artifact.content_hash
+    ):
+        return artifacts.Verdict(False, "payload does not match content_hash")
 
     save_artifact(
         session,
@@ -248,6 +268,25 @@ class LocalPeer:
     def manifest(self, workspace_id: str) -> Manifest:
         return build_manifest(self._session, workspace_id)
 
+    def _payload_for(self, row: Any) -> bytes | None:
+        """The bytes to send for an artifact.
+
+        Event payloads are stored on the row. A plan version's content is the
+        managed file itself, which stays the canonical copy rather than being
+        duplicated into the catalog (PRD §12.4).
+        """
+        if row.artifact_type == artifacts.PLAN_VERSION:
+            version = (
+                self._session.query(VersionModel).filter_by(artifact_id=row.artifact_id).first()
+            )
+            if version is None:
+                return None
+            try:
+                return Path(version.file_path).read_bytes()
+            except OSError:
+                return None
+        return row.payload.encode("utf-8") if row.payload is not None else None
+
     def fetch(self, artifact_ids: list[str]) -> list[tuple[dict[str, Any], bytes | None]]:
         out: list[tuple[dict[str, Any], bytes | None]] = []
         for artifact_id in artifact_ids:
@@ -268,6 +307,5 @@ class LocalPeer:
                 "content_hash": row.content_hash,
                 "signature": row.signature,
             }
-            payload = row.payload.encode("utf-8") if row.payload is not None else None
-            out.append((envelope, payload))
+            out.append((envelope, self._payload_for(row)))
         return out
