@@ -417,7 +417,11 @@ def configure_jira(
 
 
 def link_plan_to_jira(
-    plan_file_id: str, jira_issue_key: str, issue_type: str | None = None, notes: str | None = None
+    plan_file_id: str,
+    jira_issue_key: str,
+    issue_type: str | None = None,
+    notes: str | None = None,
+    created_by: str = "claude",
 ) -> dict[str, Any]:
     """Link a plan file to a JIRA issue."""
     from .database import create_jira_link, get_jira_config
@@ -449,7 +453,7 @@ def link_plan_to_jira(
     # Create link
     try:
         jira_link = create_jira_link(
-            session, plan_file_uuid, formatted_issue, issue_type, notes, created_by="claude"
+            session, plan_file_uuid, formatted_issue, issue_type, notes, created_by=created_by
         )
 
         # Get JIRA config for URL generation
@@ -557,6 +561,7 @@ def link_plan_to_linear(
     notes: str | None = None,
     verify: bool = True,
     attach_url: str | None = None,
+    created_by: str = "claude",
 ) -> dict[str, Any]:
     """Link a plan file to a Linear issue."""
     from .database import create_linear_link, get_linear_config
@@ -614,7 +619,7 @@ def link_plan_to_linear(
             issue_title=issue_title,
             issue_state=issue_state,
             notes=notes,
-            created_by="claude",
+            created_by=created_by,
         )
     except ValueError as e:
         return {"error": True, "message": str(e)}

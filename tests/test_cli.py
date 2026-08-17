@@ -950,3 +950,46 @@ def test_doctor_unknown_project_exits_1(runner, initialized):
     result = runner.invoke(cli, ["doctor", "--project", "nope"])
     assert result.exit_code == 1
     assert "Project not found" in result.output
+
+
+# --- single-writer discipline: CLI writes go through the daemon ---
+
+
+def test_cli_write_routes_through_the_daemon(runner, plan, monkeypatch):
+    """With a daemon up, a CLI write is forwarded rather than applied directly."""
+    from flanner import services
+
+    seen = []
+
+    def fake_call(path, payload):
+        seen.append((path, payload["op"]))
+        return {"result": {"success": True, "message": "ok", "count": 2}}
+
+    monkeypatch.setattr(services.ipc, "call_daemon", fake_call)
+    result = runner.invoke(cli, ["jira", "unlink", "myplan", "--all", "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert seen == [("/ipc/call", "unlink_jira_issue")]
+    assert "Unlinked 2 JIRA issue(s)" in result.output
+
+
+def test_cli_write_applies_locally_without_a_daemon(runner, project, git_repo):
+    """No daemon: the write still happens exactly once, in-process."""
+    from flanner.database import get_jira_config, get_session
+
+    result = runner.invoke(
+        cli, ["jira", "config", "proj", "--url", JIRA_URL, "--project-key", "PROJ"]
+    )
+    assert result.exit_code == 0, result.output
+    assert get_jira_config(get_session(), project).jira_url == JIRA_URL
+
+
+def test_cli_links_are_attributed_to_the_user_not_the_agent(runner, plan):
+    """Routing through the shared service must not relabel human actions."""
+    from flanner.database import get_jira_links, get_session
+
+    result = runner.invoke(
+        cli, ["jira", "link", "myplan", "--issue", "PROJ-7", "--project", "proj"]
+    )
+    assert result.exit_code == 0, result.output
+    links = get_jira_links(get_session(), plan)
+    assert links[0].created_by == "user"

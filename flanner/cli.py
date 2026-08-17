@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 
 from .database import (
     ProjectModel,
-    delete_project,
     get_project_by_name,
     get_session,
     init_database,
@@ -556,16 +555,15 @@ def delete(project_name: str, force: bool) -> None:
             return
 
     # Delete project (cascade deletes plan files and versions)
-    if delete_project(session, project.id):
-        console.print(f"\nOK Project '{project_name}' deleted successfully", style="green")
-        console.print(
-            "  Note: Plan files on disk were NOT deleted. You may want to manually remove:",
-            style="cyan",
-        )
-        if project.project_root:
-            console.print(f"  {project.project_root}/{project.plan_directory}/", style="cyan")
-    else:
-        console.print("ERROR Failed to delete project", style="red")
+    project_root, plan_directory = project.project_root, project.plan_directory
+    _write("delete_project", project_id=str(project.id))
+    console.print(f"\nOK Project '{project_name}' deleted successfully", style="green")
+    console.print(
+        "  Note: Plan files on disk were NOT deleted. You may want to manually remove:",
+        style="cyan",
+    )
+    if project_root:
+        console.print(f"  {project_root}/{plan_directory}/", style="cyan")
 
 
 def _port_in_use(host: str, port: int) -> bool:
@@ -1220,7 +1218,6 @@ def jira() -> None:
 @click.option("--project-key", default=None, help="Default JIRA project key (e.g., PROJ)")
 def jira_config(project_name: str, url: str, project_key: str | None) -> None:
     """Configure JIRA integration for a project"""
-    from .database import create_jira_config
     from .jira_utils import is_valid_jira_url, normalize_jira_url
 
     mcp_dir = get_mcp_dir()
@@ -1248,14 +1245,19 @@ def jira_config(project_name: str, url: str, project_key: str | None) -> None:
     # Create or update JIRA config
     try:
         normalized_url = normalize_jira_url(url)
-        jira_config = create_jira_config(session, project.id, normalized_url, project_key)
+        result = _write(
+            "configure_jira",
+            project_id=str(project.id),
+            jira_url=normalized_url,
+            jira_project_key=project_key,
+        )
 
         console.print(
             f"\nOK JIRA configuration updated for project '{project_name}'", style="green"
         )
-        console.print(f"  JIRA URL: {jira_config.jira_url}", style="white")
-        if jira_config.jira_project_key:
-            console.print(f"  Default Project Key: {jira_config.jira_project_key}", style="white")
+        console.print(f"  JIRA URL: {result['jira_url']}", style="white")
+        if result.get("jira_project_key"):
+            console.print(f"  Default Project Key: {result['jira_project_key']}", style="white")
     except Exception as e:
         console.print(f"ERROR Failed to configure JIRA: {e}", style="red")
 
@@ -1272,7 +1274,7 @@ def jira_link(
     plan_name: str, issue: str, issue_type: str | None, notes: str | None, project: str | None
 ) -> None:
     """Link a plan file to a JIRA issue"""
-    from .database import create_jira_link, get_jira_config
+    from .database import get_jira_config
     from .jira_utils import format_jira_issue_key, generate_jira_issue_url, is_valid_jira_issue_key
 
     mcp_dir = get_mcp_dir()
@@ -1329,7 +1331,14 @@ def jira_link(
 
     # Create link
     try:
-        create_jira_link(session, plan_file.id, formatted_issue, issue_type, notes)
+        _write(
+            "link_plan_to_jira",
+            plan_file_id=str(plan_file.id),
+            jira_issue_key=formatted_issue,
+            issue_type=issue_type,
+            notes=notes,
+            created_by="user",
+        )
 
         console.print(f"\nOK Linked '{plan_name}' to {formatted_issue}", style="green")
 
@@ -1359,7 +1368,6 @@ def jira_link(
 @click.option("--project", default=None, help="Project name")
 def jira_unlink(plan_name: str, issue: str | None, unlink_all: bool, project: str | None) -> None:
     """Unlink a plan file from JIRA issue(s)"""
-    from .database import delete_all_jira_links, delete_jira_link_by_key
     from .jira_utils import format_jira_issue_key
 
     mcp_dir = get_mcp_dir()
@@ -1399,10 +1407,17 @@ def jira_unlink(plan_name: str, issue: str | None, unlink_all: bool, project: st
         console.print(f"ERROR Plan '{plan_name}' not found", style="red")
         raise SystemExit(1)
 
-    # Unlink
+    # Unlink. A missing link is a warning here, not a failure, so these go
+    # through dispatch directly rather than the exit-on-error helper.
+    from .services import dispatch
+
     try:
         if unlink_all or not issue:
-            count = delete_all_jira_links(session, plan_file.id)
+            result = dispatch("unlink_jira_issue", {"plan_file_id": str(plan_file.id)})
+            if result.get("error"):
+                console.print(f"ERROR {result['message']}", style="red")
+                raise SystemExit(1)
+            count = result.get("count", 0)
             if count > 0:
                 console.print(
                     f"\nOK Unlinked {count} JIRA issue(s) from '{plan_name}'", style="green"
@@ -1411,8 +1426,11 @@ def jira_unlink(plan_name: str, issue: str | None, unlink_all: bool, project: st
                 console.print(f"\n No JIRA links found for '{plan_name}'", style="yellow")
         else:
             formatted_issue = format_jira_issue_key(issue)
-            deleted = delete_jira_link_by_key(session, plan_file.id, formatted_issue)
-            if deleted:
+            result = dispatch(
+                "unlink_jira_issue",
+                {"plan_file_id": str(plan_file.id), "jira_issue_key": formatted_issue},
+            )
+            if result.get("success"):
                 console.print(f"\nOK Unlinked '{plan_name}' from {formatted_issue}", style="green")
             else:
                 console.print(f"\nERROR Link to {formatted_issue} not found", style="yellow")
@@ -1560,6 +1578,23 @@ def jira_show(plan_name: str, project: str | None) -> None:
         console.print()
 
 
+def _write(op: str, **args: Any) -> dict[str, Any]:
+    """Run one write operation through the shared service layer.
+
+    Routes to the local daemon when one is running, so the CLI cannot mutate
+    shared state behind its back (PRD Phase 1 single-writer discipline), and
+    executes in-process otherwise. Reports the operation's own message and
+    exits 1 on failure, so every CLI write fails the same way.
+    """
+    from .services import dispatch
+
+    result = dispatch(op, args)
+    if result.get("error"):
+        console.print(f"ERROR {result['message']}", style="red")
+        raise SystemExit(1)
+    return result
+
+
 def _require_session() -> Session:
     """Open the flanner database or exit 1 if it isn't initialized."""
     db_path = get_mcp_dir() / "data.db"
@@ -1591,7 +1626,6 @@ def linear() -> None:
 @click.option("--workspace", required=True, help="Linear workspace slug or URL (e.g. acme)")
 def linear_config(project_name: str, workspace: str) -> None:
     """Configure Linear integration for a project"""
-    from .database import create_linear_config
     from .linear_utils import is_valid_linear_workspace, normalize_linear_workspace
 
     if not is_valid_linear_workspace(workspace):
@@ -1607,11 +1641,11 @@ def linear_config(project_name: str, workspace: str) -> None:
 
     try:
         slug = normalize_linear_workspace(workspace)
-        config = create_linear_config(session, proj.id, slug)
+        result = _write("configure_linear", project_id=str(proj.id), workspace=slug)
         console.print(
             f"\nOK Linear configuration updated for project '{project_name}'", style="green"
         )
-        console.print(f"  Workspace: {config.workspace}", style="white")
+        console.print(f"  Workspace: {result['workspace']}", style="white")
     except Exception as e:
         console.print(f"ERROR Failed to configure Linear: {e}", style="red")
 
@@ -1685,12 +1719,8 @@ def linear_link_cmd(
     With LINEAR_API_KEY set, the issue is verified and its title/state cached
     (unless --no-verify). A missing issue aborts; a network error links anyway.
     """
-    from .database import create_linear_link, get_linear_config
-    from .exceptions import LinearError
-    from .linear_api import attach_url_to_issue, fetch_issue_by_identifier, get_api_key
     from .linear_utils import (
         format_linear_issue_id,
-        generate_linear_issue_url,
         is_valid_linear_issue_id,
     )
 
@@ -1713,39 +1743,31 @@ def linear_link_cmd(
         console.print(f"ERROR Plan '{plan_name}' not found in project '{proj.name}'", style="red")
         raise SystemExit(1)
 
-    api_key = get_api_key()
-    issue_title: str | None = None
-    issue_state: str | None = None
-    if not no_verify and api_key:
-        try:
-            fetched = fetch_issue_by_identifier(issue_id, api_key)
-            if fetched is None:
-                console.print(f"ERROR Linear issue {issue_id} not found", style="red")
-                raise SystemExit(1)
-            issue_title = fetched["title"]
-            issue_state = fetched["state"]
-            if attach_url and fetched.get("id"):
-                attach_url_to_issue(fetched["id"], attach_url, plan_file.name, api_key)
-                console.print(f"  Attached {attach_url} to {issue_id}", style="white")
-        except LinearError as e:
-            console.print(f"  WARN {e}; linking without verification", style="yellow")
+    # Issue verification, URL attachment, and the write all happen in the
+    # shared service, so the CLI and the MCP tool cannot drift apart; it
+    # reports back whatever it managed to observe.
+    result = _write(
+        "link_plan_to_linear",
+        plan_file_id=str(plan_file.id),
+        linear_issue_id=issue_id,
+        notes=notes,
+        verify=not no_verify,
+        attach_url=attach_url,
+        created_by="user",
+    )
 
-    try:
-        create_linear_link(session, plan_file.id, issue_id, issue_title, issue_state, notes)
-        console.print(f"\nOK Linked '{plan_name}' to {issue_id}", style="green")
+    if result.get("warning"):
+        console.print(f"  WARN {result['warning']}", style="yellow")
+    elif attach_url and result.get("issue_title"):
+        console.print(f"  Attached {attach_url} to {issue_id}", style="white")
 
-        config = get_linear_config(session, proj.id)
-        if config:
-            url = generate_linear_issue_url(config.workspace, issue_id)
-            console.print(f"  URL: {url}", style="cyan")
-        if issue_title:
-            console.print(f"  Issue: [{issue_state}] {issue_title}", style="white")
-        if notes:
-            console.print(f"  Notes: {notes}", style="white")
-    except ValueError as e:
-        console.print(f"ERROR {e}", style="red")
-    except Exception as e:
-        console.print(f"ERROR Failed to create link: {e}", style="red")
+    console.print(f"\nOK Linked '{plan_name}' to {issue_id}", style="green")
+    if result.get("linear_url"):
+        console.print(f"  URL: {result['linear_url']}", style="cyan")
+    if result.get("issue_title"):
+        console.print(f"  Issue: [{result['issue_state']}] {result['issue_title']}", style="white")
+    if notes:
+        console.print(f"  Notes: {notes}", style="white")
 
 
 @linear.command("unlink")
@@ -1757,7 +1779,6 @@ def linear_unlink(
     plan_name: str, issue: str | None, unlink_all: bool, project: str | None
 ) -> None:
     """Unlink a plan file from Linear issue(s)"""
-    from .database import delete_all_linear_links, delete_linear_link_by_id
     from .linear_utils import format_linear_issue_id
 
     session = _require_session()
@@ -1771,9 +1792,17 @@ def linear_unlink(
         console.print(f"ERROR Plan '{plan_name}' not found", style="red")
         raise SystemExit(1)
 
+    # As with jira unlink, a missing link is a warning rather than a failure,
+    # so this uses dispatch directly instead of the exit-on-error helper.
+    from .services import dispatch
+
     try:
         if unlink_all or not issue:
-            count = delete_all_linear_links(session, plan_file.id)
+            result = dispatch("unlink_linear_issue", {"plan_file_id": str(plan_file.id)})
+            if result.get("error"):
+                console.print(f"ERROR {result['message']}", style="red")
+                raise SystemExit(1)
+            count = result.get("count", 0)
             if count > 0:
                 console.print(
                     f"\nOK Unlinked {count} Linear issue(s) from '{plan_name}'", style="green"
@@ -1782,7 +1811,11 @@ def linear_unlink(
                 console.print(f"\n No Linear links found for '{plan_name}'", style="yellow")
         else:
             issue_id = format_linear_issue_id(issue)
-            if delete_linear_link_by_id(session, plan_file.id, issue_id):
+            result = dispatch(
+                "unlink_linear_issue",
+                {"plan_file_id": str(plan_file.id), "linear_issue_id": issue_id},
+            )
+            if result.get("success"):
                 console.print(f"\nOK Unlinked '{plan_name}' from {issue_id}", style="green")
             else:
                 console.print(f"\nERROR Link to {issue_id} not found", style="yellow")

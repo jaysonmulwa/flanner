@@ -46,6 +46,7 @@ ALLOWED = {
         "freshness",
         "ipc",
         "reconcile",
+        "services",
     },
     "__main__": {"cli"},
     "__init__": set(),
