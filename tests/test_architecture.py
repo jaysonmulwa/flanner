@@ -28,6 +28,7 @@ ALLOWED = {
     "identity": set(),
     "artifacts": {"identity"},
     "workflow": {"artifacts"},
+    "sync": {"artifacts", "database"},
     "reconcile": FOUNDATION | {"database"},
     "services": FOUNDATION
     | {"database", "storage", "plan_ops", "linear_api", "agent_hooks", "ipc"},
