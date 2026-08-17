@@ -24,10 +24,12 @@ ALLOWED = {
     "database": {"exceptions"},
     "storage": {"exceptions", "frontmatter", "utils"},
     "freshness": {"utils"},
+    "ipc": set(),
     "claude_integration": set(),
     "linear_api": {"exceptions", "linear_utils"},
-    "server": FOUNDATION | {"database", "storage", "plan_ops", "linear_api", "agent_hooks", "freshness"},
-    "web": FOUNDATION | {"database", "storage", "plan_ops"},
+    "server": FOUNDATION
+    | {"database", "storage", "plan_ops", "linear_api", "agent_hooks", "freshness", "ipc"},
+    "web": FOUNDATION | {"database", "storage", "plan_ops", "ipc"},
     "agent_hooks": FOUNDATION | {"database"},
     "plan_ops": FOUNDATION | {"database", "storage"},
     "cli": FOUNDATION
@@ -40,6 +42,7 @@ ALLOWED = {
         "agent_hooks",
         "linear_api",
         "freshness",
+        "ipc",
     },
     "__main__": {"cli"},
     "__init__": set(),

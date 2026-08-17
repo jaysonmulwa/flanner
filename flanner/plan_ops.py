@@ -24,6 +24,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from .database import PlanFileModel, ProjectModel, VersionModel, create_version
+from .database import create_plan_file as db_create_plan_file
 from .exceptions import DatabaseError
 from .frontmatter import create_plan_file_content, generate_frontmatter
 from .storage import save_plan_file_with_frontmatter
@@ -70,6 +71,41 @@ def plan_write_lock(project_root: str, plan_directory: str) -> Iterator[None]:
     finally:
         with contextlib.suppress(OSError):
             lock_path.unlink()
+
+
+def create_plan(
+    session: Session,
+    *,
+    project: ProjectModel,
+    name: str,
+    content: str,
+    description: str = "",
+    created_by: str,
+    auto_version: bool = True,
+) -> tuple[PlanFileModel, VersionModel]:
+    """Create a plan record and write its initial version (v1).
+
+    The one create sequence shared by every surface. Callers keep their own
+    name validation and duplicate-error shaping; ``DuplicateError`` and
+    ``NotFoundError`` from the database layer propagate.
+    """
+    plan_file = db_create_plan_file(
+        session,
+        project_id=project.id,
+        name=name,
+        description=description,
+        auto_version=auto_version,
+    )
+    version = write_version(
+        session,
+        project=project,
+        plan_file=plan_file,
+        version=1,
+        content=content,
+        created_by=created_by,
+        notes="Initial version",
+    )
+    return plan_file, version
 
 
 def record_new_version(

@@ -10,7 +10,6 @@ from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 
-from .database import create_plan_file as db_create_plan_file
 from .database import (
     create_project,
     delete_project,
@@ -29,7 +28,8 @@ from .database import list_projects as db_list_projects
 from .exceptions import DatabaseError
 from .freshness import compute_freshness
 from .git_integration import find_git_root, update_gitignore, validate_git_repo
-from .plan_ops import record_new_version, write_version
+from . import ipc
+from .plan_ops import create_plan, record_new_version
 from .storage import (
     ensure_plan_directory_exists,
     load_plan_file,
@@ -451,6 +451,21 @@ def create_plan_file_tool(
     Returns:
         Plan file information including full file path where it was created
     """
+    # Single-writer discipline: when a local daemon (flanner web) is running,
+    # route the write through it; otherwise execute locally under the plan lock.
+    forwarded = ipc.call_daemon(
+        "/ipc/create_plan",
+        {
+            "project_id": project_id,
+            "name": name,
+            "content": content,
+            "description": description,
+            "created_by": created_by,
+        },
+    )
+    if forwarded is not None:
+        return forwarded
+
     session = get_session()
 
     # Convert to UUID
@@ -481,23 +496,18 @@ def create_plan_file_tool(
     except ValueError as e:
         return {"error": True, "message": str(e)}
 
-    # Create plan file record in database
+    # Create plan record and initial version through the shared write path
     try:
-        plan_file = db_create_plan_file(
-            session, project_id=project_uuid, name=name, description=description, auto_version=True
+        plan_file, version = create_plan(
+            session,
+            project=project,
+            name=name,
+            content=content,
+            description=description,
+            created_by=created_by,
         )
     except ValueError as e:
         return {"error": True, "message": str(e)}
-
-    version = write_version(
-        session,
-        project=project,
-        plan_file=plan_file,
-        version=1,
-        content=content,
-        created_by=created_by,
-        notes="Initial version",
-    )
 
     return {
         "id": str(plan_file.id),  # Convert UUID to string
@@ -524,6 +534,21 @@ def update_plan_file_tool(
     Returns:
         New version information or message if no changes detected
     """
+    # Single-writer discipline: route through the local daemon when available.
+    forwarded = ipc.call_daemon(
+        "/ipc/update_plan",
+        {
+            "plan_file_id": plan_file_id,
+            "content": content,
+            "notes": notes,
+            "created_by": created_by,
+        },
+    )
+    if forwarded is not None:
+        if forwarded.get("auto_version") is False:
+            return None  # preserve historical no-auto-version behavior
+        return forwarded
+
     session = get_session()
 
     # Convert to UUID

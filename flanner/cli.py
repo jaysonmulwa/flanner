@@ -649,7 +649,14 @@ def web(port: int, host: str, open_browser: bool) -> None:
     if open_browser:
         _open_browser_when_ready(host, port)
 
-    # Start web server
+    # Start web server. While it runs it is the local write daemon: advertise
+    # it (port + token) so the stdio MCP server forwards writes here instead of
+    # mutating shared state from a second process (PRD Phase 1).
+    from . import ipc
+
+    token = ipc.new_token()
+    os.environ[ipc.TOKEN_ENV] = token
+    ipc.write_daemon_info(port, token)
     try:
         import uvicorn
 
@@ -660,6 +667,8 @@ def web(port: int, host: str, open_browser: bool) -> None:
         console.print("\n\nOK Web server stopped", style="green")
     except Exception as e:
         console.print(f"\nERROR Error starting web server: {e}", style="red")
+    finally:
+        ipc.clear_daemon_info()
 
 
 @cli.command()
