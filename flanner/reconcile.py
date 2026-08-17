@@ -20,13 +20,24 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from .database import PlanFileModel, ProjectModel, VersionModel, create_version, list_versions
+from . import artifacts, identity
+from .database import (
+    PlanFileModel,
+    ProjectModel,
+    VersionModel,
+    create_version,
+    get_artifact,
+    list_versions,
+)
 from .database import list_plan_files as db_list_plan_files
 from .frontmatter import read_managed
 from .utils import hash_content
 
 # Findings that repair can fix without ever discarding content.
 REPAIRABLE = {"orphan_file", "stale_current_version"}
+
+# Findings that report what could *not* be checked rather than a fault.
+INFORMATIONAL = {"unverified_signer"}
 
 
 @dataclass(frozen=True)
@@ -41,6 +52,10 @@ class Finding:
     @property
     def repairable(self) -> bool:
         return self.kind in REPAIRABLE
+
+    @property
+    def informational(self) -> bool:
+        return self.kind in INFORMATIONAL
 
 
 def reconcile_project(
@@ -66,7 +81,7 @@ def reconcile_project(
     for plan in plans:
         versions = list_versions(session, plan.id)
         for version in versions:
-            findings.extend(_check_version(plan, version, known_paths))
+            findings.extend(_check_version(session, plan, version, known_paths))
         if versions:
             highest = max(v.version for v in versions)
             if plan.current_version != highest:
@@ -124,7 +139,7 @@ def reconcile_project(
 
 
 def _check_version(
-    plan: PlanFileModel, version: VersionModel, known_paths: set[str]
+    session: Session, plan: PlanFileModel, version: VersionModel, known_paths: set[str]
 ) -> list[Finding]:
     """Findings for one recorded version: file present, and content unchanged."""
     findings: list[Finding] = []
@@ -154,7 +169,79 @@ def _check_version(
                 version.file_path,
             )
         )
+    findings.extend(_check_signature(session, plan, version))
     return findings
+
+
+def _check_signature(
+    session: Session, plan: PlanFileModel, version: VersionModel
+) -> list[Finding]:
+    """Verify the signed envelope behind a version, where that is possible.
+
+    Only this device's own signatures can be checked offline; verifying a
+    peer's needs its public key from the control plane's device registry.
+    Rather than quietly passing over those, they are reported as
+    unverified, so a clean report never overstates what was actually
+    checked. Versions written before artifacts existed carry no id and are
+    simply not signed.
+    """
+    if not version.artifact_id:
+        return []
+    stored = get_artifact(session, version.artifact_id)
+    if stored is None:
+        return [
+            Finding(
+                "artifact_missing",
+                plan.name,
+                f"v{version.version} references an artifact the catalog does not hold",
+                version.file_path,
+            )
+        ]
+    if stored.actor_device_id != identity.device_id():
+        return [
+            Finding(
+                "unverified_signer",
+                plan.name,
+                f"v{version.version} was signed by {stored.actor_device_id}; "
+                "verifying it needs that device's key from the registry",
+                version.file_path,
+            )
+        ]
+
+    envelope = artifacts.Artifact(
+        artifact_type=stored.artifact_type,
+        workspace_id=stored.workspace_id,
+        content_hash=stored.content_hash,
+        actor_device_id=stored.actor_device_id,
+        created_at=stored.created_at,
+        artifact_id=stored.artifact_id,
+        signature=stored.signature,
+        protocol_version=stored.protocol_version,
+        organization_id=stored.organization_id,
+        plan_file_id=stored.plan_file_id,
+        actor_user_id=stored.actor_user_id,
+        parents=_stored_parents(stored),
+    )
+    verdict = artifacts.verify_artifact(envelope, identity.device_public_key_b64())
+    if not verdict:
+        return [
+            Finding(
+                "signature_invalid",
+                plan.name,
+                f"v{version.version} does not verify: {verdict.reason}",
+                version.file_path,
+            )
+        ]
+    return []
+
+
+def _stored_parents(stored: Any) -> tuple[str, ...]:
+    import json
+
+    try:
+        return tuple(json.loads(stored.parents))
+    except (ValueError, TypeError):
+        return ()
 
 
 def _find_orphans(plan_dir: Path, known_paths: set[str]) -> list[tuple[Path, dict[str, Any], str]]:

@@ -133,3 +133,53 @@ def test_project_without_root_is_reported(db, tmp_path):
     proj = create_project(session, name="rootless", project_root=None, auto_gitignore=False)
     findings = reconcile_project(session, proj)
     assert [f.kind for f in findings] == ["no_project_root"]
+
+
+# --- signature integrity (PRD §12: the catalog is an index, not the authority) ---
+
+
+def test_a_forged_signature_is_detected(project):
+    session, proj = project
+    from flanner.database import get_artifact
+
+    version = list_versions(session, session.query(PlanFileModel).one().id)[0]
+    get_artifact(session, version.artifact_id).signature = "forged"
+    session.commit()
+
+    findings = reconcile_project(session, proj)
+    assert [f.kind for f in findings] == ["signature_invalid"]
+    assert not findings[0].repairable
+
+
+def test_a_version_whose_artifact_vanished_is_detected(project):
+    session, proj = project
+    from flanner.database import ArtifactModel
+
+    session.query(ArtifactModel).delete()
+    session.commit()
+
+    findings = reconcile_project(session, proj)
+    assert [f.kind for f in findings] == ["artifact_missing"]
+
+
+def test_a_peers_signature_is_reported_as_unverified_not_passed(project):
+    """A clean report must never overstate what was actually checked."""
+    session, proj = project
+    from flanner.database import get_artifact
+
+    version = list_versions(session, session.query(PlanFileModel).one().id)[0]
+    get_artifact(session, version.artifact_id).actor_device_id = "dev_someone_else"
+    session.commit()
+
+    findings = reconcile_project(session, proj)
+    assert [f.kind for f in findings] == ["unverified_signer"]
+    assert findings[0].informational
+    assert not findings[0].repairable
+
+
+def test_versions_predating_artifacts_are_not_reported(project):
+    session, proj = project
+    version = list_versions(session, session.query(PlanFileModel).one().id)[0]
+    version.artifact_id = None  # written by an older flanner
+    session.commit()
+    assert reconcile_project(session, proj) == []

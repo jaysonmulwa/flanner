@@ -249,3 +249,45 @@ def test_lineage_survives_the_service_path(db, git_repo, tmp_path, monkeypatch):
     assert len(heads) == 1, "versions must form one chain, not several roots"
     assert not artifacts.is_conflicted(graph)
     assert len(artifacts.ancestors(next(iter(heads)), graph)) == 2
+
+
+# --- what an agent sees over MCP (PRD §20) ---
+
+
+def test_mcp_history_exposes_artifact_identity_and_lineage(project, monkeypatch):
+    session, proj = project
+    from flanner import server
+
+    plan_file, v1 = create_plan(
+        session, project=proj, name="arch", content="# one\n", created_by="claude"
+    )
+    session.commit()
+    v2 = record_new_version(
+        session,
+        project=proj,
+        plan_file=plan_file,
+        content="# two\n",
+        created_by="claude",
+        notes="",
+    )
+
+    history = server.get_plan_history_tool(str(plan_file.id))
+    by_version = {v["version"]: v for v in history["versions"]}
+    assert by_version[1]["artifact_id"] == v1.artifact_id
+    assert by_version[2]["parents"] == [v1.artifact_id]
+    # An agent can tell whether history is safe to act on.
+    assert history["heads"] == [v2.artifact_id]
+    assert history["conflicted"] is False
+
+
+def test_mcp_read_names_the_exact_artifact_it_returned(project):
+    session, proj = project
+    from flanner import server
+
+    plan_file, version = create_plan(
+        session, project=proj, name="arch", content="# one\n", created_by="claude"
+    )
+    session.commit()
+
+    result = server.get_plan_file_tool(str(plan_file.id))
+    assert result["version"]["artifact_id"] == version.artifact_id

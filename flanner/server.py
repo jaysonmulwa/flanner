@@ -9,7 +9,9 @@ from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 
+from . import artifacts
 from .database import (
+    artifact_parents,
     get_plan_file,
     get_project,
     get_session,
@@ -387,6 +389,9 @@ def get_plan_file_tool(
             "created_by": version_obj.created_by,
             "created_at": version_obj.created_at.isoformat() if version_obj.created_at else None,
             "notes": version_obj.notes,
+            # Cite this when acting on the plan; version numbers are display
+            # projections and are not unique across devices (PRD §20).
+            "artifact_id": version_obj.artifact_id,
         },
         "frontmatter": frontmatter_data,
         "content": body,
@@ -427,6 +432,7 @@ def get_plan_history_tool(plan_file_id: str) -> dict[str, Any]:
 
     # Get all versions
     versions = list_versions(session, plan_file_uuid)
+    lineage = artifact_parents(session, str(plan_file_uuid))
 
     return {
         "plan_file": {
@@ -444,10 +450,15 @@ def get_plan_history_tool(plan_file_id: str) -> dict[str, Any]:
                 "created_by": v.created_by,
                 "created_at": v.created_at.isoformat() if v.created_at else None,
                 "notes": v.notes,
+                "artifact_id": v.artifact_id,
+                "parents": list(lineage.get(v.artifact_id or "", ())),
             }
             for v in versions
         ],
         "total_versions": len(versions),
+        # Lineage is what establishes order; version numbers are display only.
+        "heads": sorted(artifacts.find_heads(lineage)),
+        "conflicted": artifacts.is_conflicted(lineage),
     }
 
 

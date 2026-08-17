@@ -7,6 +7,7 @@ get_claude_config_path so the real Claude config is never written.
 
 import json
 import os
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -28,8 +29,15 @@ JIRA_URL = "https://x.atlassian.net"
 
 @pytest.fixture
 def home(tmp_path):
-    h = tmp_path / "home"
-    h.mkdir()
+    """The one flanner home for this test.
+
+    Reuses the isolated FLANNER_HOME conftest already set, so the CLI and
+    any fixture that calls into flanner directly share a device identity.
+    Pointing the runner somewhere else would quietly simulate two devices,
+    and signature checks would then fail for the wrong reason.
+    """
+    h = Path(os.environ["FLANNER_HOME"])
+    h.mkdir(parents=True, exist_ok=True)
     return h
 
 

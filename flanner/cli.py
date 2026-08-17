@@ -1029,6 +1029,9 @@ _FINDING_STYLES = {
     "unknown_plan": "yellow",
     "stale_current_version": "cyan",
     "no_project_root": "red",
+    "signature_invalid": "red",
+    "artifact_missing": "red",
+    "unverified_signer": "blue",
 }
 
 
@@ -1076,7 +1079,9 @@ def doctor(project: str | None, repair: bool, output: str) -> None:
         return
 
     if not findings:
-        console.print(f"OK Catalog and plan files agree for '{proj.name}'", style="green")
+        console.print(
+            f"OK Catalog, files, and signatures all agree for '{proj.name}'", style="green"
+        )
         return
 
     table = Table(show_header=True, header_style="bold cyan")
@@ -1088,10 +1093,19 @@ def doctor(project: str | None, repair: bool, output: str) -> None:
         table.add_row(f"[{style}]{finding.kind}[/{style}]", finding.plan, finding.detail)
     console.print(table)
 
+    unchecked = [f for f in findings if f.informational]
+    if unchecked and len(unchecked) == len(findings):
+        console.print(
+            f"\nNo problems found. {len(unchecked)} item(s) could not be verified on "
+            "this device; the note above says why.",
+            style="green",
+        )
+        return
+
     if repair:
         fixed = sum(1 for f in findings if f.repairable)
         console.print(f"\nRepaired {fixed} of {len(findings)} findings.", style="green")
-        remaining = [f for f in findings if not f.repairable]
+        remaining = [f for f in findings if not f.repairable and not f.informational]
         if remaining:
             console.print(
                 f"{len(remaining)} need a human: files are missing or were edited outside "
