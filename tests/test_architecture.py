@@ -26,11 +26,12 @@ ALLOWED = {
     "freshness": {"utils"},
     "ipc": set(),
     "reconcile": FOUNDATION | {"database"},
+    "services": FOUNDATION
+    | {"database", "storage", "plan_ops", "linear_api", "agent_hooks", "ipc"},
     "claude_integration": set(),
     "linear_api": {"exceptions", "linear_utils"},
-    "server": FOUNDATION
-    | {"database", "storage", "plan_ops", "linear_api", "agent_hooks", "freshness", "ipc"},
-    "web": FOUNDATION | {"database", "storage", "plan_ops", "ipc"},
+    "server": FOUNDATION | {"database", "storage", "freshness", "services"},
+    "web": FOUNDATION | {"database", "storage", "plan_ops", "ipc", "services"},
     "agent_hooks": FOUNDATION | {"database"},
     "plan_ops": FOUNDATION | {"database", "storage"},
     "cli": FOUNDATION

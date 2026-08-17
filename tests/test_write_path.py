@@ -17,9 +17,7 @@ def plan(db, tmp_path):
     session = get_session()
     root = tmp_path / "proj"
     root.mkdir()
-    project = create_project(
-        session, name="p", project_root=str(root), auto_gitignore=False
-    )
+    project = create_project(session, name="p", project_root=str(root), auto_gitignore=False)
     plan_file = create_plan_file(session, project_id=project.id, name="alpha")
     write_version(
         session,

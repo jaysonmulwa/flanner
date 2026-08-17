@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from . import __version__
+from . import __version__, ipc, services
 from .database import count_plan_files as db_count_plan_files
 from .database import count_plan_files_recent as db_count_plan_files_recent
 from .database import count_projects as db_count_projects
@@ -45,10 +45,9 @@ from .database import list_projects as db_list_projects
 from .exceptions import DatabaseError
 from .git_integration import find_git_root, update_gitignore, validate_git_repo
 from .linear_utils import generate_linear_issue_url
-from . import ipc
 from .plan_ops import create_plan, record_new_version
 from .storage import ensure_plan_directory_exists, load_plan_file
-from .utils import format_relative_time, hash_content, sanitize_plan_path, utcnow
+from .utils import format_relative_time, hash_content
 
 # Initialize FastAPI app
 logger = logging.getLogger(__name__)
@@ -158,6 +157,7 @@ def markdown_filter(text: str | None) -> str:
 templates.env.filters["markdown"] = markdown_filter
 templates.env.filters["relative_time"] = format_relative_time
 templates.env.filters["basename"] = lambda p: Path(p).name
+
 
 # Stamp static assets so the browser refetches when they change. The newest
 # mtime under static/ means an edit-then-restart busts the cache even within a
@@ -891,10 +891,12 @@ async def api_delete_project(project_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Daemon IPC (PRD Phase 1): token-gated JSON write endpoints. When this app is
-# the long-running local process, the stdio MCP server forwards writes here so
-# one process owns all mutations. The token is handed to the app by the CLI
-# through the FLANNER_IPC_TOKEN environment variable; without it IPC is off.
+# Daemon IPC (PRD Phase 1). When this app is the long-running local process it
+# is the single writer: other processes forward their write operations here
+# instead of mutating shared state themselves. Operations are looked up in the
+# shared service registry, so the daemon and an in-process caller run exactly
+# the same code. The token is supplied by the CLI through FLANNER_IPC_TOKEN;
+# without it IPC is off.
 # ---------------------------------------------------------------------------
 
 
@@ -907,97 +909,30 @@ def _require_ipc_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid IPC token")
 
 
-@app.post("/ipc/create_plan")
-async def ipc_create_plan(request: Request) -> JSONResponse:
-    """Create a plan; mirrors the MCP create_plan_file_tool contract."""
+@app.post("/ipc/call")
+async def ipc_call(request: Request) -> JSONResponse:
+    """Run one shared write operation on behalf of another process.
+
+    Any non-200 response means the operation did not run, which is what lets
+    the caller safely fall back to executing locally. A failure *inside* an
+    operation is therefore reported as a 200 carrying an error payload, never
+    as a 500 that a caller might retry and thereby apply twice.
+    """
     _require_ipc_token(request)
     ensure_db()
-    session = get_session()
     body = await request.json()
+    op = str(body.get("op", ""))
+    args = body.get("args") or {}
+    fn = services.REGISTRY.get(op)
+    if fn is None or not isinstance(args, dict):
+        raise HTTPException(status_code=422, detail=f"Unknown IPC operation: {op}")
     try:
-        project_uuid = UUID(str(body["project_id"]))
-        name = sanitize_plan_path(str(body["name"]))
-    except (KeyError, ValueError) as e:
-        return JSONResponse({"error": True, "message": str(e)}, status_code=422)
-    project = get_project(session, project_uuid)
-    if not project or not project.project_root:
-        return JSONResponse(
-            {"error": True, "message": "Project not found or has no project_root"},
-            status_code=422,
-        )
-    try:
-        plan_file, version = create_plan(
-            session,
-            project=project,
-            name=name,
-            content=str(body.get("content", "")),
-            description=str(body.get("description", "")),
-            created_by=str(body.get("created_by", "claude")),
-        )
-    except ValueError as e:
-        return JSONResponse({"error": True, "message": str(e)}, status_code=422)
-    return JSONResponse(
-        {
-            "id": str(plan_file.id),
-            "name": plan_file.name,
-            "version": 1,
-            "file_path": version.file_path,
-            "message": f"Plan file created successfully at {version.file_path}",
-        }
-    )
-
-
-@app.post("/ipc/update_plan")
-async def ipc_update_plan(request: Request) -> JSONResponse:
-    """Write a new version; mirrors the MCP update_plan_file_tool contract."""
-    _require_ipc_token(request)
-    ensure_db()
-    session = get_session()
-    body = await request.json()
-    try:
-        plan_file_uuid = UUID(str(body["plan_file_id"]))
-    except (KeyError, ValueError) as e:
-        return JSONResponse({"error": True, "message": str(e)}, status_code=422)
-    plan_file = get_plan_file(session, plan_file_uuid)
-    if not plan_file:
-        return JSONResponse(
-            {"error": True, "message": f"Plan file with ID {body['plan_file_id']} not found"},
-            status_code=422,
-        )
-    project = get_project(session, plan_file.project_id)
-    if not project:
-        return JSONResponse({"error": True, "message": "Project not found"}, status_code=422)
-    content = str(body.get("content", ""))
-    latest = get_version(session, plan_file_uuid)
-    new_hash = hash_content(content.replace("\r\n", "\n").replace("\r", "\n"))
-    if latest and latest.content_hash == new_hash:
-        return JSONResponse(
-            {
-                "message": "No changes detected (content is identical)",
-                "version": latest.version,
-                "file_path": latest.file_path,
-            }
-        )
-    if not plan_file.auto_version:
-        return JSONResponse({"auto_version": False})
-    version = record_new_version(
-        session,
-        project=project,
-        plan_file=plan_file,
-        content=content,
-        created_by=str(body.get("created_by", "claude")),
-        notes=str(body.get("notes", "")),
-    )
-    return JSONResponse(
-        {
-            "id": str(version.id),
-            "version": version.version,
-            "file_path": version.file_path,
-            "content_hash": new_hash,
-            "created_by": version.created_by,
-            "message": f"Created version {version.version} at {version.file_path}",
-        }
-    )
+        return JSONResponse({"result": fn(**args)})
+    except TypeError as e:  # bad arguments for this operation
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    except Exception as e:
+        logger.exception("IPC operation %s failed", op)
+        return JSONResponse({"result": {"error": True, "message": str(e)}})
 
 
 if __name__ == "__main__":

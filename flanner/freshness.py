@@ -42,8 +42,9 @@ _SYMBOL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+$")
 def _git(project_root: str, *args: str) -> str | None:
     """Run a read-only git command; None on any failure (fail open)."""
     try:
-        result = subprocess.run(
-            ["git", *args],
+        # Fixed argument list, no shell, and git is resolved from PATH by design.
+        result = subprocess.run(  # noqa: S603
+            ["git", *args],  # noqa: S607
             cwd=project_root,
             capture_output=True,
             text=True,
@@ -178,7 +179,11 @@ def _status(
     if invalid_refs:
         shown = ", ".join(invalid_refs[:3])
         more = f" (+{len(invalid_refs) - 3} more)" if len(invalid_refs) > 3 else ""
-        noun = "reference that no longer exists" if len(invalid_refs) == 1 else "references that no longer exist"
+        noun = (
+            "reference that no longer exists"
+            if len(invalid_refs) == 1
+            else "references that no longer exist"
+        )
         reasons.append(f"cites {len(invalid_refs)} {noun}: {shown}{more}")
         return "stale", reasons
 

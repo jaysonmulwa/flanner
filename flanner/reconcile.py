@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from .database import PlanFileModel, ProjectModel, VersionModel, create_version
+from .database import PlanFileModel, ProjectModel, VersionModel, create_version, list_versions
 from .database import list_plan_files as db_list_plan_files
-from .database import list_versions
 from .frontmatter import parse_frontmatter
 from .utils import hash_content
 
@@ -31,7 +31,7 @@ REPAIRABLE = {"orphan_file", "stale_current_version"}
 _CLOSING_DELIMITER = "\n---\n"
 
 
-def read_managed(text: str) -> tuple[dict, str]:
+def read_managed(text: str) -> tuple[dict[str, Any], str]:
     """Frontmatter metadata plus the body *exactly* as it was written.
 
     The frontmatter library strips surrounding whitespace from the body, but
@@ -106,8 +106,8 @@ def reconcile_project(
     if plan_dir.is_dir():
         for orphan in _find_orphans(plan_dir, known_paths):
             path, fm_data, body = orphan
-            plan = _plan_for(session, plans, fm_data)
-            if plan is None:
+            owner = _plan_for(session, plans, fm_data)
+            if owner is None:
                 findings.append(
                     Finding(
                         "unknown_plan",
@@ -121,7 +121,7 @@ def reconcile_project(
             findings.append(
                 Finding(
                     "orphan_file",
-                    plan.name,
+                    owner.name,
                     f"v{version_num} exists on disk but not in the catalog",
                     str(path),
                 )
@@ -129,15 +129,15 @@ def reconcile_project(
             if repair and isinstance(version_num, int):
                 create_version(
                     session,
-                    plan_file_id=plan.id,
+                    plan_file_id=owner.id,
                     version=version_num,
                     file_path=str(path),
                     content_hash=hash_content(body),
                     created_by=str(fm_data.get("created_by", "unknown")),
                     notes="Adopted by reconcile",
                 )
-                if version_num > plan.current_version:
-                    plan.current_version = version_num
+                if version_num > owner.current_version:
+                    owner.current_version = version_num
                     dirty = True
 
     if dirty:
@@ -164,7 +164,9 @@ def _check_version(
     try:
         _, body = read_managed(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        return [Finding("unreadable_file", plan.name, f"v{version.version}: {e}", version.file_path)]
+        return [
+            Finding("unreadable_file", plan.name, f"v{version.version}: {e}", version.file_path)
+        ]
     if hash_content(body) != version.content_hash:
         findings.append(
             Finding(
@@ -177,9 +179,7 @@ def _check_version(
     return findings
 
 
-def _find_orphans(
-    plan_dir: Path, known_paths: set[str]
-) -> list[tuple[Path, dict, str]]:
+def _find_orphans(plan_dir: Path, known_paths: set[str]) -> list[tuple[Path, dict[str, Any], str]]:
     """Managed plan files in the directory that no version row points at."""
     orphans = []
     for path in sorted(plan_dir.rglob("*.md")):
@@ -196,7 +196,7 @@ def _find_orphans(
 
 
 def _plan_for(
-    session: Session, plans: list[PlanFileModel], fm_data: dict
+    session: Session, plans: list[PlanFileModel], fm_data: dict[str, Any]
 ) -> PlanFileModel | None:
     """Match a file's frontmatter to a catalog plan by id, then by name."""
     raw_id = fm_data.get("plan_file_id")

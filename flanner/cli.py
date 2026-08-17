@@ -9,6 +9,7 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.console import Console
@@ -1100,7 +1101,9 @@ def doctor(project: str | None, repair: bool, output: str) -> None:
                 style="yellow",
             )
     elif any(f.repairable for f in findings):
-        console.print("\nRun 'flanner doctor --repair' to fix the repairable ones.", style="yellow")
+        console.print(
+            "\nRun 'flanner doctor --repair' to fix the repairable ones.", style="yellow"
+        )
 
 
 _FRESHNESS_STYLES = {"fresh": "green", "aging": "yellow", "suspect": "dark_orange", "stale": "red"}
@@ -1141,6 +1144,9 @@ def freshness(plan_name: str | None, project: str | None, output: str) -> None:
     if not plans:
         console.print(f"No plan files found for project '{proj.name}'", style="yellow")
         return
+    if not proj.project_root:
+        console.print(f"ERROR Project '{proj.name}' has no project_root configured", style="red")
+        raise SystemExit(1)
 
     results = []
     for plan in plans:
@@ -1150,9 +1156,11 @@ def freshness(plan_name: str | None, project: str | None, output: str) -> None:
         try:
             _, body = load_plan_file(version_obj.file_path)
         except FileNotFoundError:
-            results.append(
-                (plan, version_obj, {"status": "stale", "reasons": ["plan file missing on disk"]})
-            )
+            missing: dict[str, Any] = {
+                "status": "stale",
+                "reasons": ["plan file missing on disk"],
+            }
+            results.append((plan, version_obj, missing))
             continue
         evidence = compute_freshness(proj.project_root, body, version_obj.created_at)
         results.append((plan, version_obj, evidence))
@@ -1160,10 +1168,7 @@ def freshness(plan_name: str | None, project: str | None, output: str) -> None:
     if output == "json":
         click.echo(
             json_module.dumps(
-                [
-                    {"plan": p.name, "version": v.version, **e}
-                    for p, v, e in results
-                ],
+                [{"plan": p.name, "version": v.version, **e} for p, v, e in results],
                 indent=2,
             )
         )

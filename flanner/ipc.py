@@ -23,7 +23,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-TOKEN_ENV = "FLANNER_IPC_TOKEN"
+TOKEN_ENV = "FLANNER_IPC_TOKEN"  # noqa: S105 - env var name, not a secret
 _TIMEOUT_S = 10.0
 
 
@@ -86,11 +86,16 @@ def call_daemon(path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        with contextlib.suppress(Exception):
-            return json.loads(e.read().decode("utf-8"))
+        # URL is built here as http://127.0.0.1:<port>; no caller-supplied scheme.
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
+            body = json.loads(response.read().decode("utf-8"))
+        return body if isinstance(body, dict) else None
+    except urllib.error.HTTPError:
+        # The daemon refused the call (IPC disabled, bad token, unknown
+        # operation). A refusal happens before the operation runs, so the
+        # caller can safely execute locally. Operations that run and then
+        # fail come back as 200 with an error payload, never as an HTTP
+        # error, precisely so this fallback cannot apply a write twice.
         return None
     except (urllib.error.URLError, OSError, ValueError):
         # Daemon gone or unreachable: stale advertisement, fall back locally.

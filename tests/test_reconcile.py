@@ -21,9 +21,7 @@ def project(db, tmp_path):
     root = tmp_path / "proj"
     root.mkdir()
     proj = create_project(session, name="p", project_root=str(root), auto_gitignore=False)
-    create_plan(
-        session, project=proj, name="alpha", content="# one\n", created_by="test"
-    )
+    create_plan(session, project=proj, name="alpha", content="# one\n", created_by="test")
     session.commit()
     return session, proj
 
