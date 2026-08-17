@@ -29,7 +29,7 @@ from .database import list_projects as db_list_projects
 from .exceptions import DatabaseError
 from .freshness import compute_freshness
 from .git_integration import find_git_root, update_gitignore, validate_git_repo
-from .plan_ops import write_version
+from .plan_ops import record_new_version, write_version
 from .storage import (
     ensure_plan_directory_exists,
     load_plan_file,
@@ -563,32 +563,24 @@ def update_plan_file_tool(
             "file_path": latest_version.file_path,
         }
 
-    # Create new version
+    # Create new version (locked: refreshes, picks the next free number, commits)
     if plan_file.auto_version:
-        new_version_num = plan_file.current_version + 1
-
-        version = write_version(
+        version = record_new_version(
             session,
             project=project,
             plan_file=plan_file,
-            version=new_version_num,
             content=content,
             created_by=created_by,
             notes=notes,
         )
 
-        # Update plan file current version
-        plan_file.current_version = new_version_num
-        plan_file.updated_at = utcnow()
-        session.commit()
-
         return {
             "id": str(version.id),  # Convert UUID to string
-            "version": new_version_num,
+            "version": version.version,
             "file_path": version.file_path,
             "content_hash": new_hash,
             "created_by": created_by,
-            "message": f"Created version {new_version_num} at {version.file_path}",
+            "message": f"Created version {version.version} at {version.file_path}",
         }
 
     # auto_version disabled: preserve historical behavior of returning None

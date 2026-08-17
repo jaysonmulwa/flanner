@@ -45,7 +45,7 @@ from .database import list_projects as db_list_projects
 from .exceptions import DatabaseError
 from .git_integration import find_git_root, update_gitignore, validate_git_repo
 from .linear_utils import generate_linear_issue_url
-from .plan_ops import write_version
+from .plan_ops import record_new_version, write_version
 from .storage import ensure_plan_directory_exists, load_plan_file
 from .utils import format_relative_time, hash_content, utcnow
 
@@ -708,23 +708,15 @@ async def plan_update(
         # No changes, redirect back to view
         return RedirectResponse(url=f"/plans/{plan_file_id}?message=no_changes", status_code=303)
 
-    # Create new version
-    new_version_num = plan_file.current_version + 1
-
-    write_version(
+    # Create new version (locked: refreshes, picks the next free number, commits)
+    record_new_version(
         session,
         project=project,
         plan_file=plan_file,
-        version=new_version_num,
         content=content,
         created_by="user",
         notes=notes,
     )
-
-    # Update plan file current version
-    plan_file.current_version = new_version_num
-    plan_file.updated_at = utcnow()
-    session.commit()
 
     return RedirectResponse(url=f"/plans/{plan_file_id}", status_code=303)
 
