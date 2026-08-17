@@ -23,7 +23,15 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from .database import PlanFileModel, ProjectModel, VersionModel, create_version
+from . import artifacts
+from .database import (
+    PlanFileModel,
+    ProjectModel,
+    VersionModel,
+    create_version,
+    get_version,
+    save_artifact,
+)
 from .database import create_plan_file as db_create_plan_file
 from .exceptions import DatabaseError
 from .frontmatter import create_plan_file_content, generate_frontmatter
@@ -36,6 +44,29 @@ _LOCK_NAME = ".flanner.lock"
 _LOCK_TIMEOUT_S = 10.0
 _LOCK_STALE_S = 30.0
 _LOCK_RETRY_S = 0.05
+
+
+def local_workspace_id(project: ProjectModel) -> str:
+    """Workspace id for a project not yet joined to a team.
+
+    Real workspace ids are opaque and issued by the control plane. Until a
+    project joins one, artifacts still need a stable workspace to belong to,
+    so a local id is derived from the project. It never leaves the machine.
+    """
+    return f"local:{project.id}"
+
+
+def _parent_artifact_ids(session: Session, plan_file: PlanFileModel) -> tuple[str, ...]:
+    """The artifact this new version descends from, if there is one.
+
+    Lineage is per plan, so a new version's parent is the latest signed
+    version of the same plan. Versions written before artifacts existed have
+    no id, which correctly yields a root rather than a broken link.
+    """
+    latest = get_version(session, plan_file.id, None)
+    if latest is None or not latest.artifact_id:
+        return ()
+    return (latest.artifact_id,)
 
 
 @contextlib.contextmanager
@@ -205,6 +236,19 @@ def _write_version_unlocked(
     # form submissions would otherwise make an unchanged plan look modified).
     content = content.replace("\r\n", "\n").replace("\r", "\n")
 
+    # Sign the body before writing. The artifact's content hash covers the
+    # body only, never the generated frontmatter (PRD §12.4), which is what
+    # lets the resulting artifact id be written *into* that frontmatter
+    # without changing what was signed.
+    artifact = artifacts.make_artifact(
+        artifact_type=artifacts.PLAN_VERSION,
+        workspace_id=local_workspace_id(project),
+        content_hash=artifacts.hash_text(content),
+        plan_file_id=str(plan_file.id),
+        parents=_parent_artifact_ids(session, plan_file),
+        actor_user_id=created_by,
+    )
+
     frontmatter_str = generate_frontmatter(
         project_id=project.id,
         project_name=project.name,
@@ -213,6 +257,10 @@ def _write_version_unlocked(
         version=version,
         created_by=created_by,
         created_at=utcnow(),
+        artifact_id=artifact.artifact_id,
+        parents=artifact.parents,
+        workspace_id=artifact.workspace_id,
+        actor_device_id=artifact.actor_device_id,
     )
     full_content = create_plan_file_content(frontmatter_str, content)
     file_name = generate_file_name(plan_file.name, version)
@@ -222,6 +270,23 @@ def _write_version_unlocked(
         file_name=file_name,
         content=full_content,
     )
+    save_artifact(
+        session,
+        artifact_id=artifact.artifact_id,
+        artifact_type=artifact.artifact_type,
+        workspace_id=artifact.workspace_id,
+        content_hash=artifact.content_hash,
+        actor_device_id=artifact.actor_device_id,
+        created_at=artifact.created_at,
+        signature=artifact.signature,
+        plan_file_id=artifact.plan_file_id,
+        parents=list(artifact.parents),
+        actor_user_id=artifact.actor_user_id,
+    )
+    # The artifact id goes in with the INSERT. Assigning it afterwards would
+    # leave it unflushed behind create_version's own commit, and a caller that
+    # never commits (the create path does not) would silently lose the link,
+    # breaking the parent chain for the next version.
     return create_version(
         session,
         plan_file_id=plan_file.id,
@@ -230,4 +295,5 @@ def _write_version_unlocked(
         content_hash=hash_content(content),  # hash the body, not the frontmatter
         created_by=created_by,
         notes=notes,
+        artifact_id=artifact.artifact_id,
     )

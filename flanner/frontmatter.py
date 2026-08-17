@@ -25,6 +25,11 @@ def generate_frontmatter(
     version: int,
     created_by: str,
     created_at: datetime | None = None,
+    artifact_id: str | None = None,
+    parents: list[str] | tuple[str, ...] | None = None,
+    workspace_id: str | None = None,
+    actor_device_id: str | None = None,
+    commit_anchor: str | None = None,
 ) -> str:
     """
     Generate YAML frontmatter for a plan file.
@@ -37,9 +42,17 @@ def generate_frontmatter(
         version: Version number
         created_by: Who created this version (user, claude, codex)
         created_at: Creation timestamp (defaults to now)
+        artifact_id: Id of the signed artifact for this version (PRD §12.4)
+        parents: Parent artifact ids; ordering carries no meaning
+        workspace_id: Workspace the version belongs to
+        actor_device_id: Device that signed the artifact
+        commit_anchor: Repo commit this version was written against
 
     Returns:
         YAML frontmatter string (including --- delimiters)
+
+    The artifact fields are omitted when absent, so files written before
+    artifacts existed keep their exact shape and stay valid.
     """
     if created_at is None:
         created_at = _utcnow()
@@ -56,6 +69,18 @@ def generate_frontmatter(
         "created_at": created_at.isoformat() + "Z",
         "created_by": created_by,
     }
+
+    # Artifact identity, appended only when this version has been signed, so
+    # that older files and their hashes are untouched.
+    for key, value in (
+        ("artifact_id", artifact_id),
+        ("parents", list(parents) if parents else None),
+        ("workspace_id", workspace_id),
+        ("actor_device_id", actor_device_id),
+        ("commit_anchor", commit_anchor),
+    ):
+        if value:
+            fm_data[key] = value
 
     # Generate YAML
     yaml_str = yaml.dump(fm_data, default_flow_style=False, sort_keys=False)

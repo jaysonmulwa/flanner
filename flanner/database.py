@@ -4,6 +4,7 @@ Database layer for Flanner
 Provides SQLAlchemy models and database operations.
 """
 
+import json
 import logging
 import os
 import uuid
@@ -55,7 +56,7 @@ class Base(DeclarativeBase):
 
 # Bump when the table layout changes incompatibly; stamped into SQLite's
 # PRAGMA user_version so future releases can detect and migrate old files.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class GUID(TypeDecorator[uuid.UUID]):
@@ -172,12 +173,52 @@ class VersionModel(Base):
     created_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
     # Version notes/changelog
     notes: Mapped[str | None] = mapped_column(Text)
+    # Id of the signed plan.version artifact this row records (PRD §12.4).
+    # Null for versions written before artifacts existed.
+    artifact_id: Mapped[str | None] = mapped_column(String, index=True)
 
     # Relationships
     plan_file: Mapped["PlanFileModel"] = relationship("PlanFileModel", back_populates="versions")
 
     def __repr__(self) -> str:
         return f"<Version(id={self.id}, version={self.version}, created_by='{self.created_by}')>"
+
+
+class ArtifactModel(Base):
+    """A signed immutable artifact (PRD §12).
+
+    The row is an index over the envelope, not the authority: identity lives
+    in the signature and the content hash, so a rebuilt catalog re-derives
+    exactly the same artifacts from the files and payloads on disk.
+
+    ``plan_file_id`` is deliberately not a foreign key. Artifacts arrive out
+    of order during sync, so one may reference a plan this device has not
+    received yet; holding it is correct, rejecting it is not.
+    """
+
+    __tablename__ = "artifacts"
+
+    artifact_id: Mapped[str] = mapped_column(String, primary_key=True)
+    artifact_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    protocol_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    organization_id: Mapped[str | None] = mapped_column(String)
+    workspace_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    plan_file_id: Mapped[str | None] = mapped_column(String, index=True)
+    # JSON array of parent artifact ids; ordering carries no meaning.
+    parents: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    # Envelope timestamp, stored verbatim. Descriptive only, never ordering.
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(String)
+    actor_device_id: Mapped[str] = mapped_column(String, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String, nullable=False)
+    signature: Mapped[str] = mapped_column(String, nullable=False)
+    # Event payloads live here; a plan.version's payload is its .md file.
+    payload: Mapped[str | None] = mapped_column(Text)
+    # When this device stored it. Local bookkeeping, never part of identity.
+    received_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
+
+    def __repr__(self) -> str:
+        return f"<Artifact(id={self.artifact_id[:19]}..., type='{self.artifact_type}')>"
 
 
 class JiraConfigModel(Base):
@@ -310,8 +351,21 @@ def _migration_1(conn: Connection) -> None:
 # entry for every SCHEMA_VERSION bump; _apply_schema runs the pending ones in
 # order. New whole tables are handled by create_all; use a migration here for
 # in-place changes to existing tables (ADD COLUMN, backfills, index changes).
+def _migration_2(conn: Connection) -> None:
+    """1 -> 2: versions gain the id of their signed artifact (PRD §12.4).
+
+    Existing rows keep NULL: they predate artifacts and are still valid
+    plan versions, they simply carry no signature yet.
+    """
+    conn.exec_driver_sql("ALTER TABLE versions ADD COLUMN artifact_id VARCHAR")
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_versions_artifact_id ON versions (artifact_id)"
+    )
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: _migration_1,
+    2: _migration_2,
 }
 
 
@@ -634,6 +688,7 @@ def create_version(
     content_hash: str,
     created_by: str = "user",
     notes: str = "",
+    artifact_id: str | None = None,
 ) -> VersionModel:
     """
     Create a new version of a plan file.
@@ -646,6 +701,7 @@ def create_version(
         content_hash: SHA256 hash of content
         created_by: Who created this version
         notes: Version notes
+        artifact_id: Id of the signed artifact for this version
 
     Returns:
         Created version model
@@ -657,6 +713,7 @@ def create_version(
         content_hash=content_hash,
         created_by=created_by,
         notes=notes,
+        artifact_id=artifact_id,
     )
     session.add(version_model)
     _commit(session)
@@ -695,6 +752,83 @@ def list_versions(session: Session, plan_file_id: uuid.UUID) -> list[VersionMode
         .order_by(VersionModel.version.desc())
         .all()
     )
+
+
+def save_artifact(
+    session: Session,
+    *,
+    artifact_id: str,
+    artifact_type: str,
+    workspace_id: str,
+    content_hash: str,
+    actor_device_id: str,
+    created_at: str,
+    signature: str,
+    protocol_version: int = 1,
+    organization_id: str | None = None,
+    plan_file_id: str | None = None,
+    parents: list[str] | tuple[str, ...] = (),
+    actor_user_id: str | None = None,
+    payload: str | None = None,
+) -> ArtifactModel:
+    """Store an artifact, or return the one already held.
+
+    Artifacts are immutable and content-addressed, so re-receiving one is
+    normal during sync and must be a no-op rather than a conflict. The
+    caller verifies the envelope before calling; storage does not re-judge it.
+    """
+    existing = session.get(ArtifactModel, artifact_id)
+    if existing is not None:
+        return existing
+
+    artifact = ArtifactModel(
+        artifact_id=artifact_id,
+        artifact_type=artifact_type,
+        protocol_version=protocol_version,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        plan_file_id=plan_file_id,
+        parents=json.dumps(list(parents)),
+        created_at=created_at,
+        actor_user_id=actor_user_id,
+        actor_device_id=actor_device_id,
+        content_hash=content_hash,
+        signature=signature,
+        payload=payload,
+    )
+    session.add(artifact)
+    _commit(session)
+    return artifact
+
+
+def get_artifact(session: Session, artifact_id: str) -> ArtifactModel | None:
+    return session.get(ArtifactModel, artifact_id)
+
+
+def list_artifacts(
+    session: Session,
+    plan_file_id: str | None = None,
+    artifact_type: str | None = None,
+) -> list[ArtifactModel]:
+    """Artifacts, optionally narrowed to one plan or one type."""
+    query = session.query(ArtifactModel)
+    if plan_file_id is not None:
+        query = query.filter_by(plan_file_id=plan_file_id)
+    if artifact_type is not None:
+        query = query.filter_by(artifact_type=artifact_type)
+    return query.all()
+
+
+def artifact_parents(session: Session, plan_file_id: str) -> dict[str, tuple[str, ...]]:
+    """The parent graph for one plan, in the form the lineage helpers take."""
+    graph: dict[str, tuple[str, ...]] = {}
+    for artifact in list_artifacts(session, plan_file_id=plan_file_id):
+        try:
+            parents = tuple(json.loads(artifact.parents))
+        except (ValueError, TypeError):
+            parents = ()
+        graph[artifact.artifact_id] = parents
+    return graph
 
 
 def delete_project(session: Session, project_id: uuid.UUID) -> bool:
