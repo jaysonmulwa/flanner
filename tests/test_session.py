@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from flanner import identity
-from flanner import session as account
+from flanner import account, identity
+from flanner import session as cache
 from flanner.entitlements import EXPIRED, IN_GRACE, MALFORMED, VALID
 
 
@@ -27,26 +27,26 @@ def a_session(**overrides):
         entitlement="claims.signature",
         keyring={"sk_1": "key"},
     )
-    return account.Session(**{**defaults, **overrides})
+    return cache.Session(**{**defaults, **overrides})
 
 
 # --- the cache -------------------------------------------------------------
 
 
 def test_a_saved_session_survives_a_round_trip(home):
-    account.save(a_session())
-    loaded = account.load()
+    cache.save(a_session())
+    loaded = cache.load()
     assert loaded == a_session()
 
 
 def test_nothing_saved_means_not_logged_in(home):
-    assert account.load() is None
+    assert cache.load() is None
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Windows has no POSIX mode bits")
 def test_the_cache_is_readable_only_by_its_owner(home):
     """It is not a secret worth stealing, but it is nobody else's business."""
-    path = account.save(a_session())
+    path = cache.save(a_session())
     mode = stat.S_IMODE(path.stat().st_mode)
     assert not mode & (stat.S_IRGRP | stat.S_IROTH), oct(mode)
 
@@ -64,38 +64,38 @@ def test_the_cache_is_created_restricted_rather_than_widened_afterwards(home, mo
         "open",
         lambda path, flags, *mode: (seen.append(mode), real_open(path, flags, *mode))[1],
     )
-    account.save(a_session())
+    cache.save(a_session())
     assert seen and all(mode == (0o600,) for mode in seen), seen
 
 
 def test_a_corrupt_cache_reads_as_never_logged_in(home):
-    account.session_path().write_text("{ not json", encoding="utf-8")
-    assert account.load() is None
+    cache.session_path().write_text("{ not json", encoding="utf-8")
+    assert cache.load() is None
 
 
 def test_a_truncated_cache_reads_as_never_logged_in(home):
     """Missing fields must not crash a command that only wanted the device id."""
-    account.session_path().write_text(json.dumps({"user_id": "maria"}), encoding="utf-8")
-    assert account.load() is None
+    cache.session_path().write_text(json.dumps({"user_id": "maria"}), encoding="utf-8")
+    assert cache.load() is None
 
 
 def test_saving_leaves_no_temporary_file_behind(home):
-    account.save(a_session())
+    cache.save(a_session())
     assert sorted(p.name for p in home.iterdir()) == ["session.json"]
 
 
 def test_logging_out_forgets_the_session_but_keeps_the_device_key(home):
     identity.load_or_create_device_key()
     before = identity.device_id()
-    account.save(a_session())
+    cache.save(a_session())
 
-    assert account.clear() is True
-    assert account.load() is None
+    assert cache.clear() is True
+    assert cache.load() is None
     assert identity.device_id() == before, "the same machine must not look like a new one"
 
 
 def test_logging_out_twice_is_harmless(home):
-    assert account.clear() is False
+    assert cache.clear() is False
 
 
 # --- the network edge ------------------------------------------------------
@@ -119,7 +119,7 @@ def test_refreshing_without_a_session_says_so(home):
 
 def test_an_unusable_response_is_reported_not_cached(home):
     with pytest.raises(account.SessionError, match="unusable"):
-        account.Session.from_response("https://api.example.test", {"device_id": "dev_abc"})
+        account._session_from("https://api.example.test", {"device_id": "dev_abc"})
 
 
 # --- graded expiry ---------------------------------------------------------
@@ -135,11 +135,11 @@ def test_ensure_fresh_returns_nothing_when_never_logged_in(home):
 
 def test_ensure_fresh_does_not_call_out_for_a_valid_entitlement(home, monkeypatch):
     """A working entitlement is used as-is; the network is not consulted."""
-    account.save(a_session())
+    cache.save(a_session())
     monkeypatch.setattr(
         account, "refresh", lambda *a, **k: pytest.fail("should not have refreshed")
     )
-    monkeypatch.setattr(account.Session, "status", lambda self, **k: _verdict(VALID))
+    monkeypatch.setattr(cache.Session, "status", lambda self, **k: _verdict(VALID))
     assert account.ensure_fresh() is not None
 
 
@@ -147,8 +147,8 @@ def test_ensure_fresh_does_not_call_out_for_a_valid_entitlement(home, monkeypatc
 def test_an_unreachable_control_plane_falls_back_to_the_cache(home, monkeypatch, state):
     """Losing the network must cost team features later, not this command now."""
     saved = a_session()
-    account.save(saved)
-    monkeypatch.setattr(account.Session, "status", lambda self, **k: _verdict(state))
+    cache.save(saved)
+    monkeypatch.setattr(cache.Session, "status", lambda self, **k: _verdict(state))
     monkeypatch.setattr(
         account, "refresh", _raising(account.SessionError("could not reach the control plane"))
     )
@@ -278,6 +278,45 @@ def test_logout_is_quiet_when_there_is_nothing_to_forget(home):
 def test_the_session_file_never_holds_the_device_private_key(home):
     """A cached entitlement is copyable; the thing that makes it usable is not."""
     identity.load_or_create_device_key()
-    account.save(a_session())
-    assert "PRIVATE KEY" not in account.session_path().read_text(encoding="utf-8")
+    cache.save(a_session())
+    assert "PRIVATE KEY" not in cache.session_path().read_text(encoding="utf-8")
     assert os.path.exists(identity.device_key_path())
+
+
+def test_whoami_refresh_asks_even_when_the_entitlement_is_still_valid(home, monkeypatch):
+    """Found by dogfooding: ensure_fresh would skip the call.
+
+    Someone runs `whoami --refresh` precisely to pick up a grant made a
+    moment ago, while the held entitlement is still perfectly valid. Routing
+    that through the renew-only-if-stale path made the flag a no-op.
+    """
+    from click.testing import CliRunner
+
+    from flanner import account
+    from flanner.cli import cli
+
+    cache.save(a_session())
+    called = []
+    monkeypatch.setattr(account, "refresh", lambda *a, **k: called.append(1) or a_session())
+    monkeypatch.setattr(
+        account, "ensure_fresh", lambda **k: pytest.fail("--refresh must not be a heuristic")
+    )
+
+    result = CliRunner(env={"FLANNER_HOME": str(home)}).invoke(cli, ["whoami", "--refresh"])
+    assert result.exit_code == 0
+    assert called, "the flag did not renew anything"
+
+
+def test_whoami_refresh_falls_back_to_the_cache_when_offline(home, monkeypatch):
+    from click.testing import CliRunner
+
+    from flanner import account
+    from flanner.cli import cli
+
+    cache.save(a_session())
+    monkeypatch.setattr(account, "refresh", _raising(account.SessionError("no route to host")))
+
+    result = CliRunner(env={"FLANNER_HOME": str(home)}).invoke(cli, ["whoami", "--refresh"])
+    assert result.exit_code == 0
+    assert "could not renew" in result.output
+    assert "maria" in result.output, "the cached entitlement is still reported"

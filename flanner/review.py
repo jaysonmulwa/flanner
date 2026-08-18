@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
-from . import workflow
+from . import authz, workflow
 from .assurance import load_review_events
 from .database import (
     PlanFileModel,
@@ -34,12 +34,12 @@ from .database import (
     get_version,
     save_artifact,
 )
-from .plan_ops import local_workspace_id
+from .plan_ops import workspace_id_for
 from .workflow import (
     APPROVE,
     DEFAULT_POLICY,
-    LOCAL_ACTOR,
     MAINTAINER,
+    WITHDRAW,
     Event,
     Policy,
     WorkflowState,
@@ -85,15 +85,20 @@ def status(
     session: Session,
     *,
     plan_file: PlanFileModel,
+    project: ProjectModel | None = None,
     roles: dict[str, str] | None = None,
     policy: Policy = DEFAULT_POLICY,
 ) -> WorkflowState:
-    """Project the current review state for a plan."""
-    return workflow.project(
-        load_review_events(session, str(plan_file.id)),
-        roles if roles is not None else local_roles(),
-        policy,
-    )
+    """Project the current review state for a plan.
+
+    Without a project there is no workspace to resolve an entitlement
+    against, so the local placeholder stands in. Callers that hold one
+    should pass it, or a joined workspace will read as advisory here while
+    the assurance verdict enforces it.
+    """
+    if roles is None:
+        roles = authz.resolve(project).roles if project is not None else local_roles()
+    return workflow.project(load_review_events(session, str(plan_file.id)), roles, policy)
 
 
 def propose(
@@ -103,7 +108,7 @@ def propose(
     plan_file: PlanFileModel,
     artifact_id: str | None = None,
     message: str = "",
-    actor: str = LOCAL_ACTOR,
+    actor: str | None = None,
     roles: dict[str, str] | None = None,
     policy: Policy = DEFAULT_POLICY,
 ) -> ReviewResult:
@@ -120,15 +125,23 @@ def propose(
             raise ValueError("this plan has no signed version to propose")
         target = version.artifact_id
 
-    state = status(session, plan_file=plan_file, roles=roles, policy=policy)
+    authorization = authz.resolve(project, actor=actor)
+    effective_roles = roles if roles is not None else authorization.roles
+    # Refuse before writing. Projection would drop an unauthorized proposal
+    # anyway - it has to, because the same rule governs events arriving from
+    # peers - but a local caller deserves to be told, rather than watch the
+    # command succeed and the proposal never appear.
+    _require(effective_roles, authorization, workflow.MAY_PROPOSE, "propose on this plan")
+
+    state = status(session, plan_file=plan_file, roles=effective_roles, policy=policy)
     event = workflow.make_proposal(
-        workspace_id=local_workspace_id(project),
+        workspace_id=workspace_id_for(project),
         plan_file_id=str(plan_file.id),
         target_artifact_id=target,
         base_accepted_event_ids=state.accepted_event_ids,
         message=message,
         policy=policy,
-        actor_user_id=actor,
+        actor_user_id=authorization.actor,
     )
     save_event(session, event, str(plan_file.id))
     session.commit()
@@ -142,7 +155,7 @@ def decide(
     plan_file: PlanFileModel,
     proposal_id: str,
     action: str,
-    actor: str = LOCAL_ACTOR,
+    actor: str | None = None,
     roles: dict[str, str] | None = None,
     policy: Policy = DEFAULT_POLICY,
 ) -> ReviewResult:
@@ -151,19 +164,25 @@ def decide(
     The decision names the exact version the reviewer saw, so it can never
     be replayed against different content.
     """
-    effective_roles = roles if roles is not None else local_roles(actor)
+    authorization = authz.resolve(project, actor=actor)
+    acting_as = authorization.actor
+    effective_roles = roles if roles is not None else authorization.roles
     before = status(session, plan_file=plan_file, roles=effective_roles, policy=policy)
     proposal = before.proposals.get(proposal_id)
     if proposal is None:
         raise ValueError(f"no proposal {proposal_id} on this plan")
 
+    # Withdrawing is the proposer's own act, so it needs no review role.
+    if action != WITHDRAW:
+        _require(effective_roles, authorization, workflow.MAY_REVIEW, "review this plan")
+
     event = workflow.make_decision(
-        workspace_id=local_workspace_id(project),
+        workspace_id=workspace_id_for(project),
         plan_file_id=str(plan_file.id),
         proposal_id=proposal_id,
         target_artifact_id=proposal.target_artifact_id,
         action=action,
-        actor_user_id=actor,
+        actor_user_id=acting_as,
     )
     save_event(session, event, str(plan_file.id))
     session.commit()
@@ -176,11 +195,30 @@ def decide(
         project=project,
         plan_file=plan_file,
         proposal_id=proposal_id,
-        actor=actor,
+        actor=acting_as,
         roles=effective_roles,
         policy=policy,
     )
     return ReviewResult(event=event, accepted=accepted, reason=reason)
+
+
+def _require(
+    roles: dict[str, str], authorization: authz.Authorization, permitted: frozenset[str], what: str
+) -> None:
+    """Stop early when the resolved authorization does not allow this.
+
+    The message names the reason the entitlement gave, because "you may not
+    do that" without saying why is the least useful refusal there is.
+    """
+    held = roles.get(authorization.actor)
+    if held in permitted:
+        return
+    detail = authorization.reason or (
+        f"{authorization.actor} is a {held} here, and this needs " + " or ".join(sorted(permitted))
+        if held
+        else f"{authorization.actor} holds no role here"
+    )
+    raise PermissionError(f"cannot {what}: {detail}")
 
 
 def _try_accept(
@@ -221,7 +259,7 @@ def _try_accept(
         and event.payload.get("action") == APPROVE
     ]
     accepted = workflow.make_accepted_head(
-        workspace_id=local_workspace_id(project),
+        workspace_id=workspace_id_for(project),
         plan_file_id=str(plan_file.id),
         target_artifact_id=proposal.target_artifact_id,
         proposal_id=proposal_id,

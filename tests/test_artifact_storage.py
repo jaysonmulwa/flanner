@@ -15,7 +15,7 @@ from flanner.database import (
     save_artifact,
 )
 from flanner.frontmatter import parse_frontmatter
-from flanner.plan_ops import create_plan, local_workspace_id, record_new_version
+from flanner.plan_ops import create_plan, record_new_version, workspace_id_for
 from flanner.reconcile import read_managed
 
 
@@ -48,7 +48,7 @@ def test_writing_a_version_stores_a_signed_artifact(project):
     assert stored is not None
     assert stored.artifact_type == artifacts.PLAN_VERSION
     assert stored.plan_file_id == str(plan_file.id)
-    assert stored.workspace_id == local_workspace_id(proj)
+    assert stored.workspace_id == workspace_id_for(proj)
 
 
 def test_the_artifact_verifies_against_the_body_on_disk(project):
@@ -86,7 +86,7 @@ def test_frontmatter_carries_the_artifact_identity(project):
 
     fm, _ = parse_frontmatter(Path(version.file_path).read_text(encoding="utf-8"))
     assert fm["artifact_id"] == version.artifact_id
-    assert fm["workspace_id"] == local_workspace_id(proj)
+    assert fm["workspace_id"] == workspace_id_for(proj)
     assert fm["actor_device_id"] == identity.device_id()
     assert "parents" not in fm  # v1 is a root
 
@@ -203,15 +203,20 @@ def test_a_version_predating_artifacts_starts_a_new_root(project):
 def test_an_existing_v1_database_upgrades(tmp_path):
     from sqlalchemy import text
 
-    from flanner.database import get_db_path
+    from flanner.database import SCHEMA_VERSION, get_db_path
 
     db_path = tmp_path / "old.db"
     init_database(str(db_path))
     session = get_session()
 
-    # Rewind to the pre-artifact layout an installed user would have.
+    # Rewind to the pre-artifact layout an installed user would have. Every
+    # column a later migration adds has to go, or that migration re-runs
+    # against a schema create_all already brought forward and fails on a
+    # duplicate. Leaving one behind is how this test stopped covering the
+    # newest migration while still passing for the older ones.
     session.execute(text("DROP INDEX IF EXISTS ix_versions_artifact_id"))
     session.execute(text("ALTER TABLE versions DROP COLUMN artifact_id"))
+    session.execute(text("ALTER TABLE projects DROP COLUMN workspace_id"))
     session.execute(text("DROP TABLE artifacts"))
     session.execute(text("PRAGMA user_version = 1"))
     session.commit()
@@ -222,7 +227,10 @@ def test_an_existing_v1_database_upgrades(tmp_path):
     assert get_db_path() == str(db_path)
     columns = {row[1] for row in session.execute(text("PRAGMA table_info(versions)"))}
     assert "artifact_id" in columns
-    assert int(session.execute(text("PRAGMA user_version")).scalar()) == 2
+    assert "workspace_id" in {
+        row[1] for row in session.execute(text("PRAGMA table_info(projects)"))
+    }
+    assert int(session.execute(text("PRAGMA user_version")).scalar()) == SCHEMA_VERSION
     # The new table is back and usable.
     assert list_artifacts(session) == []
 

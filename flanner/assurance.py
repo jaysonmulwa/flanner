@@ -30,7 +30,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from . import artifacts, identity, workflow
+from . import artifacts, authz, identity, workflow
 from .artifacts import Artifact
 from .database import (
     PlanFileModel,
@@ -68,6 +68,9 @@ class Assurance:
     conflicted: bool = False
     blockers: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    # Which regime produced this verdict: "local" means review gated
+    # nothing, "entitlement" means a signed capability decided it.
+    authorization: str = authz.LOCAL
 
     @property
     def safe_to_implement(self) -> bool:
@@ -88,6 +91,7 @@ class Assurance:
             "safe_to_implement": self.safe_to_implement,
             "blockers": list(self.blockers),
             "warnings": list(self.warnings),
+            "authorization": self.authorization,
         }
 
 
@@ -147,14 +151,15 @@ def assess(
             blockers=("this plan has no versions",),
         )
 
-    # Defaults to the same local placeholder the review surface uses. If
-    # the two disagreed, an approval recorded through one would look
-    # unauthorized to the other, and the verdict would silently contradict
-    # the review status. Note `roles or ...` would be wrong: the
-    # placeholder is an empty mapping that answers for every actor.
+    # Resolved through the same seam the review surface uses. If the two
+    # disagreed, an approval recorded through one would look unauthorized
+    # to the other, and the verdict would silently contradict the review
+    # status. Note `roles or ...` would be wrong: the local placeholder is
+    # an empty mapping that answers for every actor.
+    authorization = authz.resolve(project)
     state = workflow.project(
         load_review_events(session, str(plan_file.id)),
-        roles if roles is not None else workflow.local_roles(),
+        roles if roles is not None else authorization.roles,
         policy,
     )
 
@@ -182,6 +187,12 @@ def assess(
     if not evidence.get("git_available"):
         warnings.append("no git repository, so freshness was judged on age alone")
 
+    # Say so when a joined project cannot check authorization at all.
+    # Silence would read as "nobody approved this" when the truth is
+    # "this device cannot currently tell".
+    if roles is None and authorization.enforced and not authorization.roles:
+        warnings.append(f"review authorization is unavailable: {authorization.reason}")
+
     return Assurance(
         plan_name=plan_file.name,
         artifact_id=artifact_id,
@@ -195,6 +206,7 @@ def assess(
         conflicted=state.conflicted,
         blockers=tuple(blockers),
         warnings=tuple(warnings),
+        authorization=authorization.source,
     )
 
 

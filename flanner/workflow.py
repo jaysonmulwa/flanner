@@ -111,8 +111,12 @@ def local_roles(actor: str = LOCAL_ACTOR) -> dict[str, str]:
 
 DEFAULT_POLICY = Policy()
 
-_MAY_AUTHOR = frozenset({EDITOR, MAINTAINER})
-_MAY_DECIDE = frozenset({MAINTAINER})
+# Exported so the write surface can refuse before recording an event that
+# projection would only discard. One definition, so the two cannot drift.
+MAY_PROPOSE = frozenset({EDITOR, MAINTAINER})
+MAY_REVIEW = frozenset({MAINTAINER})
+_MAY_AUTHOR = MAY_PROPOSE
+_MAY_DECIDE = MAY_REVIEW
 
 
 @dataclass(frozen=True)

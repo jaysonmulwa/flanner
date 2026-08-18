@@ -1,47 +1,31 @@
-"""Getting an entitlement onto this device, and keeping it (PRD §11.4).
+"""The entitlement this device is holding, as cached on disk.
 
-``entitlements`` can verify a token but has no way to obtain one. This is
-the other half: enrolling once with a code, then renewing by signing with
-the device key, and caching the result so that work already authorized
-survives a control-plane outage.
+Deliberately free of any network code. Read commands - review status, an
+assurance verdict - resolve authorization through here, and an import
+boundary is a better guarantee than a promise that nobody will call out.
+Fetching and renewing live in ``account``, which imports this module rather
+than the other way round.
 
-Three things are deliberate.
-
-**Nothing here is a secret worth stealing.** The cached entitlement is a
-signed statement about this device, bound to a device id no other machine
-can sign for. Copying it to another laptop gains nothing, because that
-laptop cannot produce the signature the next refresh needs.
-
-**Refresh failure is not an error.** A cached entitlement stays usable
-through its grace window, so being unable to reach the control plane
-degrades team features later rather than interrupting work now. Local plan
-work never depends on any of this (§18.4).
-
-**The transport is stdlib.** Two JSON POSTs do not justify a dependency in
-an MIT client that most users install only for local use.
+Nothing cached here is a secret worth stealing. An entitlement is a signed
+statement about one device, bound to a device id no other machine can sign
+for, so copying it to another laptop gains nothing: that laptop cannot
+produce the signature the next renewal needs.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import device_auth, identity
-from .entitlements import VALID, EntitlementStore, Verdict
+from . import identity
+from .entitlements import EntitlementStore, Verdict
 
 SESSION_FILENAME = "session.json"
 DEFAULT_ENDPOINT = "https://api.flanner.io"
-REQUEST_TIMEOUT = 15.0
-
-
-class SessionError(Exception):
-    """Enrolment or renewal was refused, or could not be attempted."""
 
 
 @dataclass
@@ -70,20 +54,6 @@ class Session:
             "entitlement": self.entitlement,
             "keyring": self.keyring,
         }
-
-    @classmethod
-    def from_response(cls, endpoint: str, body: dict[str, Any]) -> Session:
-        try:
-            return cls(
-                endpoint=endpoint,
-                device_id=str(body["device_id"]),
-                organization_id=str(body["organization_id"]),
-                user_id=str(body["user_id"]),
-                entitlement=str(body["entitlement"]),
-                keyring=dict(body.get("keyring") or {}),
-            )
-        except (KeyError, TypeError, ValueError) as e:
-            raise SessionError(f"the control plane returned something unusable: {e}") from None
 
 
 def session_path() -> Path:
@@ -135,90 +105,3 @@ def clear() -> bool:
         return False
     path.unlink()
     return True
-
-
-def login(code: str, *, endpoint: str = DEFAULT_ENDPOINT, label: str | None = None) -> Session:
-    """Redeem an enrolment code and cache the entitlement it returns."""
-    if not code.strip():
-        raise SessionError("an enrolment code is required")
-    body = _post(
-        endpoint,
-        "/v1/devices/enroll",
-        {
-            "enrollment_code": code.strip(),
-            "public_key": identity.device_public_key_b64(),
-            "label": label or _default_label(),
-            "platform": os.name,
-        },
-    )
-    session = Session.from_response(endpoint, body)
-    save(session)
-    return session
-
-
-def refresh(session: Session | None = None) -> Session:
-    """Renew the entitlement by proving possession of the device key."""
-    current = session or load()
-    if current is None:
-        raise SessionError("this device is not logged in")
-    request = device_auth.sign_request({}, device_id=current.device_id)
-    body = _post(current.endpoint, "/v1/entitlements", request.to_dict())
-    renewed = Session.from_response(current.endpoint, body)
-    save(renewed)
-    return renewed
-
-
-def ensure_fresh(*, now: datetime | None = None) -> Session | None:
-    """The best entitlement available, renewing only when one is needed.
-
-    A valid entitlement is used as-is. Anything else is worth a renewal
-    attempt, and a failed attempt falls back to what is cached rather than
-    raising: an unreachable control plane should cost team features at the
-    end of the grace window, not this operation.
-    """
-    current = load()
-    if current is None or current.status(now=now).status == VALID:
-        return current
-    try:
-        return refresh(current)
-    except SessionError:
-        return current
-
-
-def _default_label() -> str:
-    import socket
-
-    try:
-        return socket.gethostname()
-    except OSError:
-        return "unnamed device"
-
-
-def _post(endpoint: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    url = endpoint.rstrip("/") + path
-    if not url.startswith(("http://", "https://")):
-        raise SessionError(f"{endpoint} is not an http endpoint")
-    request = urllib.request.Request(  # noqa: S310 - scheme checked above
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:  # noqa: S310
-            return dict(json.loads(response.read().decode("utf-8")))
-    except urllib.error.HTTPError as e:
-        raise SessionError(_detail(e)) from None
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise SessionError(f"could not reach {endpoint}: {e}") from None
-    except ValueError as e:
-        raise SessionError(f"the control plane returned something unusable: {e}") from None
-
-
-def _detail(error: urllib.error.HTTPError) -> str:
-    """The server's own explanation, when it gave one worth repeating."""
-    try:
-        detail = json.loads(error.read().decode("utf-8")).get("detail")
-    except (ValueError, OSError):
-        detail = None
-    return str(detail) if detail else f"the control plane refused this request ({error.code})"

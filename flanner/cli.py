@@ -1058,8 +1058,8 @@ def _resolve_plan(
 @click.argument("plan_name")
 @click.option("--project", default=None, help="Project name")
 @click.option("--message", default="", help="Note for reviewers")
-@click.option("--actor", default="user", help="Who is proposing")
-def review_propose(plan_name: str, project: str | None, message: str, actor: str) -> None:
+@click.option("--actor", default=None, help="Who is proposing (defaults to your entitlement)")
+def review_propose(plan_name: str, project: str | None, message: str, actor: str | None) -> None:
     """Offer a plan's newest version for review"""
     from .review import propose
 
@@ -1067,7 +1067,7 @@ def review_propose(plan_name: str, project: str | None, message: str, actor: str
     proj, plan_file = _resolve_plan(session, project, plan_name)
     try:
         result = propose(session, project=proj, plan_file=plan_file, message=message, actor=actor)
-    except ValueError as e:
+    except (ValueError, PermissionError) as e:
         console.print(f"ERROR {e}", style="red")
         raise SystemExit(1) from None
 
@@ -1083,9 +1083,9 @@ def review_propose(plan_name: str, project: str | None, message: str, actor: str
 )
 @click.option("--proposal", default=None, help="Proposal id (defaults to the only open one)")
 @click.option("--project", default=None, help="Project name")
-@click.option("--actor", default="user", help="Who is deciding")
+@click.option("--actor", default=None, help="Who is deciding (defaults to your entitlement)")
 def review_decide(
-    plan_name: str, decision: str, proposal: str | None, project: str | None, actor: str
+    plan_name: str, decision: str, proposal: str | None, project: str | None, actor: str | None
 ) -> None:
     """Approve, reject, request changes on, or withdraw a proposal"""
     from .review import decide, status
@@ -1096,7 +1096,7 @@ def review_decide(
     if proposal is None:
         open_ones = [
             view
-            for view in status(session, plan_file=plan_file).proposals.values()
+            for view in status(session, plan_file=plan_file, project=proj).proposals.values()
             if view.state in ("open", "stale", "changes_requested")
         ]
         if len(open_ones) != 1:
@@ -1132,11 +1132,20 @@ def review_decide(
 @click.option("--project", default=None, help="Project name")
 def review_status(plan_name: str, project: str | None) -> None:
     """Show a plan's proposals and its accepted baseline"""
+    from . import authz
     from .review import status
 
     session = _require_session()
-    _, plan_file = _resolve_plan(session, project, plan_name)
-    state = status(session, plan_file=plan_file)
+    proj, plan_file = _resolve_plan(session, project, plan_name)
+    state = status(session, plan_file=plan_file, project=proj)
+
+    authorization = authz.resolve(proj)
+    if not authorization.enforced:
+        console.print(
+            "review here is advisory: this project has not joined a workspace", style="dim"
+        )
+    elif not authorization.roles:
+        console.print(f"WARN cannot authorize review: {authorization.reason}", style="yellow")
 
     if state.conflicted:
         console.print(
@@ -2135,10 +2144,13 @@ _ENTITLEMENT_STYLE = {
 @click.option("--label", default=None, help="Name for this device (defaults to the hostname)")
 def login(code: str, endpoint: str | None, label: str | None) -> None:
     """Enroll this device with an enrollment code from your team console"""
-    from . import session as account
+    from . import account
+    from . import session as session_cache
 
     try:
-        current = account.login(code, endpoint=endpoint or account.DEFAULT_ENDPOINT, label=label)
+        current = account.login(
+            code, endpoint=endpoint or session_cache.DEFAULT_ENDPOINT, label=label
+        )
     except account.SessionError as e:
         console.print(f"ERROR {e}", style="red")
         raise SystemExit(1) from None
@@ -2166,12 +2178,24 @@ def logout() -> None:
 @click.option("--refresh", "do_refresh", is_flag=True, help="Renew the entitlement first")
 def whoami(do_refresh: bool) -> None:
     """Show this device's identity and what it is currently entitled to"""
+    from . import account
     from . import identity as device
-    from . import session as account
+    from . import session as cache
 
     console.print(f"Device  {device.device_id()}")
 
-    current = account.ensure_fresh() if do_refresh else account.load()
+    current: cache.Session | None
+    if do_refresh:
+        # An explicit --refresh is a request, not a heuristic. ensure_fresh
+        # would skip the call while the held entitlement is still valid,
+        # which is exactly when someone runs this to pick up a new grant.
+        try:
+            current = account.refresh()
+        except account.SessionError as e:
+            console.print(f"WARN could not renew: {e}", style="yellow")
+            current = cache.load()
+    else:
+        current = cache.load()
     if current is None:
         console.print("Account not signed in", style="dim")
         console.print("Local plan work needs no account. Run 'flanner login' to join a team.")
@@ -2203,3 +2227,49 @@ def _print_entitlement(current: Any) -> None:
     for capability in capabilities:
         table.add_row(capability.workspace_id, capability.role)
     console.print(table)
+
+
+@cli.command()
+@click.argument("workspace_id", required=False)
+@click.option("--project", default=None, help="Project name (uses current directory if omitted)")
+@click.option("--clear", "clear_binding", is_flag=True, help="Leave the workspace")
+def join(workspace_id: str | None, project: str | None, clear_binding: bool) -> None:
+    """Bind a project to a control-plane workspace, making review binding
+
+    Until a project joins one, review runs but authorizes nothing. After it
+    joins, roles come from the signed entitlement this device holds.
+
+    Deliberately not exposed over MCP: joining or leaving a workspace changes
+    who may approve a plan, which is not a decision an agent should make on
+    the user's behalf.
+    """
+    if not workspace_id and not clear_binding:
+        console.print("ERROR Give a workspace id, or --clear to leave.", style="red")
+        raise SystemExit(1)
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        console.print(
+            "ERROR Project not found. Run from inside a project or pass --project.", style="red"
+        )
+        raise SystemExit(1)
+
+    if clear_binding:
+        proj.workspace_id = None
+        session.commit()
+        console.print(f"OK '{proj.name}' left its workspace", style="green")
+        console.print("Review still runs here, but it authorizes nothing.", style="dim")
+        return
+
+    proj.workspace_id = workspace_id
+    session.commit()
+    console.print(f"OK '{proj.name}' joined workspace {workspace_id}", style="green")
+
+    from . import authz
+
+    authorization = authz.resolve(proj)
+    if authorization.roles:
+        console.print(f"You hold: {authorization.roles[authorization.actor]}", style="green")
+    else:
+        console.print(f"No access yet: {authorization.reason}", style="yellow")

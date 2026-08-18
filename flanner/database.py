@@ -56,7 +56,7 @@ class Base(DeclarativeBase):
 
 # Bump when the table layout changes incompatibly; stamped into SQLite's
 # PRAGMA user_version so future releases can detect and migrate old files.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class GUID(TypeDecorator[uuid.UUID]):
@@ -110,6 +110,10 @@ class ProjectModel(Base):
     plan_directory: Mapped[str] = mapped_column(String, default=".plans", nullable=True)
     # Auto-update .gitignore
     auto_gitignore: Mapped[bool] = mapped_column(Boolean, default=True, nullable=True)
+    # The control-plane workspace this project belongs to, once joined.
+    # NULL means solo: artifacts get a local workspace id derived from the
+    # project, and review authorization stays advisory (PRD §11.3).
+    workspace_id: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow
@@ -363,9 +367,19 @@ def _migration_2(conn: Connection) -> None:
     )
 
 
+def _migration_3(conn: Connection) -> None:
+    """2 -> 3: projects may name the control-plane workspace they joined.
+
+    Existing rows keep NULL, which is the solo case and stays correct: the
+    workspace id is derived locally and review remains advisory.
+    """
+    conn.exec_driver_sql("ALTER TABLE projects ADD COLUMN workspace_id VARCHAR")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
+    3: _migration_3,
 }
 
 

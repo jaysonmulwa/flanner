@@ -17,9 +17,9 @@ from flanner.database import (
 from flanner.frontmatter import read_managed
 from flanner.plan_ops import (
     create_plan,
-    local_workspace_id,
     materialize_version,
     record_new_version,
+    workspace_id_for,
 )
 
 
@@ -303,7 +303,7 @@ def test_sync_then_materialize_reproduces_the_plan_on_the_other_device(sender, r
         notes="",
     )
 
-    workspace = local_workspace_id(s_project)
+    workspace = workspace_id_for(s_project)
     registry = {identity.device_id(): identity.device_public_key_b64()}.get
     report = sync.sync_from_peer(r_session, sync.LocalPeer(s_session), workspace, registry)
     assert report.ok and len(report.accepted) == 2

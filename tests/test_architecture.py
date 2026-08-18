@@ -33,11 +33,17 @@ ALLOWED = {
     "artifacts": {"identity"},
     "entitlements": {"identity", "artifacts"},
     "device_auth": {"identity", "artifacts"},
-    # The delivery path: it may reach the network, so nothing below it may.
-    "session": {"identity", "device_auth", "entitlements"},
+    # The entitlement cache. No network here on purpose: read commands
+    # resolve authorization through it, and an import boundary is a better
+    # guarantee than a promise that nobody will call out.
+    "session": {"identity", "entitlements"},
+    # The only module below the composition roots that may reach the network.
+    "account": {"identity", "device_auth", "entitlements", "session"},
+    "authz": {"workflow", "session", "entitlements", "database", "plan_ops"},
     "workflow": {"artifacts"},
-    "assurance": FOUNDATION | {"artifacts", "identity", "workflow", "database", "freshness"},
-    "review": FOUNDATION | {"workflow", "assurance", "database", "plan_ops"},
+    "assurance": FOUNDATION
+    | {"artifacts", "identity", "workflow", "database", "freshness", "authz"},
+    "review": FOUNDATION | {"workflow", "assurance", "database", "plan_ops", "authz"},
     "sync": FOUNDATION | {"artifacts", "database"},
     "reconcile": FOUNDATION | {"database", "artifacts", "identity"},
     "services": FOUNDATION
@@ -64,6 +70,8 @@ ALLOWED = {
         "services",
         "review",
         "session",
+        "account",
+        "authz",
         "entitlements",
         "identity",
     },
@@ -110,3 +118,34 @@ def test_import_boundaries_hold():
         if illegal:
             violations.append(f"{path.name} imports {sorted(illegal)}")
     assert not violations, "; ".join(violations)
+
+
+def test_no_read_path_can_reach_the_network():
+    """A read command must never make an HTTP call.
+
+    `account` is the one module below the composition roots allowed to
+    reach out. Anything that resolves authorization for a read - authz,
+    assurance, review - must stay clear of it, transitively. Stated as a
+    reachability check rather than a comment, because the tempting shortcut
+    when wiring entitlements in is exactly one import away.
+    """
+    reachable = {}
+    for module in ALLOWED:
+        path = PACKAGE / f"{module}.py"
+        reachable[module] = internal_imports(path) if path.exists() else set()
+
+    def closure(start: str) -> set[str]:
+        seen, pending = set(), [start]
+        while pending:
+            current = pending.pop()
+            for dependency in reachable.get(current, set()):
+                if dependency not in seen:
+                    seen.add(dependency)
+                    pending.append(dependency)
+        return seen
+
+    for module in ("authz", "assurance", "review", "session", "workflow"):
+        assert "account" not in closure(module), (
+            f"{module} can reach the network through account; "
+            "a read command would make an HTTP call"
+        )

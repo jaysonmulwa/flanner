@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from flanner import review
+from flanner import review, workflow
 from flanner.database import create_project, get_session
 from flanner.plan_ops import create_plan, record_new_version
 from flanner.workflow import (
@@ -172,6 +172,13 @@ def test_an_approval_short_of_policy_records_but_does_not_accept(project, plan):
 
 
 def test_a_non_maintainer_cannot_advance_the_baseline(project, plan):
+    """Refused here, and still refused if the event reaches a peer anyway.
+
+    The write surface stops early so nobody records a decision that can
+    never count. Projection enforces the same rule independently, because
+    events arriving over the wire never passed through this check
+    (test_workflow covers that side).
+    """
     session, proj = project
     plan_file, _ = plan
     roles = {"alice": EDITOR, "maria": MAINTAINER}
@@ -179,16 +186,16 @@ def test_a_non_maintainer_cannot_advance_the_baseline(project, plan):
         session, project=proj, plan_file=plan_file, actor="alice", roles=roles
     )
 
-    result = review.decide(
-        session,
-        project=proj,
-        plan_file=plan_file,
-        proposal_id=proposal.event.event_id,
-        action=APPROVE,
-        actor="alice",
-        roles=roles,
-    )
-    assert result.advanced_baseline is False
+    with pytest.raises(PermissionError, match="review this plan"):
+        review.decide(
+            session,
+            project=proj,
+            plan_file=plan_file,
+            proposal_id=proposal.event.event_id,
+            action=APPROVE,
+            actor="alice",
+            roles=roles,
+        )
     assert review.status(session, plan_file=plan_file, roles=roles).accepted_artifact_id is None
 
 
@@ -292,7 +299,7 @@ def test_the_mcp_tools_report_bad_input(project):
 
 def test_local_roles_are_advisory_and_say_so():
     """A local role map gates nothing; the docstring must not pretend it does."""
-    assert review.local_roles()[review.LOCAL_ACTOR] == MAINTAINER
+    assert review.local_roles()[workflow.LOCAL_ACTOR] == MAINTAINER
     assert "not a security boundary" in review.__doc__
 
 
@@ -321,3 +328,149 @@ def test_both_read_paths_agree_about_who_may_act(project, plan):
     # Neither call is told about roles; they must still agree.
     assert review.status(session, plan_file=plan_file).accepted_artifact_id == version.artifact_id
     assert assurance.assess(session, project=proj, plan_file=plan_file).reviewed is True
+
+
+# --- enforcement, once a project joins a workspace ---
+
+
+def a_signed_entitlement(role, *, workspace, user="maria"):
+    """Cache a real entitlement for this device, granting `role` in `workspace`."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from flanner import session as cache
+    from flanner.artifacts import canonical_bytes
+    from flanner.entitlements import Claims, WorkspaceCapability, encode_token
+    from flanner.identity import public_key_b64, sign
+
+    key = Ed25519PrivateKey.generate()
+    now = datetime.now(timezone.utc)
+    claims = Claims(
+        organization_id="org_1",
+        user_id=user,
+        device_id="dev_abc",
+        key_id="sk_1",
+        issued_at=now.isoformat().replace("+00:00", "Z"),
+        expires_at=(now + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+        workspace_capabilities=(
+            (WorkspaceCapability(workspace_id=workspace, role=role),) if role else ()
+        ),
+    )
+    cache.save(
+        cache.Session(
+            endpoint="https://api.example.test",
+            device_id="dev_abc",
+            organization_id="org_1",
+            user_id=user,
+            entitlement=encode_token(claims, sign(canonical_bytes(claims.to_dict()), key)),
+            keyring={"sk_1": public_key_b64(key.public_key())},
+        )
+    )
+
+
+def join(session, proj, workspace="ws_core"):
+    proj.workspace_id = workspace
+    session.commit()
+    return workspace
+
+
+def test_a_reader_may_not_propose_once_the_project_has_joined(project, plan):
+    """The same call that succeeds solo is refused under a real capability."""
+    session, proj = project
+    plan_file, _ = plan
+    workspace = join(session, proj)
+    a_signed_entitlement(workflow.READER, workspace=workspace)
+
+    with pytest.raises(PermissionError):
+        review.propose(session, project=proj, plan_file=plan_file)
+
+
+def test_an_editor_may_propose_but_not_advance_the_baseline(project, plan):
+    session, proj = project
+    plan_file, _ = plan
+    workspace = join(session, proj)
+    a_signed_entitlement(EDITOR, workspace=workspace)
+
+    review.propose(session, project=proj, plan_file=plan_file)
+    state = review.status(session, plan_file=plan_file, project=proj)
+    proposal_id = next(iter(state.proposals))
+
+    with pytest.raises(PermissionError, match="review this plan"):
+        review.decide(
+            session, project=proj, plan_file=plan_file, proposal_id=proposal_id, action=APPROVE
+        )
+
+
+def test_a_maintainer_carries_the_proposal_all_the_way(project, plan):
+    session, proj = project
+    plan_file, _ = plan
+    workspace = join(session, proj)
+    a_signed_entitlement(MAINTAINER, workspace=workspace)
+
+    review.propose(session, project=proj, plan_file=plan_file)
+    state = review.status(session, plan_file=plan_file, project=proj)
+    result = review.decide(
+        session,
+        project=proj,
+        plan_file=plan_file,
+        proposal_id=next(iter(state.proposals)),
+        action=APPROVE,
+    )
+    assert result.accepted is not None, result.reason
+
+
+def test_the_actor_recorded_is_the_one_the_entitlement_names(project, plan):
+    """Not the local placeholder, or the role map would key to nobody."""
+    session, proj = project
+    plan_file, _ = plan
+    workspace = join(session, proj)
+    a_signed_entitlement(MAINTAINER, workspace=workspace, user="raj")
+
+    result = review.propose(session, project=proj, plan_file=plan_file)
+    assert result.event.artifact.actor_user_id == "raj"
+
+
+def test_a_joined_project_with_no_entitlement_authorizes_nobody(project, plan):
+    """Joining a team must not become more permissive when the token lapses."""
+    session, proj = project
+    plan_file, _ = plan
+    join(session, proj)
+
+    with pytest.raises(PermissionError):
+        review.propose(session, project=proj, plan_file=plan_file)
+
+
+def test_leaving_the_workspace_returns_the_project_to_advisory(project, plan):
+    session, proj = project
+    plan_file, _ = plan
+    join(session, proj)
+    proj.workspace_id = None
+    session.commit()
+
+    review.propose(session, project=proj, plan_file=plan_file)  # no longer refused
+
+
+def test_assurance_reports_which_regime_judged_it(project, plan):
+    from flanner import assurance
+
+    session, proj = project
+    plan_file, _ = plan
+    assert assurance.assess(session, project=proj, plan_file=plan_file).authorization == "local"
+
+    workspace = join(session, proj)
+    a_signed_entitlement(MAINTAINER, workspace=workspace)
+    verdict = assurance.assess(session, project=proj, plan_file=plan_file)
+    assert verdict.authorization == "entitlement"
+
+
+def test_assurance_says_so_when_it_cannot_check_authorization(project, plan):
+    """Silence would read as "nobody approved", not "I cannot tell"."""
+    from flanner import assurance
+
+    session, proj = project
+    plan_file, _ = plan
+    join(session, proj)
+
+    verdict = assurance.assess(session, project=proj, plan_file=plan_file)
+    assert any("authorization is unavailable" in w for w in verdict.warnings)

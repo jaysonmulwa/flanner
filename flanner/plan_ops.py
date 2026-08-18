@@ -51,14 +51,16 @@ _LOCK_STALE_S = 30.0
 _LOCK_RETRY_S = 0.05
 
 
-def local_workspace_id(project: ProjectModel) -> str:
-    """Workspace id for a project not yet joined to a team.
+def workspace_id_for(project: ProjectModel) -> str:
+    """The workspace this project's artifacts belong to.
 
     Real workspace ids are opaque and issued by the control plane. Until a
     project joins one, artifacts still need a stable workspace to belong to,
-    so a local id is derived from the project. It never leaves the machine.
+    so a local id is derived from the project. It never leaves the machine,
+    and no entitlement can ever grant a role in it, which is exactly why
+    authorization stays advisory while a project is solo.
     """
-    return f"local:{project.id}"
+    return project.workspace_id or f"local:{project.id}"
 
 
 def _parent_artifact_ids(session: Session, plan_file: PlanFileModel) -> tuple[str, ...]:
@@ -247,7 +249,7 @@ def _write_version_unlocked(
     # without changing what was signed.
     artifact = artifacts.make_artifact(
         artifact_type=artifacts.PLAN_VERSION,
-        workspace_id=local_workspace_id(project),
+        workspace_id=workspace_id_for(project),
         content_hash=artifacts.hash_text(content),
         plan_file_id=str(plan_file.id),
         parents=_parent_artifact_ids(session, plan_file),

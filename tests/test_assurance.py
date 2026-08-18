@@ -11,7 +11,7 @@ from flanner.database import (
     get_session,
     save_artifact,
 )
-from flanner.plan_ops import create_plan, local_workspace_id
+from flanner.plan_ops import create_plan, workspace_id_for
 from flanner.workflow import APPROVE, BLOCK, EDITOR, MAINTAINER, Policy
 
 ROLES = {"alice": EDITOR, "maria": MAINTAINER}
@@ -138,7 +138,7 @@ def test_a_workspace_can_require_review(project):
 def test_an_approved_plan_reports_its_accepted_baseline(project):
     session, proj = project
     plan_file, version = make_plan(project)
-    ws = local_workspace_id(proj)
+    ws = workspace_id_for(proj)
     pid = str(plan_file.id)
 
     proposal = workflow.make_proposal(
@@ -177,7 +177,7 @@ def test_a_contested_baseline_always_blocks(project):
     """Not policy-configurable: there is no single answer to implement."""
     session, proj = project
     plan_file, version = make_plan(project)
-    ws = local_workspace_id(proj)
+    ws = workspace_id_for(proj)
     pid = str(plan_file.id)
 
     # Two peers accepted different versions while disconnected.
@@ -224,7 +224,7 @@ def test_an_unparseable_event_payload_does_not_break_the_answer(project):
         session,
         artifact_id="sha256:corrupt",
         artifact_type="review.proposal",
-        workspace_id=local_workspace_id(proj),
+        workspace_id=workspace_id_for(proj),
         content_hash="sha256:x",
         actor_device_id="dev_x",
         created_at="2026-01-01T00:00:00Z",
