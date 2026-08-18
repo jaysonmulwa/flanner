@@ -30,6 +30,9 @@ ALLOWED = {
     # know a vendor. No core module may import an adapter (PRD §10.1).
     "mesh": set(),
     "mesh_fake": {"exceptions", "mesh"},
+    # The portability suite. Written against the protocol only, so it
+    # cannot accidentally encode how one vendor happens to behave.
+    "mesh_conformance": {"exceptions", "mesh"},
     "artifacts": {"identity"},
     "entitlements": {"identity", "artifacts"},
     "device_auth": {"identity", "artifacts"},

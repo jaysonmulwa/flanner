@@ -4,12 +4,22 @@ This is what makes provider portability checkable instead of aspirational.
 It is written only against the protocols in ``flanner.mesh``, so nothing in
 it can accidentally depend on how one vendor happens to work.
 
+Shipped inside the package rather than kept with flanner's own tests, so
+that anyone writing an adapter - for a provider we have never heard of, or
+for their own network - can certify it against the same suite we hold
+ourselves to. A portability claim nobody outside can run is a slogan.
+
+Importing this needs pytest, which is a test dependency. That is deliberate:
+nothing in flanner imports this module, only test suites do.
+
 To certify an adapter, subclass :class:`MeshControlConformance` and supply
 the two factories:
 
+    from flanner.mesh_conformance import MeshControlConformance
+
     class TestNetBirdConformance(MeshControlConformance):
         def make_provider(self, **kw):
-            return NetBirdControlProvider(session=stub_api(**kw))
+            return NetBirdControlProvider(api=stub_api(**kw))
 
         def make_runtime(self, control, device_id):
             return NetBirdRuntimeProvider(control, device_id)
@@ -182,7 +192,17 @@ class MeshControlConformance:
         assert control.get_health(network.network_id).reachable is True
 
     def test_rate_limiting_surfaces_as_mesh_unavailable(self):
+        """Throttling reads as an outage, whatever the provider's call budget.
+
+        Deliberately makes no assumption about how many API calls one
+        operation costs. An earlier version asserted the first
+        create_network succeeded and the second failed, which quietly
+        required every provider to admit a device in exactly one request:
+        the second adapter written against this suite needed two, and
+        failed a portability test for being unlike the first rather than
+        for being wrong.
+        """
         throttled = self.make_provider(rate_limit_after=1)
-        throttled.create_network(ORG)  # first call allowed
         with pytest.raises(MeshUnavailableError):
-            throttled.create_network(ORG)
+            for _ in range(20):
+                throttled.create_network(ORG)

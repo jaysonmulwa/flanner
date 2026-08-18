@@ -6,8 +6,8 @@ import pytest
 
 from flanner.exceptions import MeshError
 from flanner.mesh import DIRECT, OFFLINE, DesiredNetworkState, DeviceClaim, MeshPolicy
+from flanner.mesh_conformance import MeshControlConformance
 from flanner.mesh_fake import FakeControlProvider, FakeRuntimeProvider
-from tests.mesh_conformance import MeshControlConformance
 
 
 class TestFakeProviderConformance(MeshControlConformance):
