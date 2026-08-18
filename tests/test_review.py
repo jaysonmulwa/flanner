@@ -474,3 +474,45 @@ def test_assurance_says_so_when_it_cannot_check_authorization(project, plan):
 
     verdict = assurance.assess(session, project=proj, plan_file=plan_file)
     assert any("authorization is unavailable" in w for w in verdict.warnings)
+
+
+def test_joining_warns_about_plans_written_before(project, plan):
+    """Found by dogfooding: those artifacts silently never sync.
+
+    The workspace id is inside the signed envelope, so joining cannot move
+    an existing artifact into the team's workspace. The team has to be told,
+    or they wait for plans that will never arrive.
+    """
+
+    session, proj = project
+    result = _join(proj)
+
+    assert result.exit_code == 0, result.output
+    assert "stay local and will not sync" in result.output
+
+
+def test_joining_a_project_with_no_history_says_nothing_about_it(project):
+    session, proj = project
+    result = _join(proj)
+
+    assert result.exit_code == 0
+    assert "will not sync" not in result.output
+
+
+def _join(proj, workspace="ws_core"):
+    """Run `flanner join` against the database the fixtures built.
+
+    The CLI finds its catalog at FLANNER_HOME/data.db, which is not where
+    the `db` fixture puts it, so point it there for the invocation.
+    """
+    from pathlib import Path
+
+    from click.testing import CliRunner
+
+    from flanner.cli import cli
+    from flanner.database import get_db_path
+
+    home = str(Path(get_db_path()).parent)
+    return CliRunner(env={"FLANNER_HOME": home}).invoke(
+        cli, ["join", workspace, "--project", proj.name]
+    )

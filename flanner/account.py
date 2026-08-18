@@ -64,6 +64,10 @@ def refresh(session: Session | None = None) -> Session:
     request = device_auth.sign_request({}, device_id=current.device_id)
     body = _post(current.endpoint, "/v1/entitlements", request.to_dict())
     renewed = _session_from(current.endpoint, body)
+    # A renewal answers about this device, not the others. Dropping the
+    # cached peer keys here would silently break artifact verification
+    # until the next explicit fetch.
+    renewed.device_keys = current.device_keys
     cache.save(renewed)
     return renewed
 
@@ -184,6 +188,22 @@ def request_enrollment_code() -> tuple[str, str]:
     """Mint a code to type on another machine. Returns the code and expiry."""
     body = _signed("/v1/devices/codes", {})
     return str(body["enrollment_code"]), str(body["expires_at"])
+
+
+def fetch_device_keys() -> dict[str, str]:
+    """Refresh the cached public keys of this organization's devices.
+
+    Kept beside the entitlement rather than fetched per sync: verifying a
+    peer's artifacts has to work while the control plane is unreachable,
+    which is the whole point of holding signed artifacts in the first place.
+    """
+    current = cache.load()
+    if current is None:
+        raise SessionError("this device is not logged in")
+    body = _signed("/v1/devices/keyring", {})
+    current.device_keys = dict(body.get("devices") or {})
+    cache.save(current)
+    return current.device_keys
 
 
 def list_devices() -> list[dict[str, Any]]:

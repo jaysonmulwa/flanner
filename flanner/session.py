@@ -37,13 +37,28 @@ class Session:
     organization_id: str
     user_id: str
     entitlement: str
+    # Signing keys of the control plane, for checking the entitlement.
     keyring: dict[str, str] = field(default_factory=dict)
+    # Public keys of this organization's devices, for checking artifacts a
+    # peer relays. Cached because verification must work offline, and
+    # because the author of an artifact may be a machine this device has
+    # never connected to (PRD §14.4).
+    device_keys: dict[str, str] = field(default_factory=dict)
 
     def store(self) -> EntitlementStore:
         return EntitlementStore(token=self.entitlement, keyring=self.keyring)
 
     def status(self, *, now: datetime | None = None) -> Verdict:
         return self.store().current(now=now)
+
+    def resolve_device_key(self, device_id: str) -> str | None:
+        """The public key of a device, for verifying what it signed.
+
+        The shape ``sync.ingest_artifact`` expects. Returning None for an
+        unknown device is what makes an artifact from a revoked or
+        unrecognised machine fail verification rather than be trusted.
+        """
+        return self.device_keys.get(device_id)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +68,7 @@ class Session:
             "user_id": self.user_id,
             "entitlement": self.entitlement,
             "keyring": self.keyring,
+            "device_keys": self.device_keys,
         }
 
 
@@ -74,6 +90,7 @@ def load() -> Session | None:
             user_id=str(data["user_id"]),
             entitlement=str(data["entitlement"]),
             keyring=dict(data.get("keyring") or {}),
+            device_keys=dict(data.get("device_keys") or {}),
         )
     except (OSError, ValueError, KeyError, TypeError):
         # A corrupt cache is indistinguishable from never having logged in,

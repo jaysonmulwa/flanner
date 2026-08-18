@@ -2262,9 +2262,26 @@ def join(workspace_id: str | None, project: str | None, clear_binding: bool) -> 
         console.print("Review still runs here, but it authorizes nothing.", style="dim")
         return
 
+    from .database import ArtifactModel
+
+    # Anything written before the join carries a locally derived workspace
+    # id, and that id is inside the signed envelope, so joining cannot move
+    # it. Saying nothing would leave a team wondering why their existing
+    # plans never appear on anyone else's machine.
+    stranded = session.query(ArtifactModel).filter_by(workspace_id=f"local:{proj.id}").count()
+
     proj.workspace_id = workspace_id
     session.commit()
     console.print(f"OK '{proj.name}' joined workspace {workspace_id}", style="green")
+    if stranded:
+        console.print(
+            f"WARN {stranded} artifact(s) written before joining stay local and will not sync.",
+            style="yellow",
+        )
+        console.print(
+            "      A new version of a plan will belong to the team; its history will not.",
+            style="dim",
+        )
 
     from . import authz
 
@@ -2408,3 +2425,75 @@ def _console_call(action: Any, *args: Any, **kwargs: Any) -> Any:
     except account.SessionError as e:
         console.print(f"ERROR {e}", style="red")
         raise SystemExit(1) from None
+
+
+@cli.group()
+def peer() -> None:
+    """Sync plans directly with another device"""
+
+
+@peer.command("serve")
+@click.option("--host", default="0.0.0.0", help="Address to listen on")  # noqa: S104
+@click.option("--port", default=None, type=int, help="Port to listen on")
+def peer_serve(host: str, port: int | None) -> None:
+    """Serve this device's catalog to authorised peers
+
+    Binds every interface by default, because a peer reaches this over the
+    mesh rather than over loopback. Nothing is served to a caller who cannot
+    produce a signed request and a matching entitlement, so exposure alone
+    grants nothing.
+    """
+    import uvicorn
+
+    from . import peer as peer_transport
+    from . import session as cache
+
+    if cache.load() is None:
+        console.print("ERROR Not signed in, so no peer can be authorised.", style="red")
+        console.print("Run 'flanner login' first.", style="dim")
+        raise SystemExit(1)
+
+    listen_on = port or peer_transport.DEFAULT_PORT
+    console.print(f"Serving plans to authorised peers on {host}:{listen_on}", style="green")
+    console.print(
+        "Callers need a signed request and an entitlement for the workspace.", style="dim"
+    )
+    uvicorn.run(
+        # get_session is already a factory returning a context-managed
+        # Session, which is exactly the shape the app wants.
+        peer_transport.create_peer_app(get_session, cache.load),
+        host=host,
+        port=listen_on,
+        log_level="warning",
+    )
+
+
+@peer.command("pull")
+@click.argument("address")
+@click.option("--project", default=None, help="Project name (uses current directory if omitted)")
+def peer_pull(address: str, project: str | None) -> None:
+    """Pull whatever a peer holds for this project's workspace that we lack"""
+    from . import peer as peer_transport
+    from . import session as cache
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        console.print(
+            "ERROR Project not found. Run from inside a project or pass --project.", style="red"
+        )
+        raise SystemExit(1)
+    if not proj.workspace_id:
+        console.print("ERROR This project has not joined a workspace.", style="red")
+        console.print("Run 'flanner join <workspace-id>' first.", style="dim")
+        raise SystemExit(1)
+
+    report = peer_transport.pull(session, address, proj.workspace_id, cache.load)
+
+    console.print(f"accepted: {len(report.accepted)}", style="green")
+    if report.already_held:
+        console.print(f"already held: {len(report.already_held)}", style="dim")
+    for artifact_id, reason in report.rejected:
+        console.print(f"REJECTED {artifact_id}: {reason}", style="red")
+    if not report.ok:
+        raise SystemExit(1)

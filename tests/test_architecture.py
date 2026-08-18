@@ -40,6 +40,9 @@ ALLOWED = {
     # The only module below the composition roots that may reach the network.
     "account": {"identity", "device_auth", "entitlements", "session"},
     "authz": {"workflow", "session", "entitlements", "database", "plan_ops"},
+    # Peer transport. Talks to other devices, never to the control plane,
+    # so it may not import account any more than a read command may.
+    "peer": {"entitlements", "identity", "sync", "device_auth"},
     "workflow": {"artifacts"},
     "assurance": FOUNDATION
     | {"artifacts", "identity", "workflow", "database", "freshness", "authz"},
@@ -71,6 +74,7 @@ ALLOWED = {
         "review",
         "session",
         "account",
+        "peer",
         "authz",
         "entitlements",
         "identity",
@@ -144,7 +148,7 @@ def test_no_read_path_can_reach_the_network():
                     pending.append(dependency)
         return seen
 
-    for module in ("authz", "assurance", "review", "session", "workflow"):
+    for module in ("authz", "assurance", "review", "session", "workflow", "peer"):
         assert "account" not in closure(module), (
             f"{module} can reach the network through account; "
             "a read command would make an HTTP call"

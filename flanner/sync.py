@@ -11,9 +11,10 @@ recorded with its reason but never with its content (§14.4). Nothing here
 raises on bad input: a peer must not be able to halt a sync by sending
 garbage.
 
-Transport is deliberately absent. A peer is anything answering
-:class:`Peer`, so the protocol is exercised in-process by the tests today
-and over the mesh later without the verification rules changing.
+Transport lives elsewhere. A peer is anything answering :class:`Peer`, so
+the same rules govern a sync between two sessions in one process and a sync
+across a network: :mod:`flanner.peer` supplies the latter without changing
+anything here.
 """
 
 from __future__ import annotations
@@ -35,6 +36,11 @@ PROTOCOL_VERSION = 1
 # so an oversized or decompression-bomb response is refused rather than
 # absorbed (PRD §14.4).
 MAX_PAYLOAD_BYTES = 8 * 1024 * 1024
+
+# How many artifacts one fetch may ask for. A first sync can want thousands,
+# and a single request for all of them is both a large allocation on the
+# serving side and an all-or-nothing failure on ours.
+MAX_FETCH_BATCH = 100
 
 
 @dataclass(frozen=True)
