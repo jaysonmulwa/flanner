@@ -31,6 +31,7 @@ ALLOWED = {
     "mesh": set(),
     "mesh_fake": {"exceptions", "mesh"},
     "artifacts": {"identity"},
+    "entitlements": {"identity", "artifacts"},
     "workflow": {"artifacts"},
     "assurance": FOUNDATION | {"artifacts", "identity", "workflow", "database", "freshness"},
     "review": FOUNDATION | {"workflow", "assurance", "database", "plan_ops"},
