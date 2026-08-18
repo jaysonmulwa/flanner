@@ -26,6 +26,10 @@ ALLOWED = {
     "freshness": {"utils"},
     "ipc": set(),
     "identity": set(),
+    # The provider seam: mesh is pure protocol, and only an adapter may
+    # know a vendor. No core module may import an adapter (PRD §10.1).
+    "mesh": set(),
+    "mesh_fake": {"exceptions", "mesh"},
     "artifacts": {"identity"},
     "workflow": {"artifacts"},
     "sync": FOUNDATION | {"artifacts", "database"},
