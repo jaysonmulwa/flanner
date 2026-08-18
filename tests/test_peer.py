@@ -19,7 +19,7 @@ from flanner import session as cache
 from flanner.artifacts import canonical_bytes
 from flanner.database import ArtifactModel, get_artifact, save_artifact
 from flanner.device_auth import sign_request
-from flanner.entitlements import Claims, WorkspaceCapability, encode_token
+from flanner.entitlements import TEAM_SYNC, Claims, WorkspaceCapability, encode_token
 from flanner.identity import public_key_b64, sign
 from flanner.workflow import MAINTAINER, READER
 
@@ -42,9 +42,18 @@ def keyring_of(issuer_key):
     return {"sk_1": public_key_b64(issuer_key.public_key())}
 
 
-def an_entitlement(issuer_key, *, device_id, role=MAINTAINER, workspace=WORKSPACE, user="maria"):
+def an_entitlement(
+    issuer_key,
+    *,
+    device_id,
+    role=MAINTAINER,
+    workspace=WORKSPACE,
+    user="maria",
+    features=(TEAM_SYNC,),
+):
     now = datetime.now(timezone.utc)
     claims = Claims(
+        features=tuple(features),
         organization_id="org_1",
         user_id=user,
         device_id=device_id,
@@ -73,7 +82,9 @@ def a_session(issuer_key, *, device_id, role=MAINTAINER, device_keys=None):
 # --- who may ask -----------------------------------------------------------
 
 
-def a_peer_request(issuer_key, *, role=MAINTAINER, key=None, entitlement_for=None):
+def a_peer_request(
+    issuer_key, *, role=MAINTAINER, key=None, entitlement_for=None, features=(TEAM_SYNC,)
+):
     signing = key or Ed25519PrivateKey.generate()
     device_id = identity.device_id_for(signing.public_key())
     return sign_request(
@@ -81,7 +92,10 @@ def a_peer_request(issuer_key, *, role=MAINTAINER, key=None, entitlement_for=Non
             "workspace_id": WORKSPACE,
             "public_key": public_key_b64(signing.public_key()),
             "entitlement": an_entitlement(
-                issuer_key, device_id=entitlement_for or device_id, role=role
+                issuer_key,
+                device_id=entitlement_for or device_id,
+                role=role,
+                features=features,
             ),
         },
         device_id=device_id,
@@ -477,3 +491,16 @@ def test_a_session_from_a_different_device_is_caught_locally(alice, bob, serve):
 
     assert not report.ok
     assert any("different device" in reason for _, reason in report.rejected)
+
+
+def test_an_entitlement_without_team_sync_cannot_peer(issuer_key):
+    """What makes billing bite rather than decorate.
+
+    A lapsed subscription issues the local plan, which carries a workspace
+    role but no team-sync feature. Checking only the role would leave a
+    cancelled team syncing exactly as before, and nobody would notice
+    because everything else about the entitlement is still valid.
+    """
+    request = a_peer_request(issuer_key, features=())
+    with pytest.raises(peer.PeerError, match="does not include team sync"):
+        peer.authorize(request, WORKSPACE, keyring_of(issuer_key))

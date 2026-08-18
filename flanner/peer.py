@@ -19,6 +19,10 @@ control plane at the time of the request:
    the workspace role. The ids in the two proofs must match, so an
    entitlement is useless to anyone who did not receive it.
 
+The entitlement must also carry the team-sync feature. A role alone says
+which workspace, not whether syncing was paid for, and checking only the
+role would leave a lapsed subscription syncing exactly as before.
+
 Together those mean a peer can authorise a stranger while completely
 offline, which is the property that makes a mesh worth having.
 
@@ -100,6 +104,12 @@ def authorize(
         raise PeerError(f"entitlement is {verdict.status}")
     if verdict.claims.device_id != request.device_id:
         raise PeerError("that entitlement was issued to a different device")
+
+    # A role says which workspace; the feature says whether syncing is
+    # bought at all. Checking only the role would leave team sync working
+    # after a subscription lapsed, which would make billing decorative.
+    if not verdict.claims.has_feature(entitlements.TEAM_SYNC):
+        raise PeerError("this entitlement does not include team sync")
 
     role = verdict.claims.role_in(workspace_id)
     if role is None:

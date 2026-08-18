@@ -35,6 +35,11 @@ from .artifacts import canonical_bytes
 ISSUER = "flanner.io"
 TOKEN_SEPARATOR = "."  # noqa: S105 - delimiter between claims and signature
 
+# Features an entitlement may carry. Named here rather than at each caller
+# so that a plan change and the check that enforces it cannot drift apart.
+TEAM_SYNC = "team_sync"
+LIVE_COLLABORATION = "live_collaboration"
+
 # How long an expired entitlement keeps working offline before team features
 # stop. Local plan work never depends on this (§18.4).
 DEFAULT_GRACE = timedelta(days=7)
