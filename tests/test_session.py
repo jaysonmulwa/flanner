@@ -320,3 +320,73 @@ def test_whoami_refresh_falls_back_to_the_cache_when_offline(home, monkeypatch):
     assert result.exit_code == 0
     assert "could not renew" in result.output
     assert "maria" in result.output, "the cached entitlement is still reported"
+
+
+# --- the console ------------------------------------------------------------
+
+
+def test_every_console_call_needs_a_session(home):
+    """Each of these signs with the device key, so there is nothing to sign with."""
+    from flanner import account
+
+    calls = [
+        (account.request_enrollment_code, ()),
+        (account.list_devices, ()),
+        (account.revoke_device, ("dev_x",)),
+        (account.invite_member, ("someone@example.test",)),
+        (account.list_members, ()),
+        (account.remove_member, ("mem_x",)),
+    ]
+    for call, args in calls:
+        with pytest.raises(account.SessionError, match="not logged in"):
+            call(*args)
+
+
+def test_accepting_an_invitation_needs_both_a_token_and_a_user_id(home):
+    from flanner import account
+
+    with pytest.raises(account.SessionError, match="invitation token"):
+        account.accept_invitation("  ", user_id="raj", endpoint="https://api.example.test")
+    with pytest.raises(account.SessionError, match="user id"):
+        account.accept_invitation("tok", user_id="  ", endpoint="https://api.example.test")
+
+
+def test_console_calls_sign_the_arguments_not_just_the_caller(home, monkeypatch):
+    """A captured revoke must not be replayable against a different device."""
+    from flanner import account
+    from flanner.device_auth import SignedRequest, verify_request
+
+    cache.save(a_session(device_id=identity.device_id()))
+    sent = {}
+    monkeypatch.setattr(
+        account, "_post", lambda endpoint, path, payload: sent.update(payload) or {}
+    )
+    account.revoke_device("dev_lost")
+
+    request = SignedRequest.from_dict(sent)
+    assert request.body == {"device_id": "dev_lost"}
+    assert verify_request(request, identity.device_public_key_b64())
+
+    from dataclasses import replace
+
+    tampered = replace(request, body={"device_id": "dev_someone_else"})
+    assert not verify_request(tampered, identity.device_public_key_b64())
+
+
+def test_the_console_commands_report_a_refusal_rather_than_a_traceback(home):
+    from click.testing import CliRunner
+
+    from flanner.cli import cli
+
+    runner = CliRunner(env={"FLANNER_HOME": str(home)})
+    for args in (
+        ["devices", "list"],
+        ["devices", "add"],
+        ["devices", "revoke", "dev_x"],
+        ["invite", "someone@example.test"],
+        ["members"],
+    ):
+        result = runner.invoke(cli, args)
+        assert result.exit_code == 1, args
+        assert "ERROR" in result.output and "not logged in" in result.output, args
+        assert result.exception is None or isinstance(result.exception, SystemExit), args

@@ -136,3 +136,78 @@ def _detail(error: urllib.error.HTTPError) -> str:
     except (ValueError, OSError):
         detail = None
     return str(detail) if detail else f"the control plane refused this request ({error.code})"
+
+
+# --- the console: what a member can do for themselves ----------------------
+# Each of these signs the request with this device's key, so the machine the
+# member already trusts is what authorises the next one. No operator, no
+# password, no API token to leak.
+
+
+def accept_invitation(
+    token: str, *, user_id: str, endpoint: str = DEFAULT_ENDPOINT, label: str | None = None
+) -> Session:
+    """Join an organization and enrol this machine in one step.
+
+    The invitation is spent here. There is no separate "now enrol" step,
+    because that would need a second secret to carry the new member between
+    the two, and emailing one credential is already one more than ideal.
+    """
+    if not token.strip():
+        raise SessionError("an invitation token is required")
+    if not user_id.strip():
+        raise SessionError("choose a user id for yourself")
+    body = _post(
+        endpoint,
+        "/v1/invitations/accept",
+        {
+            "token": token.strip(),
+            "user_id": user_id.strip(),
+            "public_key": identity.device_public_key_b64(),
+            "label": label or _default_label(),
+            "platform": os.name,
+        },
+    )
+    session = _session_from(endpoint, body)
+    cache.save(session)
+    return session
+
+
+def request_enrollment_code() -> tuple[str, str]:
+    """Mint a code to type on another machine. Returns the code and expiry."""
+    body = _signed("/v1/devices/codes", {})
+    return str(body["enrollment_code"]), str(body["expires_at"])
+
+
+def list_devices() -> list[dict[str, Any]]:
+    """Every machine enrolled under this member."""
+    return list(_signed("/v1/devices/list", {}).get("devices") or [])
+
+
+def revoke_device(device_id: str) -> None:
+    """Retire a machine. Yours always; anyone's if you are an admin."""
+    _signed("/v1/devices/revoke", {"device_id": device_id})
+
+
+def invite_member(email: str, *, admin: bool = False) -> str:
+    """Invite someone to the organization. Returns the invitation token."""
+    body = _signed("/v1/members/invite", {"email": email, "role": "admin" if admin else "member"})
+    return str(body["token"])
+
+
+def list_members() -> dict[str, Any]:
+    """Who is in the organization, and the seat count that implies."""
+    return _signed("/v1/members/list", {})
+
+
+def remove_member(membership_id: str) -> None:
+    _signed("/v1/members/remove", {"membership_id": membership_id})
+
+
+def _signed(path: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Call an endpoint that authenticates by device signature."""
+    current = cache.load()
+    if current is None:
+        raise SessionError("this device is not logged in")
+    request = device_auth.sign_request(body, device_id=current.device_id)
+    return _post(current.endpoint, path, request.to_dict())

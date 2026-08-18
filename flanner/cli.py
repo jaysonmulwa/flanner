@@ -2273,3 +2273,138 @@ def join(workspace_id: str | None, project: str | None, clear_binding: bool) -> 
         console.print(f"You hold: {authorization.roles[authorization.actor]}", style="green")
     else:
         console.print(f"No access yet: {authorization.reason}", style="yellow")
+
+
+@cli.command()
+@click.argument("token")
+@click.option("--as", "user_id", required=True, help="The user id to join as")
+@click.option("--endpoint", default=None, help="Control plane URL (defaults to Flanner Cloud)")
+@click.option("--label", default=None, help="Name for this device (defaults to the hostname)")
+def accept(token: str, user_id: str, endpoint: str | None, label: str | None) -> None:
+    """Accept an invitation, joining a team and enrolling this device"""
+    from . import account
+    from . import session as session_cache
+
+    try:
+        current = account.accept_invitation(
+            token,
+            user_id=user_id,
+            endpoint=endpoint or session_cache.DEFAULT_ENDPOINT,
+            label=label,
+        )
+    except account.SessionError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print(f"OK Joined as {current.user_id} ({current.device_id})", style="green")
+    _print_entitlement(current)
+    console.print(
+        "\nRun 'flanner join <workspace-id>' in a project to make its review binding.",
+        style="dim",
+    )
+
+
+@cli.group()
+def devices() -> None:
+    """Manage the machines enrolled under your account"""
+
+
+@devices.command("list")
+def devices_list() -> None:
+    """Show every machine enrolled under your account"""
+    from . import account
+
+    enrolled = _console_call(account.list_devices)
+    if not enrolled:
+        console.print("No devices enrolled.", style="dim")
+        return
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Device")
+    table.add_column("Name")
+    table.add_column("Enrolled")
+    table.add_column("Last seen")
+    for device in enrolled:
+        here = " (this one)" if device.get("this_device") else ""
+        table.add_row(
+            device["device_id"] + here,
+            device.get("label") or "-",
+            (device.get("enrolled_at") or "")[:10],
+            (device.get("last_seen_at") or "never")[:10],
+        )
+    console.print(table)
+
+
+@devices.command("add")
+def devices_add() -> None:
+    """Mint a code to enroll another machine under your account"""
+    from . import account
+
+    code, expires_at = _console_call(account.request_enrollment_code)
+    console.print("Run this on the other machine:", style="dim")
+    console.print(f"\n  flanner login {code}\n", style="cyan")
+    console.print(f"The code expires at {expires_at} and works once.", style="dim")
+
+
+@devices.command("revoke")
+@click.argument("device_id")
+def devices_revoke(device_id: str) -> None:
+    """Retire a machine, so it stops receiving entitlements"""
+    from . import account
+    from . import identity as this
+
+    _console_call(account.revoke_device, device_id)
+    console.print(f"OK {device_id} revoked", style="green")
+    if device_id == this.device_id():
+        console.print("That was this machine. Run 'flanner logout' here too.", style="yellow")
+    console.print("Entitlements it already holds stay valid until they expire.", style="dim")
+
+
+@cli.command()
+@click.argument("email")
+@click.option("--admin", is_flag=True, help="Invite as an organization admin")
+def invite(email: str, admin: bool) -> None:
+    """Invite someone to your organization (admins only)"""
+    from . import account
+
+    token = _console_call(account.invite_member, email, admin=admin)
+    console.print(f"OK Invited {email}", style="green")
+    console.print("\nSend them this:", style="dim")
+    console.print(f"\n  flanner accept {token} --as <their-user-id>\n", style="cyan")
+    console.print("An invitation costs no seat until it is accepted.", style="dim")
+
+
+@cli.command()
+def members() -> None:
+    """List your organization's members and seat count (admins only)"""
+    from . import account
+
+    result = _console_call(account.list_members)
+    console.print(f"Seats in use: {result.get('seats', 0)}\n")
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Member")
+    table.add_column("Email")
+    table.add_column("Role")
+    table.add_column("State")
+    for member in result.get("members") or []:
+        style = "dim" if member["state"] != "active" else None
+        table.add_row(
+            member.get("user_id") or "(not joined)",
+            member.get("email") or "-",
+            member["role"],
+            member["state"],
+            style=style,
+        )
+    console.print(table)
+
+
+def _console_call(action: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run a control-plane call, reporting a refusal rather than a traceback."""
+    from . import account
+
+    try:
+        return action(*args, **kwargs)
+    except account.SessionError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
