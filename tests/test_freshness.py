@@ -94,3 +94,25 @@ def test_anchor_predates_history(git_repo):
     evidence = compute_freshness(str(git_repo), "Uses `src/auth.py`.", old)
     assert evidence["anchored_at_commit"] is None
     assert evidence["status"] in ("aging", "suspect")
+
+
+def test_anchor_is_resolved_in_utc_not_local_time(git_repo):
+    """A naive timestamp must not be handed to git as local time.
+
+    Version timestamps are stored naive-UTC to match the SQLite columns.
+    Passing one through unqualified shifts the cutoff by the machine's
+    offset, which silently mis-anchors churn for everyone not on UTC, and
+    west of UTC makes a stale plan look fresh. Regression only reproduces
+    on a machine whose local time is not UTC.
+    """
+    _setup_code(git_repo)
+    naive_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    assert resolve_anchor(str(git_repo), naive_utc) is not None
+
+
+def test_aware_and_naive_timestamps_anchor_identically(git_repo):
+    _setup_code(git_repo)
+    aware = datetime.now(timezone.utc)
+    assert resolve_anchor(str(git_repo), aware) == resolve_anchor(
+        str(git_repo), aware.replace(tzinfo=None)
+    )

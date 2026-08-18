@@ -32,13 +32,15 @@ ALLOWED = {
     "mesh_fake": {"exceptions", "mesh"},
     "artifacts": {"identity"},
     "workflow": {"artifacts"},
+    "assurance": FOUNDATION | {"artifacts", "identity", "workflow", "database", "freshness"},
     "sync": FOUNDATION | {"artifacts", "database"},
     "reconcile": FOUNDATION | {"database", "artifacts", "identity"},
     "services": FOUNDATION
     | {"database", "storage", "plan_ops", "linear_api", "agent_hooks", "ipc"},
     "claude_integration": set(),
     "linear_api": {"exceptions", "linear_utils"},
-    "server": FOUNDATION | {"database", "storage", "freshness", "services", "artifacts"},
+    "server": FOUNDATION
+    | {"database", "storage", "freshness", "services", "artifacts", "assurance"},
     "web": FOUNDATION | {"database", "storage", "plan_ops", "ipc", "services"},
     "agent_hooks": FOUNDATION | {"database"},
     "plan_ops": FOUNDATION | {"database", "storage", "artifacts"},

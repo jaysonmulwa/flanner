@@ -9,7 +9,7 @@ from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 
-from . import artifacts
+from . import artifacts, assurance
 from .database import (
     artifact_parents,
     get_plan_file,
@@ -515,6 +515,45 @@ def get_plan_freshness_tool(plan_file_id: str) -> dict[str, Any]:
         },
         **evidence,
     }
+
+
+@mcp.tool()
+def get_plan_assurance_tool(plan_file_id: str) -> dict[str, Any]:
+    """
+    Check whether a plan is safe to implement, and say exactly what it is.
+
+    Answers the four questions an agent should settle before writing code:
+    which exact artifact it would build from, which code revision that plan
+    was written against, whether the plan still matches the code, and
+    whether anyone approved it. Cite artifact_id in the work you produce.
+
+    Read safe_to_implement first. When it is false, blockers says why, and
+    the plan must not be implemented without resolving them; warnings are
+    concerns to surface to the user rather than reasons to stop.
+
+    Args:
+        plan_file_id: UUID of the plan file (as string)
+
+    Returns:
+        The exact artifact, its commit anchor, freshness evidence, review
+        state, and a verdict with the reasons behind it
+    """
+    session = get_session()
+
+    try:
+        plan_file_uuid = UUID(plan_file_id)
+    except ValueError:
+        return {"error": True, "message": f"Invalid UUID: {plan_file_id}"}
+
+    plan_file = get_plan_file(session, plan_file_uuid)
+    if not plan_file:
+        return {"error": True, "message": f"Plan file with ID {plan_file_id} not found"}
+
+    project = get_project(session, plan_file.project_id)
+    if not project:
+        return {"error": True, "message": f"Project for plan {plan_file_id} not found"}
+
+    return assurance.assess(session, project=project, plan_file=plan_file).to_dict()
 
 
 # JIRA Integration Tools

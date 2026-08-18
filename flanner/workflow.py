@@ -42,6 +42,10 @@ REQUEST_CHANGES = "request_changes"
 WITHDRAW = "withdraw"
 DECISION_ACTIONS = frozenset({APPROVE, REJECT, REQUEST_CHANGES, WITHDRAW})
 
+# What a policy does about a concern: surface it, or refuse to proceed.
+WARN = "warn"
+BLOCK = "block"
+
 # Projected proposal states (the arrows in PRD §12.5.3).
 OPEN = "open"
 CHANGES_REQUESTED = "changes_requested"
@@ -65,6 +69,11 @@ class Policy:
     policy_id: str = "default-v1"
     approvals_required: int = 1
     allow_self_approval: bool = True
+    # Assurance rules (PRD §20). Warn-only is the first-beta default: a
+    # stale plan is surfaced to the agent but does not stop it. A workspace
+    # that wants enforcement flips these without a protocol change.
+    stale_plans: str = WARN
+    unreviewed_plans: str = WARN
 
 
 DEFAULT_POLICY = Policy()
