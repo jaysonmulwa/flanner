@@ -1,5 +1,6 @@
 """Getting an entitlement onto a device, and living without one."""
 
+import io
 import json
 import os
 import stat
@@ -390,3 +391,40 @@ def test_the_console_commands_report_a_refusal_rather_than_a_traceback(home):
         assert result.exit_code == 1, args
         assert "ERROR" in result.output and "not logged in" in result.output, args
         assert result.exception is None or isinstance(result.exception, SystemExit), args
+
+
+def test_a_rate_limited_refusal_says_when_to_come_back(home):
+    """The server works out the wait; throwing it away makes the message worse."""
+    import urllib.error
+    from email.message import Message
+
+    from flanner import account
+
+    headers = Message()
+    headers["Retry-After"] = "12"
+    error = urllib.error.HTTPError(
+        "https://api.example.test/v1/entitlements",
+        429,
+        "Too Many Requests",
+        headers,
+        io.BytesIO(b'{"detail": "too many requests; slow down"}'),
+    )
+    detail = account._detail(error)
+    assert "slow down" in detail
+    assert "12s" in detail
+
+
+def test_a_refusal_without_a_retry_hint_reads_cleanly(home):
+    import urllib.error
+    from email.message import Message
+
+    from flanner import account
+
+    error = urllib.error.HTTPError(
+        "https://api.example.test/v1/entitlements",
+        403,
+        "Forbidden",
+        Message(),
+        io.BytesIO(b'{"detail": "this device may not act on this organization"}'),
+    )
+    assert account._detail(error) == "this device may not act on this organization"

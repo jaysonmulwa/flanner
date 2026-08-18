@@ -135,7 +135,14 @@ def _detail(error: urllib.error.HTTPError) -> str:
         detail = json.loads(error.read().decode("utf-8")).get("detail")
     except (ValueError, OSError):
         detail = None
-    return str(detail) if detail else f"the control plane refused this request ({error.code})"
+    message = str(detail) if detail else f"the control plane refused this request ({error.code})"
+
+    # A refusal that says when to come back is far more useful than one that
+    # does not, and the server already worked the number out.
+    retry_after = error.headers.get("Retry-After") if error.headers else None
+    if retry_after:
+        message += f" (try again in {retry_after}s)"
+    return message
 
 
 # --- the console: what a member can do for themselves ----------------------
