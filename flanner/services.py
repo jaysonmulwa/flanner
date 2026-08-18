@@ -676,6 +676,89 @@ def unlink_linear_issue(plan_file_id: str, linear_issue_id: str | None = None) -
         return {"error": True, "message": f"Failed to unlink: {str(e)}"}
 
 
+def propose_plan_revision(
+    plan_file_id: str,
+    artifact_id: str | None = None,
+    message: str = "",
+    actor: str = "claude",
+) -> dict[str, Any]:
+    """Offer a plan version for review."""
+    from . import review
+
+    ensure_database()
+    session = get_session()
+    try:
+        plan_uuid = UUID(plan_file_id)
+    except ValueError:
+        return {"error": True, "message": f"Invalid UUID: {plan_file_id}"}
+    plan_file = get_plan_file(session, plan_uuid)
+    if not plan_file:
+        return {"error": True, "message": f"Plan file with ID {plan_file_id} not found"}
+    project = get_project(session, plan_file.project_id)
+    if not project:
+        return {"error": True, "message": "Project not found"}
+
+    try:
+        result = review.propose(
+            session,
+            project=project,
+            plan_file=plan_file,
+            artifact_id=artifact_id,
+            message=message,
+            actor=actor,
+        )
+    except ValueError as e:
+        return {"error": True, "message": str(e)}
+    return {
+        "proposal_id": result.event.event_id,
+        "target_artifact_id": result.event.payload["target_artifact_id"],
+        "plan_name": plan_file.name,
+        "message": f"Proposed {plan_file.name} for review",
+    }
+
+
+def record_plan_review_decision(
+    plan_file_id: str,
+    proposal_id: str,
+    decision: str,
+    actor: str = "claude",
+) -> dict[str, Any]:
+    """Approve, reject, request changes on, or withdraw a proposal."""
+    from . import review
+
+    ensure_database()
+    session = get_session()
+    try:
+        plan_uuid = UUID(plan_file_id)
+    except ValueError:
+        return {"error": True, "message": f"Invalid UUID: {plan_file_id}"}
+    plan_file = get_plan_file(session, plan_uuid)
+    if not plan_file:
+        return {"error": True, "message": f"Plan file with ID {plan_file_id} not found"}
+    project = get_project(session, plan_file.project_id)
+    if not project:
+        return {"error": True, "message": "Project not found"}
+
+    try:
+        result = review.decide(
+            session,
+            project=project,
+            plan_file=plan_file,
+            proposal_id=proposal_id,
+            action=decision,
+            actor=actor,
+        )
+    except ValueError as e:
+        return {"error": True, "message": str(e)}
+    return {
+        "decision_id": result.event.event_id,
+        "decision": decision,
+        "advanced_baseline": result.advanced_baseline,
+        "accepted_event_id": result.accepted.event_id if result.accepted else None,
+        "message": result.reason,
+    }
+
+
 # Every write operation, by the name used on the wire and in the registry.
 REGISTRY: dict[str, Callable[..., Any]] = {
     "create_project": create_project,
@@ -690,6 +773,8 @@ REGISTRY: dict[str, Callable[..., Any]] = {
     "configure_linear": configure_linear,
     "link_plan_to_linear": link_plan_to_linear,
     "unlink_linear_issue": unlink_linear_issue,
+    "propose_plan_revision": propose_plan_revision,
+    "record_plan_review_decision": record_plan_review_decision,
 }
 
 

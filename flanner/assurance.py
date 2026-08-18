@@ -147,7 +147,16 @@ def assess(
             blockers=("this plan has no versions",),
         )
 
-    state = workflow.project(load_review_events(session, str(plan_file.id)), roles or {}, policy)
+    # Defaults to the same local placeholder the review surface uses. If
+    # the two disagreed, an approval recorded through one would look
+    # unauthorized to the other, and the verdict would silently contradict
+    # the review status. Note `roles or ...` would be wrong: the
+    # placeholder is an empty mapping that answers for every actor.
+    state = workflow.project(
+        load_review_events(session, str(plan_file.id)),
+        roles if roles is not None else workflow.local_roles(),
+        policy,
+    )
 
     # Prefer the team's accepted baseline; fall back to the newest local
     # version when no review has happened, which is the normal solo case.

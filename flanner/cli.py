@@ -1021,6 +1021,152 @@ def sync(project: str | None, dry_run: bool) -> None:
         console.print("Run without --dry-run to actually import the files", style="cyan")
 
 
+_REVIEW_STYLES = {
+    "open": "cyan",
+    "accepted": "green",
+    "superseded": "blue",
+    "rejected": "red",
+    "changes_requested": "yellow",
+    "withdrawn": "dim",
+    "stale": "dark_orange",
+}
+
+
+@cli.group()
+def review() -> None:
+    """Propose plans for review and record decisions"""
+
+
+def _resolve_plan(
+    session: Session, project: str | None, plan_name: str
+) -> tuple[ProjectModel, Any]:
+    """Find a project and one of its plans, or exit 1 explaining which failed."""
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        console.print(
+            "ERROR Project not found. Run from inside a project or pass --project.", style="red"
+        )
+        raise SystemExit(1)
+    plan_file = next((p for p in proj.plan_files if p.name == plan_name), None)
+    if plan_file is None:
+        console.print(f"ERROR Plan '{plan_name}' not found in '{proj.name}'", style="red")
+        raise SystemExit(1)
+    return proj, plan_file
+
+
+@review.command("propose")
+@click.argument("plan_name")
+@click.option("--project", default=None, help="Project name")
+@click.option("--message", default="", help="Note for reviewers")
+@click.option("--actor", default="user", help="Who is proposing")
+def review_propose(plan_name: str, project: str | None, message: str, actor: str) -> None:
+    """Offer a plan's newest version for review"""
+    from .review import propose
+
+    session = _require_session()
+    proj, plan_file = _resolve_plan(session, project, plan_name)
+    try:
+        result = propose(session, project=proj, plan_file=plan_file, message=message, actor=actor)
+    except ValueError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print(f"\nOK Proposed '{plan_name}' for review", style="green")
+    console.print(f"  proposal: {result.event.event_id}", style="cyan")
+    console.print(f"  version:  {result.event.payload['target_artifact_id']}", style="dim")
+
+
+@review.command("decide")
+@click.argument("plan_name")
+@click.argument(
+    "decision", type=click.Choice(["approve", "reject", "request_changes", "withdraw"])
+)
+@click.option("--proposal", default=None, help="Proposal id (defaults to the only open one)")
+@click.option("--project", default=None, help="Project name")
+@click.option("--actor", default="user", help="Who is deciding")
+def review_decide(
+    plan_name: str, decision: str, proposal: str | None, project: str | None, actor: str
+) -> None:
+    """Approve, reject, request changes on, or withdraw a proposal"""
+    from .review import decide, status
+
+    session = _require_session()
+    proj, plan_file = _resolve_plan(session, project, plan_name)
+
+    if proposal is None:
+        open_ones = [
+            view
+            for view in status(session, plan_file=plan_file).proposals.values()
+            if view.state in ("open", "stale", "changes_requested")
+        ]
+        if len(open_ones) != 1:
+            console.print(
+                f"ERROR {len(open_ones)} proposals are open; name one with --proposal.",
+                style="red",
+            )
+            raise SystemExit(1)
+        proposal = open_ones[0].proposal_id
+
+    try:
+        result = decide(
+            session,
+            project=proj,
+            plan_file=plan_file,
+            proposal_id=proposal,
+            action=decision,
+            actor=actor,
+        )
+    except ValueError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print(f"\nOK Recorded {decision} on '{plan_name}'", style="green")
+    if result.advanced_baseline:
+        console.print("  the accepted baseline now points at this version", style="green")
+    else:
+        console.print(f"  baseline unchanged: {result.reason}", style="yellow")
+
+
+@review.command("status")
+@click.argument("plan_name")
+@click.option("--project", default=None, help="Project name")
+def review_status(plan_name: str, project: str | None) -> None:
+    """Show a plan's proposals and its accepted baseline"""
+    from .review import status
+
+    session = _require_session()
+    _, plan_file = _resolve_plan(session, project, plan_name)
+    state = status(session, plan_file=plan_file)
+
+    if state.conflicted:
+        console.print(
+            "WARN the accepted baseline is contested; merge before implementing", style="red"
+        )
+    elif state.accepted_artifact_id:
+        console.print(f"accepted: {state.accepted_artifact_id}", style="green")
+    else:
+        console.print("accepted: nothing approved yet", style="yellow")
+
+    if not state.proposals:
+        console.print("\nNo proposals recorded.", style="dim")
+        return
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Proposal")
+    table.add_column("State")
+    table.add_column("Proposer")
+    table.add_column("Approvals")
+    for view in state.proposals.values():
+        style = _REVIEW_STYLES.get(view.state, "white")
+        table.add_row(
+            view.proposal_id[:19] + "...",
+            f"[{style}]{view.state}[/{style}]",
+            view.proposer,
+            ", ".join(view.approvals) or "--",
+        )
+    console.print(table)
+
+
 _FINDING_STYLES = {
     "missing_file": "red",
     "hash_mismatch": "yellow",

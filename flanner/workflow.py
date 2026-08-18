@@ -76,6 +76,39 @@ class Policy:
     unreviewed_plans: str = WARN
 
 
+# The actor recorded when nobody says who is acting. Team deployments carry
+# a real user id in the capability; locally there is one person.
+LOCAL_ACTOR = "local"
+
+
+class LocalRoles(dict[str, str]):
+    """Every actor is a maintainer, because there is no authority to ask.
+
+    A plain map would have to guess which names to include, and would then
+    silently reject anyone else as unauthorized: an agent calling itself
+    "claude" and a human calling themselves "user" would each be refused
+    for having the wrong name, which reads as a permissions decision when
+    no permissions exist. Answering the same way for everyone makes the
+    absence of authorization visible instead of arbitrary.
+    """
+
+    def get(self, key: object, default: object = None) -> str:
+        return MAINTAINER
+
+    def __missing__(self, key: object) -> str:
+        return MAINTAINER
+
+
+def local_roles(actor: str = LOCAL_ACTOR) -> dict[str, str]:
+    """Placeholder role map for a workspace with no control plane.
+
+    Local review gates nothing: it is a rehearsal of the workflow, not an
+    authorization check. Replaced wholesale by signed capabilities once a
+    workspace is joined to an organization.
+    """
+    return LocalRoles()
+
+
 DEFAULT_POLICY = Policy()
 
 _MAY_AUTHOR = frozenset({EDITOR, MAINTAINER})

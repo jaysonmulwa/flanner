@@ -9,7 +9,7 @@ from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 
-from . import artifacts, assurance
+from . import artifacts, assurance, review
 from .database import (
     artifact_parents,
     get_plan_file,
@@ -554,6 +554,112 @@ def get_plan_assurance_tool(plan_file_id: str) -> dict[str, Any]:
         return {"error": True, "message": f"Project for plan {plan_file_id} not found"}
 
     return assurance.assess(session, project=project, plan_file=plan_file).to_dict()
+
+
+@mcp.tool()
+def propose_plan_revision_tool(
+    plan_file_id: str, artifact_id: str | None = None, message: str = "", actor: str = "claude"
+) -> dict[str, Any]:
+    """
+    Offer a plan version for review.
+
+    Proposing does not change what other readers get: the accepted baseline
+    only moves once a decision satisfies the workspace policy. Defaults to
+    the plan's newest version.
+
+    Args:
+        plan_file_id: UUID of the plan file (as string)
+        artifact_id: Exact version to propose (defaults to the newest)
+        message: Optional note for reviewers
+        actor: Who is proposing
+
+    Returns:
+        The proposal id to quote when recording a decision
+    """
+    return dispatch(
+        "propose_plan_revision",
+        {
+            "plan_file_id": plan_file_id,
+            "artifact_id": artifact_id,
+            "message": message,
+            "actor": actor,
+        },
+    )
+
+
+@mcp.tool()
+def record_plan_review_decision_tool(
+    plan_file_id: str, proposal_id: str, decision: str, actor: str = "claude"
+) -> dict[str, Any]:
+    """
+    Record a review decision against a proposal.
+
+    Use approve, reject, request_changes, or withdraw. An approval that
+    satisfies the workspace policy also advances the accepted baseline, and
+    the response says whether it did.
+
+    Args:
+        plan_file_id: UUID of the plan file (as string)
+        proposal_id: The proposal being decided
+        decision: approve | reject | request_changes | withdraw
+        actor: Who is deciding
+
+    Returns:
+        The decision id, and whether the baseline moved
+    """
+    return dispatch(
+        "record_plan_review_decision",
+        {
+            "plan_file_id": plan_file_id,
+            "proposal_id": proposal_id,
+            "decision": decision,
+            "actor": actor,
+        },
+    )
+
+
+@mcp.tool()
+def get_plan_workflow_status_tool(plan_file_id: str) -> dict[str, Any]:
+    """
+    Show a plan's open proposals and its accepted baseline.
+
+    Read this before proposing, to see whether a review is already in
+    flight, and before implementing, to see which version was approved.
+
+    Args:
+        plan_file_id: UUID of the plan file (as string)
+
+    Returns:
+        The accepted baseline, whether it is contested, and every proposal
+        with its state and approvals
+    """
+    session = get_session()
+
+    try:
+        plan_file_uuid = UUID(plan_file_id)
+    except ValueError:
+        return {"error": True, "message": f"Invalid UUID: {plan_file_id}"}
+
+    plan_file = get_plan_file(session, plan_file_uuid)
+    if not plan_file:
+        return {"error": True, "message": f"Plan file with ID {plan_file_id} not found"}
+
+    state = review.status(session, plan_file=plan_file)
+    return {
+        "plan_name": plan_file.name,
+        "accepted_artifact_id": state.accepted_artifact_id,
+        "conflicted": state.conflicted,
+        "proposals": [
+            {
+                "proposal_id": view.proposal_id,
+                "target_artifact_id": view.target_artifact_id,
+                "state": view.state,
+                "proposer": view.proposer,
+                "approvals": list(view.approvals),
+            }
+            for view in state.proposals.values()
+        ],
+    }
 
 
 # JIRA Integration Tools
