@@ -2113,3 +2113,93 @@ def linear_refresh(plan_name: str, project: str | None) -> None:
 
 if __name__ == "__main__":
     cli()
+
+
+# --- account -----------------------------------------------------------------
+# Team features need a signed entitlement; local plan work never does. These
+# commands are the only ones in the CLI that talk to the control plane.
+
+_ENTITLEMENT_STYLE = {
+    "valid": "green",
+    "in_grace": "yellow",
+    "expired": "red",
+    "untrusted_key": "red",
+    "bad_signature": "red",
+    "malformed": "dim",
+}
+
+
+@cli.command()
+@click.argument("code")
+@click.option("--endpoint", default=None, help="Control plane URL (defaults to Flanner Cloud)")
+@click.option("--label", default=None, help="Name for this device (defaults to the hostname)")
+def login(code: str, endpoint: str | None, label: str | None) -> None:
+    """Enroll this device with an enrollment code from your team console"""
+    from . import session as account
+
+    try:
+        current = account.login(code, endpoint=endpoint or account.DEFAULT_ENDPOINT, label=label)
+    except account.SessionError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print(f"OK Enrolled as {current.user_id} ({current.device_id})", style="green")
+    _print_entitlement(current)
+
+
+@cli.command()
+def logout() -> None:
+    """Forget this device's session (the device keeps its identity)"""
+    from . import session as account
+
+    if account.clear():
+        console.print("OK Signed out on this device", style="green")
+        console.print(
+            "This device is still enrolled. Revoke it from the team console to end its access.",
+            style="dim",
+        )
+    else:
+        console.print("Not signed in on this device", style="dim")
+
+
+@cli.command()
+@click.option("--refresh", "do_refresh", is_flag=True, help="Renew the entitlement first")
+def whoami(do_refresh: bool) -> None:
+    """Show this device's identity and what it is currently entitled to"""
+    from . import identity as device
+    from . import session as account
+
+    console.print(f"Device  {device.device_id()}")
+
+    current = account.ensure_fresh() if do_refresh else account.load()
+    if current is None:
+        console.print("Account not signed in", style="dim")
+        console.print("Local plan work needs no account. Run 'flanner login' to join a team.")
+        return
+
+    console.print(f"Account {current.user_id} in {current.organization_id}")
+    console.print(f"Server  {current.endpoint}")
+    _print_entitlement(current)
+
+
+def _print_entitlement(current: Any) -> None:
+    """Report what the held entitlement allows, and where it stands."""
+    verdict = current.status()
+    style = _ENTITLEMENT_STYLE.get(verdict.status, "dim")
+    console.print(f"Access  {verdict.status}", style=style)
+    if verdict.reason:
+        console.print(f"        {verdict.reason}", style=style)
+    if verdict.claims is None:
+        return
+
+    console.print(f"Expires {verdict.claims.expires_at}")
+    capabilities = verdict.claims.workspace_capabilities
+    if not capabilities:
+        console.print("No workspace access granted yet", style="dim")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Workspace")
+    table.add_column("Role")
+    for capability in capabilities:
+        table.add_row(capability.workspace_id, capability.role)
+    console.print(table)

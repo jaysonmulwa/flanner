@@ -87,4 +87,6 @@ select = ["E", "F", "W", "I", "B", "UP", "S"]
 include = ["flanner*"]
 
 [tool.setuptools.package-data]
-flanner = ["web/templates/*.html", "web/static/**/*"]
+# py.typed: the package is checked under mypy --strict, so downstream
+# consumers should get its types rather than an untyped stub.
+flanner = ["py.typed", "web/templates/*.html", "web/static/**/*"]
