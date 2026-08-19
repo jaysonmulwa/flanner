@@ -51,7 +51,7 @@ ALLOWED = {
     "peer": {"entitlements", "identity", "sync", "device_auth"},
     # The transport carries what peer decides; it never decides anything
     # itself, so it reaches for peer and the device key and nothing else.
-    "peer_iroh": {"identity", "peer"},
+    "peer_iroh": {"identity", "peer", "session"},
     "workflow": {"artifacts"},
     "assurance": FOUNDATION
     | {"artifacts", "identity", "workflow", "database", "freshness", "authz"},

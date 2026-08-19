@@ -215,3 +215,87 @@ def test_a_plan_crosses_between_two_devices_over_iroh(alice, bob, endpoints):
         fetched = remote.fetch(wanted)
 
     assert sorted(envelope["artifact_id"] for envelope, _ in fetched) == wanted
+
+
+# ----------------------------------------------------------------- relaying
+
+
+def test_an_organizations_relay_is_added_to_the_defaults_not_swapped_for_them():
+    """Replacing four regional relays with one machine is a worse fallback."""
+    defaults = set(peer_iroh.relay_mode().relay_map().urls())
+    assert len(defaults) > 1
+
+    with_ours = set(peer_iroh.relay_mode("https://relay.example.com").relay_map().urls())
+    assert defaults < with_ours
+    assert any("relay.example.com" in url for url in with_ours)
+
+
+def test_no_configured_relay_means_the_transport_defaults():
+    assert peer_iroh.relay_mode().relay_map().urls() == (
+        peer_iroh.relay_mode("").relay_map().urls()
+    )
+
+
+def test_the_relay_url_survives_a_session_round_trip(tmp_path, monkeypatch):
+    """Delivered with the entitlement, so a renewal teaches a device where to relay."""
+    from flanner import session as cache
+
+    monkeypatch.setenv("FLANNER_HOME", str(tmp_path / "home"))
+    cache.save(
+        cache.Session(
+            endpoint="https://api.example.com",
+            device_id="dev_1",
+            organization_id="org_1",
+            user_id="maria",
+            entitlement="tok",
+            relay_url="https://relay.example.com",
+        )
+    )
+    assert cache.load().relay_url == "https://relay.example.com"
+
+
+def test_a_session_from_an_older_control_plane_has_no_relay_and_still_loads(tmp_path, monkeypatch):
+    """A control plane that sends none must not break a client that expects one."""
+    import json
+
+    from flanner import session as cache
+
+    monkeypatch.setenv("FLANNER_HOME", str(tmp_path / "home"))
+    path = cache.session_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "endpoint": "https://api.example.com",
+                "device_id": "dev_1",
+                "organization_id": "org_1",
+                "user_id": "maria",
+                "entitlement": "tok",
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = cache.load()
+    assert loaded is not None
+    assert loaded.relay_url == ""
+
+
+def test_the_environment_overrides_what_the_control_plane_sent(tmp_path, monkeypatch):
+    """An operator debugging a relay should not have to re-issue an entitlement."""
+    from flanner import session as cache
+
+    monkeypatch.setenv("FLANNER_HOME", str(tmp_path / "home"))
+    cache.save(
+        cache.Session(
+            endpoint="https://api.example.com",
+            device_id="dev_1",
+            organization_id="org_1",
+            user_id="maria",
+            entitlement="tok",
+            relay_url="https://from-session.example.com",
+        )
+    )
+    assert peer_iroh._configured_relay()[0] == "https://from-session.example.com"
+
+    monkeypatch.setenv("FLANNER_RELAY_URL", "https://from-env.example.com")
+    assert peer_iroh._configured_relay()[0] == "https://from-env.example.com"

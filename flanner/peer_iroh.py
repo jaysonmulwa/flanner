@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import struct
 import threading
 from collections.abc import Callable
@@ -109,12 +110,48 @@ def _secret_bytes() -> bytes:
     )
 
 
+def relay_mode(relay_url: str = "", token: str = "") -> Any:
+    """Where to relay from, when a direct path cannot be punched through.
+
+    An organization's own relay is *added* to the defaults rather than
+    replacing them. Replacing would trade four relays spread across regions
+    for one, which is a worse fallback than the one it replaced and puts a
+    single machine behind every connection that could not go direct. The
+    point of self-hosting here is not to leave the public network; it is to
+    have somewhere to fall back to that we run ourselves.
+    """
+    iroh = _iroh()
+    if not relay_url:
+        return iroh.RelayMode.default_mode()
+    relays = iroh.RelayMode.default_mode().relay_map()
+    relays.insert(iroh.RelayConfig(url=relay_url, auth_token=token or None))
+    return iroh.RelayMode.custom(relays)
+
+
+def _configured_relay() -> tuple[str, str]:
+    """The relay this device should prefer, and any token for it.
+
+    Read per bind rather than cached, and never required: a control plane
+    that sends none, or a device not yet logged in, gets the defaults.
+    """
+    from . import session as cache
+
+    url = os.environ.get("FLANNER_RELAY_URL", "")
+    token = os.environ.get("FLANNER_RELAY_TOKEN", "")
+    if url:
+        return url, token
+    current = cache.load()
+    return (current.relay_url if current else ""), token
+
+
 async def _bind() -> Any:
     iroh = _iroh()
+    url, token = _configured_relay()
     builder = iroh.EndpointBuilder()
     builder.apply_n0()
     builder.secret_key(_secret_bytes())
     builder.alpns([ALPN])
+    builder.relay_mode(relay_mode(url, token))
     return await builder.bind()
 
 
