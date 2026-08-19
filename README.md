@@ -140,6 +140,34 @@ group links to JIRA issue keys (link-only).
 </details>
 
 <details>
+<summary><b>Syncing plans between devices</b></summary>
+
+```bash
+flanner peer serve                                      # answer authorised peers
+flanner peer pull <device-id>                           # pull what a peer holds
+flanner peer status [<device-id>]                       # how this device is reached
+```
+
+`peer serve` opens no listening port. It dials out and answers on that
+connection, so it needs no port forwarding, no VPN and no administrator
+rights. Devices find each other by public key rather than by address.
+
+Being reachable grants nothing. A caller needs a signed request and an
+entitlement naming both its device and the workspace, and every artifact
+received is checked against its *author's* key, not the peer that handed it
+over. So a peer you sync with is not a peer you trust.
+
+`peer status` answers the question a slow sync raises: direct or relayed?
+Both work. A relay is slower, and usually means a firewall that refuses to
+be punched through.
+
+Connections go direct where possible and relay only where they must. Pass
+an http address instead of a device id to reach a peer already on your
+network, which needs `flanner peer serve --http` on the other side.
+
+</details>
+
+<details>
 <summary><b>Architecture</b></summary>
 
 Layering is enforced by `tests/test_architecture.py`:

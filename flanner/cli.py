@@ -2495,6 +2495,60 @@ def peer_serve(host: str, port: int | None, http: bool) -> None:
     )
 
 
+@peer.command("status")
+@click.argument("device_id", required=False)
+def peer_status(device_id: str | None) -> None:
+    """Show how this device is reachable, or how it reaches one peer
+
+    With no argument, what a peer sees when it tries to reach this machine.
+    With a device id, whether the connection to that machine goes direct or
+    through a relay. Both work; a relay is slower, and that difference is
+    invisible until someone is waiting for a sync.
+    """
+    from . import peer as peer_transport
+    from . import peer_iroh
+    from . import session as cache
+
+    try:
+        if device_id:
+            route = peer_iroh.route_to(device_id, cache.load)
+            console.print(f"Peer       {route.device_id}")
+            console.print(
+                f"Connection {route.connection}",
+                style="yellow" if route.relayed else "green",
+            )
+            if route.address:
+                console.print(f"Path       {route.address}")
+            if route.rtt_ms:
+                console.print(f"Round trip {route.rtt_ms} ms")
+            if route.relayed:
+                console.print(
+                    "Relayed, so slower. Usually a firewall that refuses to be\n"
+                    "punched through. Nothing is broken and nothing is exposed.",
+                    style="dim",
+                )
+            return
+
+        status = peer_iroh.local_status(cache.load)
+    except peer_transport.PeerError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print(f"This device {status.device_id}", style="green")
+    console.print("Peers reach it with 'flanner peer pull <device-id>'.", style="dim")
+    if status.home_relay:
+        console.print(f"Home relay  {status.home_relay}")
+    if status.configured_relay:
+        console.print(f"Own relay   {status.configured_relay}")
+    for address in status.addresses:
+        console.print(f"Address     {address}")
+    console.print(
+        "Addresses are how peers try to reach this machine directly.\n"
+        "No port is listening: this device dials out and answers there.",
+        style="dim",
+    )
+
+
 @peer.command("pull")
 @click.argument("address")
 @click.option("--project", default=None, help="Project name (uses current directory if omitted)")

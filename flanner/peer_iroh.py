@@ -36,6 +36,7 @@ import os
 import struct
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from . import identity, peer
@@ -51,6 +52,44 @@ MAX_FRAME = 64 * 1024 * 1024
 
 CONNECT_TIMEOUT = 45.0
 _HEADER = struct.Struct(">I")
+
+#: How a connection is actually travelling. Named here rather than borrowed
+#: from :mod:`flanner.mesh`, which describes provisioning a private network.
+#: A transport that imported the abstraction it replaced would be an odd
+#: dependency to explain later.
+DIRECT = "direct"
+RELAY = "relay"
+UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class Route:
+    """How this device is reaching one peer, right now.
+
+    Worth reporting because both routes work and differ only in speed, so
+    the difference is invisible until someone is waiting. ``relayed`` is
+    the first thing to know about a sync that feels slow.
+    """
+
+    device_id: str
+    connection: str = UNKNOWN
+    address: str = ""
+    rtt_ms: int = 0
+
+    @property
+    def relayed(self) -> bool:
+        return self.connection == RELAY
+
+
+@dataclass(frozen=True)
+class LocalStatus:
+    """This device's own presence on the network."""
+
+    device_id: str
+    dialable_id: str
+    addresses: tuple[str, ...] = ()
+    home_relay: str = ""
+    configured_relay: str = ""
 
 
 class _Loop:
@@ -279,41 +318,57 @@ def endpoint_id_for(device_id: str, held: Any) -> str:
     ).hex()
 
 
-def transport(
-    device_id: str,
-    held: Any,
-    *,
-    endpoint: PeerEndpoint | None = None,
-    timeout: float = peer.REQUEST_TIMEOUT,
-) -> peer.Transport:
+class IrohTransport:
     """A :data:`flanner.peer.Transport` that reaches a device over iroh.
 
     The device is named by its flanner device id, not by an address. There
     is nothing to configure and nothing to forward: iroh finds the far side
     from its key, tries a direct path, and relays only if that fails.
-    """
-    iroh = _iroh()
-    local = endpoint or shared_endpoint()
-    remote_hex = endpoint_id_for(device_id, held)
 
-    def send(operation: str, signed: dict[str, Any]) -> dict[str, Any]:
-        async def exchange() -> dict[str, Any]:
-            bound = local.ready(timeout)
+    A class rather than a closure so it can remember ``last_route``. That
+    matters because relayed and direct connections both work and differ
+    only in speed, so a slow sync gives no hint which one it got. Reading
+    it back off the connection just used costs nothing; asking afterwards
+    would mean dialling a second time and might answer about a different
+    path than the one the sync actually took.
+    """
+
+    def __init__(
+        self,
+        device_id: str,
+        held: Any,
+        *,
+        endpoint: PeerEndpoint | None = None,
+        timeout: float = peer.REQUEST_TIMEOUT,
+    ) -> None:
+        self.device_id = device_id
+        self.last_route: Route | None = None
+        self._local = endpoint or shared_endpoint()
+        self._timeout = timeout
+        self._remote_hex = endpoint_id_for(device_id, held)
+
+    def __call__(self, operation: str, signed: dict[str, Any]) -> dict[str, Any]:
+        iroh = _iroh()
+
+        async def exchange() -> tuple[dict[str, Any], Any]:
+            bound = self._local.ready(self._timeout)
             await bound.online()
-            address = iroh.EndpointAddr(iroh.EndpointId.from_string(remote_hex), None, [])
+            address = iroh.EndpointAddr(iroh.EndpointId.from_string(self._remote_hex), None, [])
             connection = await bound.connect(address, ALPN)
             stream = await connection.open_bi()
             await _write(stream.send(), {"op": operation, "request": signed})
-            return await _read(stream.recv())
+            return await _read(stream.recv()), connection
 
         try:
-            reply = _Loop.shared().run(exchange(), timeout + CONNECT_TIMEOUT)
+            reply, connection = _Loop.shared().run(exchange(), self._timeout + CONNECT_TIMEOUT)
         except peer.PeerError:
             raise
         except TimeoutError:
-            raise peer.PeerError(f"{device_id} did not answer in time") from None
+            raise peer.PeerError(f"{self.device_id} did not answer in time") from None
         except Exception as e:
-            raise peer.PeerError(f"could not reach {device_id}: {e}") from None
+            raise peer.PeerError(f"could not reach {self.device_id}: {e}") from None
+
+        self.last_route = route_of(connection, self.device_id)
 
         if not reply.get("ok"):
             raise peer.PeerError(
@@ -325,7 +380,89 @@ def transport(
             raise peer.PeerError("peer sent something unusable")
         return body
 
-    return send
+
+def transport(
+    device_id: str,
+    held: Any,
+    *,
+    endpoint: PeerEndpoint | None = None,
+    timeout: float = peer.REQUEST_TIMEOUT,
+) -> IrohTransport:
+    """A transport reaching one device over iroh."""
+    return IrohTransport(device_id, held, endpoint=endpoint, timeout=timeout)
+
+
+def route_of(connection: Any, device_id: str) -> Route:
+    """Which path a live connection settled on.
+
+    iroh keeps several candidate paths and marks one selected; that one is
+    the answer. Reading them can fail on a connection that has just closed,
+    and an unknown route is not worth failing a sync that already
+    succeeded, so this reports :data:`UNKNOWN` rather than raising.
+    """
+    try:
+        paths = list(connection.paths())
+    except Exception:
+        return Route(device_id=device_id)
+
+    chosen = next((p for p in paths if getattr(p, "is_selected", False)), None)
+    if chosen is None:
+        return Route(device_id=device_id)
+    return Route(
+        device_id=device_id,
+        connection=RELAY if getattr(chosen, "is_relay", False) else DIRECT,
+        address=str(getattr(chosen, "remote_addr", "") or ""),
+        rtt_ms=int(getattr(chosen, "rtt_ms", 0) or 0),
+    )
+
+
+def local_status(held: Any, *, endpoint: PeerEndpoint | None = None) -> LocalStatus:
+    """What this device looks like to a peer trying to reach it."""
+    current = held()
+    local = endpoint or shared_endpoint()
+    bound = local.ready()
+    _Loop.shared().run(bound.online(), CONNECT_TIMEOUT)
+    address = bound.addr()
+    return LocalStatus(
+        device_id=current.device_id if current else identity.device_id(),
+        dialable_id=str(bound.id().to_bytes().hex()),
+        addresses=tuple(str(a) for a in address.direct_addresses()),
+        home_relay=str(address.relay_url() or ""),
+        configured_relay=_configured_relay()[0],
+    )
+
+
+def route_to(
+    device_id: str,
+    held: Any,
+    *,
+    endpoint: PeerEndpoint | None = None,
+    timeout: float = peer.REQUEST_TIMEOUT,
+) -> Route:
+    """Reach a peer and report how the connection travelled.
+
+    Deliberately opens a real connection rather than reading a cache. The
+    question being asked is how this device reaches that one now, and a
+    remembered answer from an hour ago on a different network would be a
+    confident wrong one.
+    """
+    iroh = _iroh()
+    local = endpoint or shared_endpoint()
+    remote_hex = endpoint_id_for(device_id, held)
+
+    async def dial() -> Any:
+        bound = local.ready(timeout)
+        await bound.online()
+        address = iroh.EndpointAddr(iroh.EndpointId.from_string(remote_hex), None, [])
+        return await bound.connect(address, ALPN)
+
+    try:
+        connection = _Loop.shared().run(dial(), timeout + CONNECT_TIMEOUT)
+    except peer.PeerError:
+        raise
+    except Exception as e:
+        raise peer.PeerError(f"could not reach {device_id}: {e}") from None
+    return route_of(connection, device_id)
 
 
 _shared: PeerEndpoint | None = None

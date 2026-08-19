@@ -332,6 +332,16 @@ class RemotePeer:
         self._timeout = timeout
         self._send = transport or http_transport(address, timeout=timeout)
 
+    @property
+    def transport(self) -> Transport:
+        """The carrier in use, for a caller that wants to ask it something.
+
+        Exposed because a transport may know things worth reporting that
+        the protocol does not carry, such as whether the connection was
+        relayed. Reading it is optional; nothing here depends on it.
+        """
+        return self._send
+
     def _post(self, operation: str, body: dict[str, Any]) -> dict[str, Any]:
         return self._send(operation, sign_body(body, self._held))
 

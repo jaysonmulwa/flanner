@@ -299,3 +299,108 @@ def test_the_environment_overrides_what_the_control_plane_sent(tmp_path, monkeyp
 
     monkeypatch.setenv("FLANNER_RELAY_URL", "https://from-env.example.com")
     assert peer_iroh._configured_relay()[0] == "https://from-env.example.com"
+
+
+# --------------------------------------------------------------- the route
+
+
+class _Path:
+    def __init__(self, **fields):
+        for name, value in fields.items():
+            setattr(self, name, value)
+
+
+class _Connection:
+    def __init__(self, *paths):
+        self._paths = paths
+
+    def paths(self):
+        return list(self._paths)
+
+
+def test_the_selected_path_is_the_answer_not_the_first_one():
+    """iroh keeps candidates; only the selected one is carrying traffic."""
+    route = peer_iroh.route_of(
+        _Connection(
+            _Path(is_selected=False, is_relay=True, remote_addr="https://relay/", rtt_ms=200),
+            _Path(is_selected=True, is_relay=False, remote_addr="1.2.3.4:5", rtt_ms=12),
+        ),
+        "dev_1",
+    )
+    assert route.connection == peer_iroh.DIRECT
+    assert route.relayed is False
+    assert route.address == "1.2.3.4:5"
+    assert route.rtt_ms == 12
+
+
+def test_a_relayed_path_says_so():
+    route = peer_iroh.route_of(
+        _Connection(
+            _Path(is_selected=True, is_relay=True, remote_addr="https://relay/", rtt_ms=90)
+        ),
+        "dev_1",
+    )
+    assert route.connection == peer_iroh.RELAY
+    assert route.relayed is True
+
+
+def test_a_connection_that_will_not_answer_gives_unknown_not_an_exception():
+    """A sync that already succeeded must not fail on a cosmetic question."""
+
+    class Closed:
+        def paths(self):
+            raise RuntimeError("connection closed")
+
+    assert peer_iroh.route_of(Closed(), "dev_1").connection == peer_iroh.UNKNOWN
+
+
+def test_no_selected_path_is_unknown_rather_than_a_guess():
+    route = peer_iroh.route_of(
+        _Connection(_Path(is_selected=False, is_relay=False, remote_addr="1.2.3.4:5", rtt_ms=1)),
+        "dev_1",
+    )
+    assert route.connection == peer_iroh.UNKNOWN
+    assert route.relayed is False
+
+
+def test_a_fresh_transport_has_not_taken_a_route_yet(alice, bob):
+    link(alice, bob)
+    with alice.active():
+        carry = peer_iroh.transport(bob.device_id, alice.held)
+    assert carry.last_route is None
+    assert carry.device_id == bob.device_id
+
+
+def test_the_transport_records_the_route_it_used(alice, bob, endpoints):
+    """Read off the connection the sync used, not a second one dialled after."""
+    link(alice, bob)
+    a_stored_artifact(bob.session, key=bob.signing_key())
+
+    serving = endpoints(bob)
+    threading.Thread(target=lambda: serving.serve(bob.sessions, bob.held), daemon=True).start()
+
+    dialing = endpoints(alice)
+    with alice.active():
+        try:
+            carry = peer_iroh.transport(bob.device_id, alice.held, endpoint=dialing, timeout=60)
+            remote = peer.RemotePeer(bob.device_id, WORKSPACE, alice.held, transport=carry)
+            remote.manifest(WORKSPACE)
+        except peer.PeerError as exc:  # pragma: no cover - depends on the network
+            pytest.skip(f"no route between two iroh endpoints here: {exc}")
+
+    assert carry.last_route is not None
+    assert carry.last_route.device_id == bob.device_id
+    assert carry.last_route.connection in {peer_iroh.DIRECT, peer_iroh.RELAY}
+
+
+def test_local_status_reports_this_devices_own_identity(alice, endpoints):
+    """What a peer sees. The dialable id must be this device's own key."""
+    import base64
+
+    alice.sign_in()
+    bound = endpoints(alice)
+    with alice.active():
+        status = peer_iroh.local_status(alice.held, endpoint=bound)
+
+    assert status.device_id == alice.device_id
+    assert status.dialable_id == base64.b64decode(alice.public_key).hex()
