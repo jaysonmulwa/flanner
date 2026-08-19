@@ -22,7 +22,7 @@ import json
 import os
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from . import device_auth, identity
@@ -238,3 +238,35 @@ def _signed(path: str, body: dict[str, Any]) -> dict[str, Any]:
         raise SessionError("this device is not logged in")
     request = device_auth.sign_request(body, device_id=current.device_id)
     return _post(current.endpoint, path, request.to_dict())
+
+
+def mesh_credential() -> tuple[str, str, datetime] | None:
+    """A fresh credential for joining this organization's private network.
+
+    Deliberately not stored. The control plane issues one with every
+    entitlement, so asking again is cheap, and a single-use join key sitting
+    in a cache is a secret at rest bought for nothing.
+
+    Returns the credential, the management URL, and when it stops working,
+    or None when the deployment has no mesh provider. None is an ordinary
+    answer: devices still sync over any network they already share.
+    """
+    current = cache.load()
+    if current is None:
+        raise SessionError("this device is not logged in")
+    request = device_auth.sign_request({}, device_id=current.device_id)
+    body = _post(current.endpoint, "/v1/entitlements", request.to_dict())
+
+    mesh = body.get("mesh") or {}
+    credential = str(mesh.get("credential") or "")
+    if not credential:
+        return None
+
+    # Carried through rather than invented. A join key that has already
+    # expired should fail saying so, not fail looking like a bad key.
+    raw = str(mesh.get("expires_at") or "")
+    try:
+        expires_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        expires_at = datetime.now(timezone.utc)
+    return credential, str(mesh.get("management_url") or ""), expires_at

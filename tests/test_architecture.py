@@ -30,6 +30,9 @@ ALLOWED = {
     # know a vendor. No core module may import an adapter (PRD §10.1).
     "mesh": set(),
     "mesh_fake": {"exceptions", "mesh"},
+    # The device half of the mesh seam. An adapter, so it may know a
+    # vendor; nothing else may import it.
+    "mesh_netbird": {"exceptions", "mesh"},
     # The portability suite. Written against the protocol only, so it
     # cannot accidentally encode how one vendor happens to behave.
     "mesh_conformance": {"exceptions", "mesh"},
@@ -78,6 +81,10 @@ ALLOWED = {
         "session",
         "account",
         "peer",
+        # The composition root chooses a mesh implementation, so it
+        # names the adapter and the protocol it is typed against.
+        "mesh",
+        "mesh_netbird",
         "authz",
         "entitlements",
         "identity",

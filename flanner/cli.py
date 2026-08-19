@@ -2497,3 +2497,108 @@ def peer_pull(address: str, project: str | None) -> None:
         console.print(f"REJECTED {artifact_id}: {reason}", style="red")
     if not report.ok:
         raise SystemExit(1)
+
+
+@cli.group()
+def mesh() -> None:
+    """Join and inspect the private network this team's devices share"""
+
+
+def _runtime(url: str = "") -> Any:
+    """The mesh client wrapper.
+
+    The CLI is a composition root, so this is the one place in the client
+    package that names a provider. Everything else speaks `flanner.mesh`,
+    and a test allows exactly this file and the adapter itself.
+    """
+    from .mesh_netbird import NetBirdRuntime
+
+    return NetBirdRuntime(management_url=url)
+
+
+@mesh.command("status")
+def mesh_status() -> None:
+    """Show whether this device is on the team's private network"""
+    runtime = _runtime()
+    if not runtime.installed():
+        console.print("Mesh client not installed.", style="dim")
+        console.print(
+            "Flanner works without one: peers sync over any network they already share.\n"
+            "Install it only if your devices cannot reach each other directly.",
+            style="dim",
+        )
+        return
+
+    status = runtime.status()
+    console.print(
+        f"Network {'connected' if status.enrolled else 'not connected'}",
+        style="green" if status.enrolled else "yellow",
+    )
+    if status.message:
+        console.print(f"        {status.message}", style="dim")
+    for endpoint in status.endpoints:
+        console.print(f"Address {endpoint}")
+
+    peers = runtime.peers()
+    if not peers:
+        return
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Peer address")
+    table.add_column("Connection")
+    for peer in peers:
+        table.add_row(peer.endpoint, peer.connection)
+    console.print(table)
+    console.print(
+        "Addresses only. Who a peer is gets settled by the signed handshake,\n"
+        "never by the network.",
+        style="dim",
+    )
+
+
+@mesh.command("join")
+def mesh_join() -> None:
+    """Join the private network, using a credential from the control plane"""
+    from . import account
+    from .exceptions import MeshError
+    from .mesh import Enrollment
+
+    runtime = _runtime()
+    if not runtime.installed():
+        console.print("ERROR The mesh client is not installed on this machine.", style="red")
+        raise SystemExit(1)
+
+    try:
+        offered = account.mesh_credential()
+    except account.SessionError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    if offered is None:
+        console.print("This team has no managed network.", style="yellow")
+        console.print(
+            "Nothing to join; syncing over your existing network still works.", style="dim"
+        )
+        return
+
+    credential, management_url, expires_at = offered
+    try:
+        _runtime(management_url).enroll(
+            Enrollment(credential=credential, device_id="", expires_at=expires_at)
+        )
+    except MeshError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print("OK Joined the team's private network", style="green")
+
+
+@mesh.command("leave")
+def mesh_leave() -> None:
+    """Disconnect this device from the private network"""
+    runtime = _runtime()
+    if not runtime.installed():
+        console.print("Mesh client not installed.", style="dim")
+        return
+    runtime.leave()
+    console.print("OK Disconnected", style="green")
+    console.print("Plans and local work are untouched.", style="dim")
