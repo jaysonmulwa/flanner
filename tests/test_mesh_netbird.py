@@ -30,8 +30,27 @@ def completed(stdout="", returncode=0, stderr=""):
     )
 
 
+# Captured verbatim from `netbird status --json` on a real 0.76.3 client,
+# so this is the client's own vocabulary rather than a reading of it. The
+# device was unenrolled, which is why every value is empty; the field names
+# are the point. Peer details are null rather than [] when there are none,
+# which a hand-written fixture would not have guessed.
+UNENROLLED_0_76_3 = (
+    '{"peers":{"total":0,"connected":0,"details":null},"cliVersion":"0.76.3",'
+    '"daemonVersion":"0.76.3","daemonStatus":"NeedsLogin","management":'
+    '{"url":"https://api.netbird.io:443","connected":false,"error":""},'
+    '"signal":{"url":"","connected":false,"error":""},"relays":{"total":0,'
+    '"available":0,"details":null},"netbirdIp":"","publicKey":"",'
+    '"usesKernelInterface":false,"wireguardPort":0,"fqdn":"",'
+    '"quantumResistance":false,"quantumResistancePermissive":false,'
+    '"networks":null,"forwardingRules":0,"dnsServers":[],"events":[],'
+    '"lazyConnectionEnabled":false,"profileName":"default",'
+    '"sshServer":{"enabled":false,"sessions":[]}}'
+)
+
 # Shaped from netbirdio/netbird client/status/status.go: OutputOverview and
-# PeerStateDetailOutput, so the tags are theirs rather than mine.
+# PeerStateDetailOutput. Still a reading rather than a capture, because an
+# enrolled client needs a management server nobody here has.
 CONNECTED = """
 {
   "peers": {
@@ -334,3 +353,31 @@ def test_the_composition_root_names_it_in_exactly_one_place():
     }
 
     assert holders == {"_runtime"}, holders
+
+
+# --- against the real client -------------------------------------------
+#
+# The risk recorded when this wrapper was written was that its field names
+# came from reading NetBird's source, and the fakes were shaped from that
+# same reading, so both would be wrong together. These close that gap for
+# the unenrolled case, which is the one a real client could be put into
+# here without a management server.
+
+
+def test_real_client_output_parses_into_a_status(monkeypatch):
+    """Captured from netbird 0.76.3, not written from their source."""
+    runtime, _ = a_runtime(monkeypatch, output=UNENROLLED_0_76_3)
+    status = runtime.status()
+
+    assert status.enrolled is False
+    assert status.network_id == "https://api.netbird.io:443"
+    assert status.endpoints == ()
+    assert status.message == "not connected to a managed network"
+
+
+def test_null_peer_details_are_survived_not_just_empty_ones(monkeypatch):
+    """0.76.3 sends `"details": null`, which is not the `[]` a fake assumes."""
+    runtime, _ = a_runtime(monkeypatch, output=UNENROLLED_0_76_3)
+    assert runtime.peers() == []
+    assert runtime.private_endpoints() == []
+    assert runtime.connection_type("dev_anything") == OFFLINE

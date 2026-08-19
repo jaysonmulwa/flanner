@@ -17,11 +17,30 @@ one thing the design refuses to trust it with.
 So what this buys is addresses. Two laptops behind different routers get a
 path to each other, and the peer protocol decides the rest.
 
-**Verification status.** The command shapes and the JSON field names come
-from NetBird's CLI documentation and the struct definitions in their source,
-not from memory. They have not been run against an installed client. The
-parsing is deliberately forgiving: a field that moved should degrade to
+**Verification status.** Run against a real NetBird 0.76.3 client on
+Windows. Verified there: the binary is found, `status --json` parses,
+`management.connected`, `management.url`, `netbirdIp` and the peer fields
+are named as expected, `down` is idempotent because the vendor's own
+command exits 0 when already down, and an unenrolled client reports no
+peers rather than failing.
+
+Not verified: anything requiring an enrolled device. Joining with a real
+setup key, peers with live connections, and the P2P-versus-relayed reading
+all need a management server, and the one in `compose.netbird.yml`
+deliberately provides no connectivity. Those paths still rest on a reading
+of NetBird's source rather than on having been run.
+
+One thing the real client taught that the source reading had not: it sends
+``"details": null`` rather than ``[]`` when there are no peers. A fixture
+written from the struct definitions would have used the empty list.
+
+The parsing is deliberately forgiving: a field that moved should degrade to
 "unknown" rather than raise, because a status page is not worth a crash.
+
+**Parked.** Peer sync reaches devices without a VPN and without
+administrator rights, so this is no longer on the path anyone follows. It
+is kept, working, for a desktop build whose installer may legitimately ask
+for elevation once. Not developed further; see :mod:`flanner.peer_iroh`.
 """
 
 from __future__ import annotations
