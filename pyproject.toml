@@ -41,6 +41,7 @@ dependencies = [
     "pydantic>=2.5,<3",
     "mcp>=1.0,<2",
     "cryptography>=42,<50",
+    "iroh>=1.1,<2",
 ]
 
 [project.optional-dependencies]

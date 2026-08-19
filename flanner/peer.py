@@ -1,11 +1,17 @@
 """Syncing with another device over the network (PRD §14).
 
 ``sync`` defines the protocol and left the transport out on purpose. This
-fills it in: an HTTP server that answers for this device's catalog, and a
+fills it in: a handler that answers for this device's catalog, and a
 :class:`Peer` implementation that talks to another device's.
 
 Both halves live here because they are two ends of one wire format. Putting
 them in separate modules is how the two drift.
+
+**Carriers are interchangeable, access rules are not.** HTTP is built in
+here because it needs nothing beyond the standard library;
+:mod:`flanner.peer_iroh` adds one that works when neither device is
+reachable. Both hand every request to :func:`serve_request`, so there is
+exactly one place that decides who may read what.
 
 **What authorises a peer.** Two proofs, and neither involves asking the
 control plane at the time of the request:
@@ -34,12 +40,13 @@ what someone else wrote (§14.4).
 
 **What this is not.** There is no private addressing here. This speaks to
 whatever address it is given, so it works over a LAN, a tunnel, or a mesh
-provider's network without changing. Provisioning that network is the mesh
-provider's job (§10), and deliberately not this module's.
+provider's network without changing. Providing a route is a transport's
+job, and deliberately not this module's.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -50,9 +57,22 @@ from .sync import Manifest
 DEFAULT_PORT = 8776
 REQUEST_TIMEOUT = 30.0
 
+#: Carries one signed request to a peer and returns its reply.
+Transport = Callable[[str, dict[str, Any]], dict[str, Any]]
+
 
 class PeerError(Exception):
-    """A peer could not be reached, or refused."""
+    """A peer could not be reached, or refused.
+
+    ``status`` exists so the answer does not depend on the carrier. HTTP
+    turns it into a response code; the iroh transport puts it in the reply
+    body. Refusals then read the same either way, which is what keeps the
+    two transports from drifting into different behaviour.
+    """
+
+    def __init__(self, message: str, *, status: int = 403) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -123,6 +143,70 @@ def authorize(
     )
 
 
+MANIFEST = "manifest"
+FETCH = "fetch"
+
+
+def serve_request(
+    operation: str,
+    payload: dict[str, Any],
+    sessions: Any,
+    held: Any,
+) -> dict[str, Any]:
+    """Answer one peer request, whatever carried it here.
+
+    The two proofs, the workspace checks and the withholding rule all live
+    in this one function on purpose. A transport that reimplemented any of
+    them would be a second place for the access rules to be wrong, and the
+    two would diverge the first time one was changed.
+
+    ``held`` is a callable read per request rather than captured, so a
+    renewed entitlement or a refreshed keyring takes effect without a
+    restart.
+    """
+    current = held()
+    if current is None:
+        # Not logged in: this device has no way to check anyone's
+        # entitlement, so it serves nobody rather than serving everyone.
+        raise PeerError("this device is not part of a team", status=503)
+
+    body = payload.get("body") or {}
+    workspace_id = str(body.get("workspace_id") or "")
+    if not workspace_id:
+        raise PeerError("workspace_id is required", status=400)
+
+    if operation == FETCH:
+        wanted = [str(x) for x in (body.get("artifact_ids") or [])]
+        if len(wanted) > sync.MAX_FETCH_BATCH:
+            raise PeerError(f"at most {sync.MAX_FETCH_BATCH} artifacts per request", status=413)
+    elif operation != MANIFEST:
+        raise PeerError(f"unknown operation: {operation}", status=404)
+
+    authorize(payload, workspace_id, dict(current.keyring))
+
+    with sessions() as session:
+        if operation == MANIFEST:
+            return dict(sync.build_manifest(session, workspace_id).to_dict())
+
+        local = sync.LocalPeer(session)
+        out = []
+        for envelope, blob in local.fetch(wanted):
+            # The caller proved access to one workspace, so anything
+            # belonging to another is withheld even if it was asked for
+            # by id. Ids are guessable in principle; access is not.
+            if envelope.get("workspace_id") != workspace_id:
+                continue
+            out.append(
+                {
+                    "envelope": envelope,
+                    "payload": blob.decode("utf-8", errors="replace")
+                    if blob is not None
+                    else None,
+                }
+            )
+        return {"artifacts": out}
+
+
 def create_peer_app(sessions: Any, held: Any) -> Any:
     """An HTTP app serving this device's catalog to authorised peers.
 
@@ -134,66 +218,102 @@ def create_peer_app(sessions: Any, held: Any) -> Any:
 
     app = FastAPI(title="Flanner peer", version=str(sync.PROTOCOL_VERSION))
 
-    def _issuer_keyring() -> dict[str, str]:
-        current = held()
-        if current is None:
-            # Not logged in: this device has no way to check anyone's
-            # entitlement, so it serves nobody rather than serving everyone.
-            raise HTTPException(503, "this device is not part of a team")
-        return dict(current.keyring)
-
-    def _caller(payload: dict[str, Any], workspace_id: str) -> PeerIdentity:
+    def _serve(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            return authorize(payload, workspace_id, _issuer_keyring())
+            return serve_request(operation, payload, sessions, held)
         except PeerError as e:
-            raise HTTPException(403, str(e)) from None
+            raise HTTPException(e.status, str(e)) from None
 
     @app.post("/peer/manifest")
     def manifest(payload: dict[str, Any]) -> dict[str, Any]:
         """What this device holds for a workspace the caller may read."""
-        workspace_id = str(payload.get("body", {}).get("workspace_id") or "")
-        if not workspace_id:
-            raise HTTPException(400, "workspace_id is required")
-        _caller(payload, workspace_id)
-        with sessions() as session:
-            return sync.build_manifest(session, workspace_id).to_dict()
+        return _serve(MANIFEST, payload)
 
     @app.post("/peer/fetch")
     def fetch(payload: dict[str, Any]) -> dict[str, Any]:
         """Hand over specific artifacts, and only from the named workspace."""
-        body = payload.get("body") or {}
-        workspace_id = str(body.get("workspace_id") or "")
-        wanted = [str(x) for x in (body.get("artifact_ids") or [])]
-        if not workspace_id:
-            raise HTTPException(400, "workspace_id is required")
-        if len(wanted) > sync.MAX_FETCH_BATCH:
-            raise HTTPException(413, f"at most {sync.MAX_FETCH_BATCH} artifacts per request")
-        _caller(payload, workspace_id)
-
-        with sessions() as session:
-            local = sync.LocalPeer(session)
-            out = []
-            for envelope, blob in local.fetch(wanted):
-                # The caller proved access to one workspace, so anything
-                # belonging to another is withheld even if it was asked for
-                # by id. Ids are guessable in principle; access is not.
-                if envelope.get("workspace_id") != workspace_id:
-                    continue
-                out.append(
-                    {
-                        "envelope": envelope,
-                        "payload": blob.decode("utf-8", errors="replace")
-                        if blob is not None
-                        else None,
-                    }
-                )
-            return {"artifacts": out}
+        return _serve(FETCH, payload)
 
     return app
 
 
+def sign_body(body: dict[str, Any], held: Any) -> dict[str, Any]:
+    """Sign one request body as this device. Shared by every transport.
+
+    One read of the key, and the id derived from it, so the public key and
+    the device id cannot disagree. Taking the id from the cached session
+    instead would produce a request the far side rejects as a key mismatch,
+    which blames the wrong thing entirely.
+    """
+    current = held()
+    if current is None:
+        raise PeerError("this device is not logged in")
+
+    key = identity.load_or_create_device_key()
+    device_id = identity.device_id_for(key.public_key())
+    if device_id != current.device_id:
+        raise PeerError(
+            "the cached session belongs to a different device; run 'flanner login' again"
+        )
+
+    # The public key travels with every request so the far side can
+    # check it against the device id without a registry.
+    signed = sign_request(
+        {
+            **body,
+            "public_key": identity.public_key_b64(key.public_key()),
+            "entitlement": current.entitlement,
+        },
+        device_id=device_id,
+        signing_key=key,
+    )
+    return dict(signed.to_dict())
+
+
+def http_transport(address: str, *, timeout: float = REQUEST_TIMEOUT) -> Transport:
+    """Carry requests to a peer at an http address.
+
+    This is the original transport and remains the one that needs no
+    dependency beyond the standard library. It requires the far side to be
+    reachable, which is exactly the constraint :mod:`flanner.peer_iroh`
+    exists to remove.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    base = address.rstrip("/")
+
+    def send(operation: str, signed: dict[str, Any]) -> dict[str, Any]:
+        url = f"{base}/peer/{operation}"
+        if not url.startswith(("http://", "https://")):
+            raise PeerError(f"{base} is not an http address")
+        request = urllib.request.Request(  # noqa: S310 - scheme checked above
+            url,
+            data=json.dumps(signed).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+                return dict(json.loads(response.read().decode("utf-8")))
+        except urllib.error.HTTPError as e:
+            raise PeerError(_detail(e), status=e.code) from None
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise PeerError(f"could not reach {base}: {e}") from None
+        except ValueError as e:
+            raise PeerError(f"peer sent something unusable: {e}") from None
+
+    return send
+
+
 class RemotePeer:
-    """Another device, reached over HTTP. Implements :class:`sync.Peer`."""
+    """Another device. Implements :class:`sync.Peer`.
+
+    How the request travels is the ``transport``'s business; what it says
+    and what proves it is this class's. Defaults to HTTP so existing
+    callers that pass an address keep working unchanged.
+    """
 
     def __init__(
         self,
@@ -202,6 +322,7 @@ class RemotePeer:
         held: Any,
         *,
         timeout: float = REQUEST_TIMEOUT,
+        transport: Transport | None = None,
     ) -> None:
         self._address = address.rstrip("/")
         # Held on the instance because sync.Peer.fetch takes only ids: the
@@ -209,68 +330,20 @@ class RemotePeer:
         self._workspace = workspace_id
         self._held = held
         self._timeout = timeout
+        self._send = transport or http_transport(address, timeout=timeout)
 
-    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        import json
-        import urllib.error
-        import urllib.request
-
-        current = self._held()
-        if current is None:
-            raise PeerError("this device is not logged in")
-
-        # One read of the key, and the id derived from it, so the public key
-        # and the device id cannot disagree. Taking the id from the cached
-        # session instead would produce a request the far side rejects as a
-        # key mismatch, which blames the wrong thing entirely.
-        key = identity.load_or_create_device_key()
-        device_id = identity.device_id_for(key.public_key())
-        if device_id != current.device_id:
-            raise PeerError(
-                "the cached session belongs to a different device; run 'flanner login' again"
-            )
-
-        # The public key travels with every request so the far side can
-        # check it against the device id without a registry.
-        signed = sign_request(
-            {
-                **body,
-                "public_key": identity.public_key_b64(key.public_key()),
-                "entitlement": current.entitlement,
-            },
-            device_id=device_id,
-            signing_key=key,
-        )
-        url = self._address + path
-        if not url.startswith(("http://", "https://")):
-            raise PeerError(f"{self._address} is not an http address")
-        request = urllib.request.Request(  # noqa: S310 - scheme checked above
-            url,
-            data=json.dumps(signed.to_dict()).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:  # noqa: S310
-                return dict(json.loads(response.read().decode("utf-8")))
-        except urllib.error.HTTPError as e:
-            raise PeerError(_detail(e)) from None
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            raise PeerError(f"could not reach {self._address}: {e}") from None
-        except ValueError as e:
-            raise PeerError(f"peer sent something unusable: {e}") from None
+    def _post(self, operation: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self._send(operation, sign_body(body, self._held))
 
     def manifest(self, workspace_id: str) -> Manifest:
-        return Manifest.from_dict(self._post("/peer/manifest", {"workspace_id": workspace_id}))
+        return Manifest.from_dict(self._post(MANIFEST, {"workspace_id": workspace_id}))
 
     def fetch(self, artifact_ids: list[str]) -> list[tuple[dict[str, Any], bytes | None]]:
         """Fetch in batches, so one large sync is not one huge request."""
         out: list[tuple[dict[str, Any], bytes | None]] = []
         for start in range(0, len(artifact_ids), sync.MAX_FETCH_BATCH):
             batch = artifact_ids[start : start + sync.MAX_FETCH_BATCH]
-            body = self._post(
-                "/peer/fetch", {"workspace_id": self._workspace, "artifact_ids": batch}
-            )
+            body = self._post(FETCH, {"workspace_id": self._workspace, "artifact_ids": batch})
             for item in body.get("artifacts") or []:
                 envelope = item.get("envelope")
                 if not isinstance(envelope, dict):
@@ -280,11 +353,23 @@ class RemotePeer:
         return out
 
 
-def pull(session: Any, address: str, workspace_id: str, held: Any) -> sync.SyncReport:
+def pull(
+    session: Any,
+    address: str,
+    workspace_id: str,
+    held: Any,
+    *,
+    remote: Any = None,
+) -> sync.SyncReport:
     """Pull everything a peer holds for a workspace that this device lacks.
 
     Artifacts are verified against their author's key from the cached
     organization keyring, not against the peer that handed them over.
+
+    ``remote`` lets a caller supply a peer reached some other way. It exists
+    because choosing a transport means knowing about every transport, and
+    this module deliberately knows about one. The composition root chooses;
+    defaulting to HTTP keeps every existing caller working.
     """
     current = held()
     if current is None:
@@ -292,7 +377,7 @@ def pull(session: Any, address: str, workspace_id: str, held: Any) -> sync.SyncR
         report.rejected.append(("<peer>", "this device is not logged in"))
         return report
 
-    peer = RemotePeer(address, workspace_id, held)
+    peer = remote or RemotePeer(address, workspace_id, held)
     return sync.sync_from_peer(session, peer, workspace_id, current.resolve_device_key)
 
 

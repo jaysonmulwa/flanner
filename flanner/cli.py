@@ -2433,25 +2433,52 @@ def peer() -> None:
 
 
 @peer.command("serve")
-@click.option("--host", default="0.0.0.0", help="Address to listen on")  # noqa: S104
-@click.option("--port", default=None, type=int, help="Port to listen on")
-def peer_serve(host: str, port: int | None) -> None:
+@click.option("--host", default="0.0.0.0", help="Address to listen on (--http only)")  # noqa: S104
+@click.option("--port", default=None, type=int, help="Port to listen on (--http only)")
+@click.option(
+    "--http",
+    is_flag=True,
+    help="Listen on a port instead, for peers already on the same network",
+)
+def peer_serve(host: str, port: int | None, http: bool) -> None:
     """Serve this device's catalog to authorised peers
 
-    Binds every interface by default, because a peer reaches this over the
-    mesh rather than over loopback. Nothing is served to a caller who cannot
-    produce a signed request and a matching entitlement, so exposure alone
-    grants nothing.
+    Reachable without a listening port, a forwarded port or administrator
+    rights: this device dials out and answers on that connection. Nothing is
+    served to a caller who cannot produce a signed request and a matching
+    entitlement, so being reachable grants nothing on its own.
     """
     import uvicorn
 
+    from . import identity as device_identity
     from . import peer as peer_transport
+    from . import peer_iroh
     from . import session as cache
 
     if cache.load() is None:
         console.print("ERROR Not signed in, so no peer can be authorised.", style="red")
         console.print("Run 'flanner login' first.", style="dim")
         raise SystemExit(1)
+
+    if not http:
+        endpoint = peer_iroh.shared_endpoint()
+        try:
+            endpoint.ready()
+        except peer_transport.PeerError as e:
+            console.print(f"ERROR {e}", style="red")
+            console.print("Use 'flanner peer serve --http' to listen on a port.", style="dim")
+            raise SystemExit(1) from None
+        console.print("Serving plans to authorised peers.", style="green")
+        console.print(f"This device: {device_identity.device_id()}", style="dim")
+        console.print(
+            "Peers pull with 'flanner peer pull <device-id>'. No port is open.",
+            style="dim",
+        )
+        try:
+            endpoint.serve(get_session, cache.load)
+        except KeyboardInterrupt:
+            endpoint.close()
+        return
 
     listen_on = port or peer_transport.DEFAULT_PORT
     console.print(f"Serving plans to authorised peers on {host}:{listen_on}", style="green")
@@ -2472,8 +2499,13 @@ def peer_serve(host: str, port: int | None) -> None:
 @click.argument("address")
 @click.option("--project", default=None, help="Project name (uses current directory if omitted)")
 def peer_pull(address: str, project: str | None) -> None:
-    """Pull whatever a peer holds for this project's workspace that we lack"""
+    """Pull whatever a peer holds for this project's workspace that we lack
+
+    Give a device id to reach a peer wherever it is, or an http address for
+    one already on this network.
+    """
     from . import peer as peer_transport
+    from . import peer_iroh
     from . import session as cache
 
     session = _require_session()
@@ -2488,7 +2520,13 @@ def peer_pull(address: str, project: str | None) -> None:
         console.print("Run 'flanner join <workspace-id>' first.", style="dim")
         raise SystemExit(1)
 
-    report = peer_transport.pull(session, address, proj.workspace_id, cache.load)
+    try:
+        remote = peer_iroh.peer_for(address, proj.workspace_id, cache.load)
+    except peer_transport.PeerError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    report = peer_transport.pull(session, address, proj.workspace_id, cache.load, remote=remote)
 
     console.print(f"accepted: {len(report.accepted)}", style="green")
     if report.already_held:

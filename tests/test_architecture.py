@@ -49,6 +49,9 @@ ALLOWED = {
     # Peer transport. Talks to other devices, never to the control plane,
     # so it may not import account any more than a read command may.
     "peer": {"entitlements", "identity", "sync", "device_auth"},
+    # The transport carries what peer decides; it never decides anything
+    # itself, so it reaches for peer and the device key and nothing else.
+    "peer_iroh": {"identity", "peer"},
     "workflow": {"artifacts"},
     "assurance": FOUNDATION
     | {"artifacts", "identity", "workflow", "database", "freshness", "authz"},
@@ -85,6 +88,8 @@ ALLOWED = {
         # names the adapter and the protocol it is typed against.
         "mesh",
         "mesh_netbird",
+        # Choosing between transports means naming both of them.
+        "peer_iroh",
         "authz",
         "entitlements",
         "identity",
