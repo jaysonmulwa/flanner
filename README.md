@@ -165,6 +165,18 @@ Connections go direct where possible and relay only where they must. Pass
 an http address instead of a device id to reach a peer already on your
 network, which needs `flanner peer serve --http` on the other side.
 
+**Platforms.** Reaching a peer that has no address needs the `iroh`
+transport, which publishes builds for macOS on Apple Silicon, Linux on
+x86-64 and arm64, and Windows on x86-64. It is declared only for those, so
+`pip install flanner` works everywhere; elsewhere it is simply absent and
+`flanner peer status` says so. Everything else in flanner is unaffected,
+and peers on a shared network still sync over an address.
+
+Alpine and other musl distributions are the exception: the Linux build does
+not match there, so the install fails rather than skipping it. Use a
+glibc-based image, or install with `--no-deps` and add the remaining
+dependencies yourself.
+
 </details>
 
 <details>

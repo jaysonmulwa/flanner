@@ -404,3 +404,94 @@ def test_local_status_reports_this_devices_own_identity(alice, endpoints):
 
     assert status.device_id == alice.device_id
     assert status.dialable_id == base64.b64decode(alice.public_key).hex()
+
+
+# ------------------------------------------------ platforms with no build
+#
+# The transport publishes wheels for four platforms and no sdist at all, so
+# on an Intel Mac, Alpine, or Windows-on-ARM it simply is not there. That is
+# declared with markers in pyproject, so `pip install flanner` still works;
+# these check the other half, that the client is usable when it is absent.
+
+
+@pytest.fixture
+def without_iroh(monkeypatch):
+    """As if the wheel had never existed on this machine."""
+    import builtins
+
+    real = builtins.__import__
+
+    def refuse(name, *args, **kwargs):
+        if name == "iroh":
+            raise ImportError("No module named 'iroh'")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+
+
+def test_the_client_reports_the_transport_as_unavailable(without_iroh):
+    assert peer_iroh.available() is False
+
+
+def test_the_refusal_names_the_platform_and_the_way_round_it(without_iroh):
+    """A missing wheel is not a bug the reader can fix, so say what to do."""
+    with pytest.raises(peer.PeerError) as caught:
+        peer_iroh._iroh()
+    message = str(caught.value)
+    assert "peer serve --http" in message
+    assert "peer pull" in message
+    assert caught.value.status == 503
+
+
+def test_an_http_peer_still_works_with_no_transport_installed(without_iroh, alice, bob):
+    """The fallback has to be reachable without touching the missing module."""
+    link(alice, bob)
+    with alice.active():
+        remote = peer_iroh.peer_for("http://127.0.0.1:8776", WORKSPACE, alice.held)
+    assert isinstance(remote, peer.RemotePeer)
+
+
+def test_asking_for_a_device_id_refuses_rather_than_crashing(without_iroh, alice, bob):
+    link(alice, bob)
+    with alice.active(), pytest.raises(peer.PeerError):
+        peer_iroh.peer_for(bob.device_id, WORKSPACE, alice.held)
+
+
+def test_every_declared_iroh_marker_matches_a_published_wheel():
+    """The dependency must never become unconditional again by accident.
+
+    Guards the packaging decision, not the code: without markers, pip on a
+    platform with no wheel fails to install flanner at all, and the error
+    reads as a missing package rather than an unsupported machine.
+    """
+    from pathlib import Path
+
+    import tomllib
+    from packaging.markers import Marker
+
+    root = Path(__file__).resolve().parent.parent
+    deps = [
+        d
+        for d in tomllib.loads((root / "pyproject.toml").read_text())["project"]["dependencies"]
+        if d.startswith("iroh")
+    ]
+    assert deps, "iroh is no longer declared"
+    assert all(";" in d for d in deps), "iroh must stay conditional: no sdist exists"
+
+    def required(sys_platform, machine):
+        return any(
+            Marker(d.split(";", 1)[1]).evaluate(
+                {"sys_platform": sys_platform, "platform_machine": machine}
+            )
+            for d in deps
+        )
+
+    # Wheels published as of 1.1.0.
+    assert required("darwin", "arm64")
+    assert required("linux", "x86_64")
+    assert required("linux", "aarch64")
+    assert required("win32", "AMD64")
+    # No wheel, and no sdist to fall back to.
+    assert not required("darwin", "x86_64")
+    assert not required("win32", "ARM64")
+    assert not required("linux", "armv7l")

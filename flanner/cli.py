@@ -2532,6 +2532,11 @@ def peer_status(device_id: str | None) -> None:
         status = peer_iroh.local_status(cache.load)
     except peer_transport.PeerError as e:
         console.print(f"ERROR {e}", style="red")
+        if not peer_iroh.available():
+            console.print(
+                "Everything else works. Only reaching a peer that has no " "address needs it.",
+                style="dim",
+            )
         raise SystemExit(1) from None
 
     console.print(f"This device {status.device_id}", style="green")

@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import platform
 import struct
 import threading
 from collections.abc import Callable
@@ -128,15 +129,33 @@ class _Loop:
 
 
 def _iroh() -> Any:
+    """The transport library, or a refusal that says what to do instead.
+
+    Absent on platforms it publishes no wheel for, which is why it is
+    declared with markers rather than unconditionally: pip failing to
+    install flanner at all would be a worse outcome than peer sync needing
+    an address. Everything else in the client works without it.
+    """
     try:
         import iroh
     except ImportError:  # pragma: no cover - depends on the platform
         raise peer.PeerError(
-            "iroh is not installed, so this device cannot reach peers directly; "
-            "give an http address instead",
+            f"direct peer sync is unavailable on {platform.system()} "
+            f"{platform.machine()}, which the transport publishes no build for. "
+            "Sync over an address instead: 'flanner peer serve --http' on the "
+            "far side, then 'flanner peer pull <http-address>'.",
             status=503,
         ) from None
     return iroh
+
+
+def available() -> bool:
+    """Whether this machine can reach peers without being reachable."""
+    try:
+        _iroh()
+    except peer.PeerError:
+        return False
+    return True
 
 
 def _secret_bytes() -> bytes:
@@ -341,6 +360,11 @@ class IrohTransport:
         endpoint: PeerEndpoint | None = None,
         timeout: float = peer.REQUEST_TIMEOUT,
     ) -> None:
+        # Checked here rather than on first use. Constructing a transport
+        # that can never carry anything would move the failure past the
+        # point where callers are set up to report it, and turn "no build
+        # for this platform" into a traceback mid-sync.
+        _iroh()
         self.device_id = device_id
         self.last_route: Route | None = None
         self._local = endpoint or shared_endpoint()

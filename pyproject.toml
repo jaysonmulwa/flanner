@@ -41,7 +41,21 @@ dependencies = [
     "pydantic>=2.5,<3",
     "mcp>=1.0,<2",
     "cryptography>=42,<50",
-    "iroh>=1.1,<2",
+    # Direct peer transport. Required only where the project publishes a
+    # wheel, because it publishes no sdist: without a marker, pip on an
+    # unsupported platform fails with "could not find a version", which
+    # reads as a broken package rather than an unsupported machine.
+    #
+    # Absent, the client still works. Peer sync falls back to an http
+    # address and `flanner peer serve --http`, and every entry point says
+    # so rather than raising.
+    #
+    # Not expressible here: musl. On Alpine the manylinux wheel does not
+    # match and the install fails anyway. See the README.
+    "iroh>=1.1,<2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "iroh>=1.1,<2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "iroh>=1.1,<2; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "iroh>=1.1,<2; sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
 
 [project.optional-dependencies]
