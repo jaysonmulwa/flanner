@@ -2615,8 +2615,9 @@ def mesh_status() -> None:
     if not runtime.installed():
         console.print("Mesh client not installed.", style="dim")
         console.print(
-            "Flanner works without one: peers sync over any network they already share.\n"
-            "Install it only if your devices cannot reach each other directly.",
+            "You almost certainly do not need one. 'flanner peer pull' reaches\n"
+            "devices wherever they are, without a VPN or administrator rights.\n"
+            "Run 'flanner peer status' to see how this machine is reached.",
             style="dim",
         )
         return
