@@ -170,7 +170,9 @@ def update_frontmatter(content: str, updates: dict[str, Any]) -> str:
 
     # Reconstruct
     post = frontmatter.Post(body, **fm_data)
-    return frontmatter.dumps(post)
+    # str(): dumps() is untyped, so its return is Any and would silently
+    # widen this function's contract to "anything at all".
+    return str(frontmatter.dumps(post))
 
 
 def create_plan_file_content(frontmatter_str: str, body: str) -> str:
@@ -235,7 +237,9 @@ def increment_version_in_frontmatter(content: str) -> str:
     fm_data["created_at"] = _utcnow().isoformat() + "Z"
 
     post = frontmatter.Post(body, **fm_data)
-    return frontmatter.dumps(post)
+    # str(): dumps() is untyped, so its return is Any and would silently
+    # widen this function's contract to "anything at all".
+    return str(frontmatter.dumps(post))
 
 
 _CLOSING_DELIMITER = "\n---\n"

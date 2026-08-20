@@ -94,6 +94,14 @@ warn_unreachable = true
 module = "flanner.mesh_conformance"
 ignore_errors = true
 
+# python-frontmatter ships no py.typed and has no stubs on typeshed. The
+# narrowest possible admission: this says nothing about our own code, and
+# the two values we take from it are converted at the call site rather
+# than trusted.
+[[tool.mypy.overrides]]
+module = "frontmatter"
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 99
 target-version = "py310"
