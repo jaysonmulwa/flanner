@@ -51,7 +51,8 @@ dependencies = [
     # so rather than raising.
     #
     # Not expressible here: musl. On Alpine the manylinux wheel does not
-    # match and the install fails anyway. See the README.
+    # match and the install fails anyway. Only upstream can fix it; the
+    # request is drafted in docs/upstream-iroh-musllinux.md. See the README.
     "iroh>=1.1,<2; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "iroh>=1.1,<2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "iroh>=1.1,<2; sys_platform == 'linux' and platform_machine == 'aarch64'",
