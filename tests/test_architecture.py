@@ -90,6 +90,8 @@ ALLOWED = {
         "mesh_netbird",
         # Choosing between transports means naming both of them.
         "peer_iroh",
+        # Joining re-roots existing plans, which is a write-path concern.
+        "plan_ops",
         "authz",
         "entitlements",
         "identity",

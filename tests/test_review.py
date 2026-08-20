@@ -476,30 +476,39 @@ def test_assurance_says_so_when_it_cannot_check_authorization(project, plan):
     assert any("authorization is unavailable" in w for w in verdict.warnings)
 
 
-def test_joining_warns_about_plans_written_before(project, plan):
-    """Found by dogfooding: those artifacts silently never sync.
+def test_joining_brings_existing_plans_into_the_workspace(project, plan):
+    """Found by dogfooding, then fixed rather than only warned about.
 
     The workspace id is inside the signed envelope, so joining cannot move
-    an existing artifact into the team's workspace. The team has to be told,
-    or they wait for plans that will never arrive.
+    an existing artifact. Each plan's current content is signed afresh into
+    the workspace instead, so a team that adopts flanner late can still see
+    each other's work.
     """
 
     session, proj = project
     result = _join(proj)
 
     assert result.exit_code == 0, result.output
+    assert "into the workspace" in result.output
+
+
+def test_joining_can_be_told_to_leave_history_alone(project, plan):
+    session, proj = project
+    result = _join(proj, "--no-adopt")
+
+    assert result.exit_code == 0, result.output
     assert "stay local and will not sync" in result.output
 
 
-def test_joining_a_project_with_no_history_says_nothing_about_it(project):
+def test_joining_a_project_with_no_plans_says_nothing_about_them(project):
     session, proj = project
     result = _join(proj)
 
     assert result.exit_code == 0
-    assert "will not sync" not in result.output
+    assert "into the workspace" not in result.output
 
 
-def _join(proj, workspace="ws_core"):
+def _join(proj, *flags, workspace="ws_core"):
     """Run `flanner join` against the database the fixtures built.
 
     The CLI finds its catalog at FLANNER_HOME/data.db, which is not where
@@ -514,5 +523,5 @@ def _join(proj, workspace="ws_core"):
 
     home = str(Path(get_db_path()).parent)
     return CliRunner(env={"FLANNER_HOME": home}).invoke(
-        cli, ["join", workspace, "--project", proj.name]
+        cli, ["join", workspace, "--project", proj.name, *flags]
     )

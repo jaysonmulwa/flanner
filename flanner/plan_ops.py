@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from . import artifacts
 from .database import (
+    ArtifactModel,
     PlanFileModel,
     ProjectModel,
     VersionModel,
@@ -461,3 +462,107 @@ def _parse_stamp(raw: Any) -> datetime | None:
         return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).replace(tzinfo=None)
     except (ValueError, TypeError):
         return None
+
+
+@dataclass(frozen=True)
+class Adoption:
+    """What joining a workspace carried across, and what it left behind."""
+
+    adopted: tuple[str, ...] = ()
+    already_there: tuple[str, ...] = ()
+    skipped: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def moved(self) -> int:
+        return len(self.adopted)
+
+
+def adopt_into_workspace(
+    session: Session,
+    *,
+    project: ProjectModel,
+    workspace_id: str,
+) -> Adoption:
+    """Re-root each plan's current content in a workspace it can sync from.
+
+    A workspace id sits inside the signed envelope, so joining a team cannot
+    move an artifact written before the join: re-signing it under the new
+    workspace would produce a different id, and the signature that made the
+    old one trustworthy would no longer describe anything. Without this, a
+    team that adopts flanner after six months finds their existing plans
+    invisible to each other, which reads as broken rather than as a design.
+
+    So the current head of each plan is signed afresh into the workspace,
+    with **no parents**. It is a root there, deliberately:
+
+    - Its real parent lives in a workspace nobody else can verify. Pointing
+      at it would hand every peer a link they can never resolve.
+    - The history is not lost. Every local artifact stays exactly as it was,
+      still verifiable, still on this machine. What does not travel is the
+      record of *how* the plan reached its current state.
+
+    That is the trade, and it is the honest one: teammates get the content
+    they need today, and nobody is told a lineage crossed a boundary it
+    did not. A plan with no signed version yet is skipped rather than
+    invented.
+
+    Idempotent. Adopting twice does nothing the second time, because the
+    head is already in the workspace.
+    """
+    from .database import list_plan_files as _list_plan_files
+
+    adopted: list[str] = []
+    already: list[str] = []
+    skipped: list[tuple[str, str]] = []
+
+    for plan_file in _list_plan_files(session, project.id):
+        latest = get_version(session, plan_file.id, None)
+        if latest is None:
+            skipped.append((plan_file.name, "no versions"))
+            continue
+        if not latest.content_hash:
+            skipped.append((plan_file.name, "no content hash"))
+            continue
+
+        current = (
+            session.query(ArtifactModel).filter_by(artifact_id=latest.artifact_id).first()
+            if latest.artifact_id
+            else None
+        )
+        if current is not None and current.workspace_id == workspace_id:
+            already.append(plan_file.name)
+            continue
+
+        artifact = artifacts.make_artifact(
+            artifact_type=artifacts.PLAN_VERSION,
+            workspace_id=workspace_id,
+            content_hash=latest.content_hash,
+            plan_file_id=str(plan_file.id),
+            parents=(),
+            actor_user_id=latest.created_by or "user",
+        )
+        save_artifact(
+            session,
+            artifact_id=artifact.artifact_id,
+            artifact_type=artifact.artifact_type,
+            workspace_id=artifact.workspace_id,
+            content_hash=artifact.content_hash,
+            plan_file_id=artifact.plan_file_id,
+            parents=list(artifact.parents),
+            created_at=artifact.created_at,
+            actor_device_id=artifact.actor_device_id,
+            actor_user_id=artifact.actor_user_id,
+            signature=artifact.signature,
+            organization_id=artifact.organization_id,
+        )
+        # The version row names the artifact that speaks for this version,
+        # and after adoption that is the new one. Repointing it is what
+        # makes the content reachable to a peer, because a plan version's
+        # payload is found through this row, and what makes the *next*
+        # version chain into the workspace rather than back across the
+        # boundary.
+        latest.artifact_id = artifact.artifact_id
+        adopted.append(plan_file.name)
+
+    session.commit()
+    return Adoption(adopted=tuple(adopted), already_there=tuple(already), skipped=tuple(skipped))

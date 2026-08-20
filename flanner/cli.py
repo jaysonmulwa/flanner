@@ -2233,7 +2233,14 @@ def _print_entitlement(current: Any) -> None:
 @click.argument("workspace_id", required=False)
 @click.option("--project", default=None, help="Project name (uses current directory if omitted)")
 @click.option("--clear", "clear_binding", is_flag=True, help="Leave the workspace")
-def join(workspace_id: str | None, project: str | None, clear_binding: bool) -> None:
+@click.option(
+    "--no-adopt",
+    is_flag=True,
+    help="Do not bring existing plans into the workspace",
+)
+def join(
+    workspace_id: str | None, project: str | None, clear_binding: bool, no_adopt: bool
+) -> None:
     """Bind a project to a control-plane workspace, making review binding
 
     Until a project joins one, review runs but authorizes nothing. After it
@@ -2262,26 +2269,46 @@ def join(workspace_id: str | None, project: str | None, clear_binding: bool) -> 
         console.print("Review still runs here, but it authorizes nothing.", style="dim")
         return
 
-    from .database import ArtifactModel
+    from .plan_ops import adopt_into_workspace
 
-    # Anything written before the join carries a locally derived workspace
-    # id, and that id is inside the signed envelope, so joining cannot move
-    # it. Saying nothing would leave a team wondering why their existing
-    # plans never appear on anyone else's machine.
-    stranded = session.query(ArtifactModel).filter_by(workspace_id=f"local:{proj.id}").count()
+    # The guard at the top requires one of a workspace id or --clear, and
+    # --clear has returned by now. Repeated as a real check rather than an
+    # assertion, which `python -O` would strip.
+    if not workspace_id:
+        console.print("ERROR Give a workspace id.", style="red")
+        raise SystemExit(1)
 
     proj.workspace_id = workspace_id
     session.commit()
     console.print(f"OK '{proj.name}' joined workspace {workspace_id}", style="green")
-    if stranded:
+
+    if no_adopt:
+        console.print("Existing plans stay local and will not sync, as asked.", style="yellow")
         console.print(
-            f"WARN {stranded} artifact(s) written before joining stay local and will not sync.",
-            style="yellow",
-        )
-        console.print(
-            "      A new version of a plan will belong to the team; its history will not.",
+            "      Run 'flanner join' again without --no-adopt to bring them across.",
             style="dim",
         )
+        return
+
+    # A workspace id is inside the signed envelope, so joining cannot move
+    # what was written before it. Each plan's current content is signed
+    # afresh into the workspace instead, as a root there.
+    report = adopt_into_workspace(session, project=proj, workspace_id=workspace_id)
+    if report.moved:
+        console.print(
+            f"Brought {report.moved} plan(s) into the workspace: " + ", ".join(report.adopted),
+            style="green",
+        )
+        console.print(
+            "      Their current content syncs from now on. Earlier history"
+            " stays on this machine, because it was signed for a workspace"
+            " nobody else can verify.",
+            style="dim",
+        )
+    if report.already_there:
+        console.print(f"already in this workspace: {len(report.already_there)}", style="dim")
+    for name, why in report.skipped:
+        console.print(f"skipped {name}: {why}", style="dim")
 
     from . import authz
 
