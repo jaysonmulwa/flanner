@@ -6,6 +6,80 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+Team sync. Everything below the local plan manager is unchanged: flanner
+still runs with no account, no network and no daemon, and everything new
+here is opt-in. Plan content is never uploaded — the hosted control plane
+holds accounts, devices and access, and nothing else.
+
+### Added
+
+- **Device identity and signed artifacts.** Every plan version, proposal,
+  decision and comment is an append-only, content-addressed artifact signed
+  by an Ed25519 key that never leaves the machine. A device id is the hash
+  of its public key, so nothing assigns it.
+- **Peer sync.** `flanner peer serve` and `flanner peer pull <device-id>`
+  exchange artifacts directly between machines over iroh, with NAT
+  traversal and a relay fallback. No listening port, no VPN and no
+  administrator rights. Artifacts are verified against their *author's*
+  key, not against the peer that handed them over.
+- **Push.** `flanner peer push` sends a peer what it lacks, rather than
+  waiting to be asked. Bounded by the sender's workspace role per artifact,
+  by size and rate, and refusable outright with `FLANNER_ACCEPT_PUSHES=0`.
+  Receiving adds to your history; it never moves your working copy.
+- **Catch-up pull** from known peers when the daemon starts, so a machine
+  that was asleep does not need to be pushed to.
+- **Review.** `flanner review propose`, `decide` and `status` record signed
+  proposals and decisions, with an accepted baseline that a synced proposal
+  cannot replace and a conflict state when two people accept offline.
+- **Comments.** `flanner review comment` attaches a note to a *quotation*
+  rather than a line number. A comment whose text has since changed says it
+  lost its place instead of sliding onto a sentence nobody commented on.
+- **Review packets.** `flanner review pack` writes a self-contained HTML
+  file for somebody with no account and no client; `flanner review import`
+  reads their notes back in, recorded as received rather than authored.
+- **Retiring a plan.** `flanner retire` records a claim that peers hide the
+  plan and stop serving it. Deliberately not a deletion: nothing is erased,
+  and `--restore` brings it back.
+- **Accounts and access.** `flanner login`, `flanner join`, `flanner
+  devices` and `flanner whoami`. Entitlements are short-lived, signed, and
+  checked offline, so a device keeps working on a train.
+- **Workspace roles** — `reader`, `commenter`, `editor`, `maintainer` — now
+  enforced rather than advisory, in review, in assurance and on push.
+- **Plan assurance and workspace policy**, so an agent can state the exact
+  artifact, freshness evidence and approval it relied on.
+- **New CLI commands**: `history`, `diff`, `why`, `doctor`.
+- **A local daemon** with authenticated IPC, atomic writes and
+  cross-process locking, so two MCP clients cannot corrupt shared state.
+- **Provider-neutral mesh seam** and a portability conformance suite.
+
+### Changed
+
+- **The command line has one look.** A single palette, borderless tables
+  and consistent status glyphs across every command, degrading to ASCII on
+  a console that cannot encode them rather than crashing.
+- **The local web UI is rebuilt**: new shell and stylesheet, self-hosted
+  variable fonts, three-state theming, navigation that swaps in place, and
+  new Mesh, Review, Freshness and Settings pages.
+- **Sync is no longer pull-only**, so documentation that described it that
+  way has been corrected.
+- Settings now reports what this device is holding, and states plainly that
+  flanner never prunes.
+
+### Fixed
+
+- Saving a plan from the browser created an identical new version every
+  time, because textareas submit CRLF and the comparison hashed raw bytes.
+- The projects list ignored its own sort control.
+- Filtered table rows stayed visible: `[hidden]` lost to `display: grid`.
+- A filled-circle glyph crashed the CLI on a Windows console still running
+  cp1252.
+- Several stylesheet rules existed only inside the mobile media query, so
+  command blocks, filter controls, footnotes and notices rendered unstyled
+  on a wide screen.
+- The wheel shipped without its stylesheets, because `package-data` did not
+  include `static/`.
+
+
 ## [0.8.0] - 2026-08-05
 
 ### Added
