@@ -26,6 +26,17 @@ ALLOWED = {
     "freshness": {"utils"},
     "ipc": set(),
     "identity": set(),
+    # Palette and table shapes for the command line. Presentation only,
+    # so it imports nothing from the package and nothing may import it
+    # except the surfaces that print.
+    "tui": set(),
+    # A plan rendered as one standalone file. Pure: it is handed the text
+    # and returns a string, so it reads no database and touches no network.
+    "packet": set(),
+    # Where a comment is attached and whether it still holds. Pure text
+    # matching over a rendered plan; it renders through packet rather than
+    # keeping a third copy of the markdown configuration.
+    "anchors": {"packet"},
     # The provider seam: mesh is pure protocol, and only an adapter may
     # know a vendor. No core module may import an adapter (PRD §10.1).
     "mesh": set(),
@@ -48,14 +59,25 @@ ALLOWED = {
     "authz": {"workflow", "session", "entitlements", "database", "plan_ops"},
     # Peer transport. Talks to other devices, never to the control plane,
     # so it may not import account any more than a read command may.
-    "peer": {"entitlements", "identity", "sync", "device_auth"},
+    "peer": {"entitlements", "identity", "sync", "device_auth", "push"},
     # The transport carries what peer decides; it never decides anything
     # itself, so it reaches for peer and the device key and nothing else.
     "peer_iroh": {"identity", "peer", "session"},
     "workflow": {"artifacts"},
     "assurance": FOUNDATION
     | {"artifacts", "identity", "workflow", "database", "freshness", "authz"},
-    "review": FOUNDATION | {"workflow", "assurance", "database", "plan_ops", "authz"},
+    "review": FOUNDATION
+    | {
+        "workflow",
+        "assurance",
+        "database",
+        "plan_ops",
+        "authz",
+        # A comment quotes the plan it is attached to, so recording one means
+        # reading that version and checking the quotation is really in it.
+        "anchors",
+        "storage",
+    },
     "sync": FOUNDATION | {"artifacts", "database"},
     "reconcile": FOUNDATION | {"database", "artifacts", "identity"},
     "services": FOUNDATION
@@ -64,11 +86,47 @@ ALLOWED = {
     "linear_api": {"exceptions", "linear_utils"},
     "server": FOUNDATION
     | {"database", "storage", "freshness", "services", "artifacts", "assurance", "review"},
-    "web": FOUNDATION | {"database", "storage", "plan_ops", "ipc", "services"},
+    # The web UI reads freshness and MCP registration state so the Freshness
+    # and Settings pages cannot disagree with what the CLI prints. Both are
+    # pure local reads - freshness depends only on utils, claude_integration
+    # on nothing - so neither widens the read path toward the network.
+    "push": {"artifacts", "sync", "workflow", "database"},
+    "web": FOUNDATION
+    | {
+        "database",
+        "storage",
+        "plan_ops",
+        "ipc",
+        "services",
+        "freshness",
+        "claude_integration",
+        # The Mesh and Review pages read the same state the CLI prints.
+        # Both are local reads: `session` is a cached file, `review` is a
+        # projection over rows already in this database. Neither can reach
+        # `account`, which the reachability test below is what guarantees.
+        "session",
+        "review",
+        # Comments are shown against the version on screen, so the page has
+        # to ask whether each one still finds its text.
+        "anchors",
+        # Outside review is read separately from the projection that decides
+        # a plan's baseline, and shown separately too.
+        "assurance",
+        # Reads the key file this machine generated, so the Mesh page can
+        # name the device even before it has ever joined a team.
+        "identity",
+    },
     "agent_hooks": FOUNDATION | {"database"},
     "plan_ops": FOUNDATION | {"database", "storage", "artifacts"},
     "cli": FOUNDATION
     | {
+        "tui",
+        # Writes a plan out as a standalone file, and reads back the notes
+        # an outside reviewer returned. Both are local reads of local state.
+        "packet",
+        "assurance",
+        # `review status` resolves each comment against the newest version.
+        "anchors",
         "database",
         "storage",
         "server",

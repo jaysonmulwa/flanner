@@ -3,7 +3,7 @@
 Every installation owns an Ed25519 key pair (PRD §11.2). It signs the
 artifacts this device produces, so a peer can verify who wrote a plan
 version without trusting the transport that carried it, and without asking
-Flanner Cloud. The private key never leaves the machine.
+Flanner Mesh. The private key never leaves the machine.
 
 The device id is derived from the public key rather than assigned, so an
 offline installation has a stable identity from first use and the control

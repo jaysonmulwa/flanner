@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from . import artifacts, authz, identity, workflow
 from .artifacts import Artifact
 from .database import (
+    ArtifactModel,
     PlanFileModel,
     ProjectModel,
     get_version,
@@ -93,6 +94,85 @@ class Assurance:
             "warnings": list(self.warnings),
             "authorization": self.authorization,
         }
+
+
+def count_review_subjects(session: Session) -> int:
+    """How many plans have anything on the Review page.
+
+    One distinct query rather than projecting review state for every plan,
+    because this runs on every page render to draw a sidebar badge. It
+    counts subjects, not open questions: a plan with a settled proposal and
+    a comment counts once, which is also how the page lists it.
+
+    Here rather than in `database` because it names artifact types, and the
+    database layer sits below the module that defines them.
+    """
+    return (
+        session.query(ArtifactModel.plan_file_id)
+        .filter(
+            ArtifactModel.plan_file_id.isnot(None),
+            ArtifactModel.artifact_type.in_(
+                (artifacts.COMMENT, artifacts.REVIEW_PROPOSAL, artifacts.REVIEW_EXTERNAL)
+            ),
+        )
+        .distinct()
+        .count()
+    )
+
+
+def load_comments(session: Session, plan_file_id: str) -> list[workflow.Event]:
+    """Notes teammates left on a plan, oldest first.
+
+    Read apart from `load_review_events` for the same reason outside review
+    is: those events decide a plan's accepted baseline, and an opinion about
+    a paragraph must not move it.
+    """
+    return _load_typed(session, plan_file_id, artifacts.COMMENT)
+
+
+def load_external_reviews(session: Session, plan_file_id: str) -> list[workflow.Event]:
+    """Notes imported from outside the mesh.
+
+    Deliberately not part of ``load_review_events``. Those feed the
+    projection that decides a plan's accepted baseline, and an outsider's
+    unsigned note must never move that. This is commentary; it is read
+    separately and shown separately.
+    """
+    return _load_typed(session, plan_file_id, artifacts.REVIEW_EXTERNAL)
+
+
+def _load_typed(session: Session, plan_file_id: str, wanted: str) -> list[workflow.Event]:
+    """Every artifact of one type, with its payload, oldest first."""
+    events: list[workflow.Event] = []
+    for row in list_artifacts(session, plan_file_id=plan_file_id):
+        if row.artifact_type != wanted or row.payload is None:
+            continue
+        try:
+            payload = json.loads(row.payload)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        events.append(
+            workflow.Event(
+                artifact=Artifact(
+                    artifact_type=row.artifact_type,
+                    workspace_id=row.workspace_id,
+                    content_hash=row.content_hash,
+                    actor_device_id=row.actor_device_id,
+                    created_at=row.created_at,
+                    artifact_id=row.artifact_id,
+                    signature=row.signature,
+                    protocol_version=row.protocol_version,
+                    organization_id=row.organization_id,
+                    plan_file_id=row.plan_file_id,
+                    actor_user_id=row.actor_user_id,
+                    parents=(),
+                ),
+                payload=payload,
+            )
+        )
+    return events
 
 
 def load_review_events(session: Session, plan_file_id: str) -> list[workflow.Event]:

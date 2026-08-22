@@ -255,6 +255,11 @@ class Device:
         with self.active():
             return peer.pull(self.session, address, workspace_id, self.held)
 
+    def push_to(self, address, workspace_id=WORKSPACE):
+        """Push as this device, with its own home and its own key."""
+        with self.active():
+            return peer.push(self.session, address, workspace_id, self.held)
+
 
 @pytest.fixture
 def serve():
@@ -298,10 +303,10 @@ def link(alice, bob):
     bob.sign_in(device_keys=keys)
 
 
-def a_stored_artifact(session, *, key, workspace=WORKSPACE, body="# plan\n"):
+def a_stored_artifact(session, *, key, workspace=WORKSPACE, body="# plan\n", artifact_type=None):
     """An artifact genuinely signed by a given device key."""
     artifact = artifacts.make_artifact(
-        artifact_type=artifacts.REVIEW_PROPOSAL,
+        artifact_type=artifact_type or artifacts.REVIEW_PROPOSAL,
         workspace_id=workspace,
         content_hash=artifacts.hash_text(body),
         signing_key=key,
@@ -504,3 +509,235 @@ def test_an_entitlement_without_team_sync_cannot_peer(issuer_key):
     request = a_peer_request(issuer_key, features=())
     with pytest.raises(peer.PeerError, match="does not include team sync"):
         peer.authorize(request, WORKSPACE, keyring_of(issuer_key))
+
+
+# --- push ------------------------------------------------------------------
+#
+# Push is the one operation where a peer hands over data nobody asked for.
+# These tests are mostly about what must NOT get through, because the thing
+# that gets through is the easy half.
+
+
+def test_an_artifact_crosses_when_pushed(alice, bob, serve):
+    """The mirror of pulling, initiated from the other end."""
+    link(alice, bob)
+    artifact = a_stored_artifact(alice.session, key=alice.signing_key())
+    address = serve(peer.create_peer_app(bob.sessions, bob.held))
+
+    report = alice.push_to(address)
+
+    assert report.ok, report.rejected
+    assert report.accepted == [artifact.artifact_id]
+    assert get_artifact(bob.session, artifact.artifact_id) is not None
+
+
+def test_pushing_again_sends_nothing(alice, bob, serve):
+    """The offer round trip is what makes a repeat push nearly free."""
+    link(alice, bob)
+    artifact = a_stored_artifact(alice.session, key=alice.signing_key())
+    address = serve(peer.create_peer_app(bob.sessions, bob.held))
+
+    alice.push_to(address)
+    again = alice.push_to(address)
+
+    assert again.ok
+    assert again.accepted == []
+    assert again.already_held == [artifact.artifact_id]
+
+
+def test_an_echoed_push_costs_one_offer_and_no_upload(alice, bob, serve):
+    """B pushing back what A just sent must not re-upload it.
+
+    Content addressing makes an echo harmless but not free. The offer step
+    is what keeps it cheap, which is why there is no provenance field
+    recording who sent what: the handshake already answers it.
+    """
+    link(alice, bob)
+    artifact = a_stored_artifact(alice.session, key=alice.signing_key())
+    alice.push_to(serve(peer.create_peer_app(bob.sessions, bob.held)))
+
+    back = bob.push_to(serve(peer.create_peer_app(alice.sessions, alice.held)))
+
+    assert back.ok
+    assert back.accepted == []
+    assert back.already_held == [artifact.artifact_id]
+
+
+def test_a_pushed_artifact_signed_by_an_unknown_device_is_refused(alice, bob, serve):
+    """Push does not change who is believed, only who starts the exchange."""
+    link(alice, bob)
+    artifact = a_stored_artifact(alice.session, key=Ed25519PrivateKey.generate())
+    address = serve(peer.create_peer_app(bob.sessions, bob.held))
+
+    report = alice.push_to(address)
+
+    assert report.accepted == []
+    assert any("no known key" in reason for _, reason in report.rejected)
+    assert get_artifact(bob.session, artifact.artifact_id) is None
+
+
+def test_a_pushed_artifact_cannot_be_rewritten_in_flight(alice, bob, serve):
+    """Alice may relay what Bob signed. She may not edit it on the way."""
+    link(alice, bob)
+    artifact = a_stored_artifact(alice.session, key=alice.signing_key())
+    row = alice.session.query(ArtifactModel).filter_by(artifact_id=artifact.artifact_id).one()
+    row.payload = "# not what was signed\n"
+    alice.session.commit()
+    address = serve(peer.create_peer_app(bob.sessions, bob.held))
+
+    report = alice.push_to(address)
+
+    assert report.accepted == []
+    assert get_artifact(bob.session, artifact.artifact_id) is None
+
+
+def test_a_device_that_refuses_pushes_still_serves_reads(alice, bob, serve, monkeypatch):
+    """Saying no to pushes is a posture, not a fault."""
+    link(alice, bob)
+    artifact = a_stored_artifact(alice.session, key=alice.signing_key())
+    monkeypatch.setenv("FLANNER_ACCEPT_PUSHES", "0")
+    address = serve(peer.create_peer_app(bob.sessions, bob.held))
+
+    refused = alice.push_to(address)
+    assert refused.accepted == []
+    assert any("not accepting pushes" in reason for _, reason in refused.rejected)
+
+    # The same device, the same moment: reading is untouched.
+    pulled = bob.pull_from(serve(peer.create_peer_app(alice.sessions, alice.held)))
+    assert pulled.accepted == [artifact.artifact_id]
+
+
+def test_pushing_needs_a_current_entitlement_not_merely_a_usable_one(issuer_key):
+    """A device answering a push is online, so grace does not apply.
+
+    This is the whole revoked-device window: with grace, a device revoked at
+    the control plane could still write for the grace period plus a
+    lifetime. Without it, the window is one entitlement lifetime.
+    """
+    expired = datetime.now(timezone.utc) - timedelta(minutes=5)
+    signing = Ed25519PrivateKey.generate()
+    device_id = identity.device_id_for(signing.public_key())
+    claims = Claims(
+        features=(TEAM_SYNC,),
+        organization_id="org_1",
+        user_id="maria",
+        device_id=device_id,
+        key_id="sk_1",
+        issued_at=(expired - timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+        expires_at=expired.isoformat().replace("+00:00", "Z"),
+        workspace_capabilities=(WorkspaceCapability(workspace_id=WORKSPACE, role=MAINTAINER),),
+    )
+    request = sign_request(
+        {
+            "workspace_id": WORKSPACE,
+            "public_key": public_key_b64(signing.public_key()),
+            "entitlement": encode_token(
+                claims, sign(canonical_bytes(claims.to_dict()), issuer_key)
+            ),
+        },
+        device_id=device_id,
+        signing_key=signing,
+    ).to_dict()
+
+    # Reading is fine: being offline for a weekend is not a security event.
+    assert peer.authorize(request, WORKSPACE, keyring_of(issuer_key)).role == MAINTAINER
+
+    with pytest.raises(peer.PeerError, match="needs a current entitlement"):
+        peer.authorize(request, WORKSPACE, keyring_of(issuer_key), strict=True)
+
+
+def test_a_reader_cannot_push_a_plan_version(alice, bob, serve):
+    """Reading a workspace and writing to it are different permissions.
+
+    Until push existed, everything below MAINTAINER was unused and the roles
+    were decorative. This is the test that makes them mean something.
+    """
+    keys = {alice.device_id: alice.public_key, bob.device_id: bob.public_key}
+    alice.sign_in(role=READER, device_keys=keys)
+    bob.sign_in(device_keys=keys)
+    artifact = a_stored_artifact(alice.session, key=alice.signing_key())
+    address = serve(peer.create_peer_app(bob.sessions, bob.held))
+
+    report = alice.push_to(address)
+
+    assert report.accepted == []
+    assert any("may not push" in reason for _, reason in report.rejected)
+    assert get_artifact(bob.session, artifact.artifact_id) is None
+
+
+def test_one_over_reaching_artifact_does_not_discard_the_rest(alice, bob, serve):
+    """Refusals are per artifact, so a batch is not all-or-nothing."""
+    from flanner.workflow import COMMENTER
+
+    keys = {alice.device_id: alice.public_key, bob.device_id: bob.public_key}
+    alice.sign_in(role=COMMENTER, device_keys=keys)
+    bob.sign_in(device_keys=keys)
+    allowed = a_stored_artifact(
+        alice.session, key=alice.signing_key(), artifact_type=artifacts.COMMENT, body="a note"
+    )
+    refused = a_stored_artifact(alice.session, key=alice.signing_key(), body="# a version\n")
+    address = serve(peer.create_peer_app(bob.sessions, bob.held))
+
+    report = alice.push_to(address)
+
+    assert report.accepted == [allowed.artifact_id]
+    assert [a for a, _ in report.rejected] == [refused.artifact_id]
+    assert get_artifact(bob.session, allowed.artifact_id) is not None
+    assert get_artifact(bob.session, refused.artifact_id) is None
+
+
+# --- catch-up --------------------------------------------------------------
+
+
+def test_catching_up_pulls_from_every_known_peer(alice, bob, serve):
+    """What a device that was asleep does instead of being pushed to."""
+    link(alice, bob)
+    artifact = a_stored_artifact(alice.session, key=alice.signing_key())
+    address = serve(peer.create_peer_app(alice.sessions, alice.held))
+
+    with bob.active():
+        reports = peer.catch_up(
+            bob.session,
+            [WORKSPACE],
+            bob.held,
+            dial=lambda device_id, workspace_id: peer.RemotePeer(address, workspace_id, bob.held),
+        )
+
+    assert list(reports) == [f"{alice.device_id}/{WORKSPACE}"]
+    assert reports[f"{alice.device_id}/{WORKSPACE}"].accepted == [artifact.artifact_id]
+    assert get_artifact(bob.session, artifact.artifact_id) is not None
+
+
+def test_catching_up_never_dials_itself(alice, bob, serve):
+    link(alice, bob)
+    dialled = []
+
+    def dial(device_id, workspace_id):
+        dialled.append(device_id)
+        raise peer.PeerError("unreachable")
+
+    with bob.active():
+        peer.catch_up(bob.session, [WORKSPACE], bob.held, dial=dial)
+
+    assert dialled == [alice.device_id]
+
+
+def test_an_unreachable_peer_is_a_result_not_a_crash(alice, bob):
+    """Most peers are asleep at any moment. A shut laptop must never be a
+    reason this device cannot start."""
+    link(alice, bob)
+
+    def dial(device_id, workspace_id):
+        raise OSError("no route to host")
+
+    with bob.active():
+        reports = peer.catch_up(bob.session, [WORKSPACE], bob.held, dial=dial)
+
+    report = reports[f"{alice.device_id}/{WORKSPACE}"]
+    assert not report.ok
+    assert "no route to host" in report.rejected[0][1]
+
+
+def test_catching_up_while_signed_out_does_nothing(bob):
+    """No session means no keyring, so there is nobody to trust or to ask."""
+    assert peer.catch_up(bob.session, [WORKSPACE], lambda: None) == {}

@@ -42,12 +42,30 @@ MAX_PAYLOAD_BYTES = 8 * 1024 * 1024
 # serving side and an all-or-nothing failure on ours.
 MAX_FETCH_BATCH = 100
 
+# Push is the one operation where a peer hands us data we did not ask for,
+# so it is capped harder than fetch in both directions. A fetch batch is
+# bounded because *we* chose to want that much; a push batch is bounded
+# because somebody else did.
+MAX_PUSH_BATCH = 50
+
+# Total payload bytes in one push. `MAX_PAYLOAD_BYTES` already bounds any
+# single artifact; this bounds the request, so fifty maximum-size artifacts
+# cannot arrive as one 400 MB allocation.
+MAX_PUSH_BYTES = 16 * 1024 * 1024
+
+# Pushes one device may make in `PUSH_WINDOW` seconds. Authorised is not the
+# same as careful: a colleague running a script in a loop must not be able
+# to fill your disk, and the limit is per device so one misbehaving laptop
+# cannot lock out the rest of the team.
+PUSH_WINDOW = 60.0
+MAX_PUSHES_PER_WINDOW = 30
+
 
 @dataclass(frozen=True)
 class Manifest:
     """What one peer holds for a workspace.
 
-    Sent only to an already-authorized peer, and never to Flanner Cloud or
+    Sent only to an already-authorized peer, and never to Flanner Mesh or
     the network provider: the id set alone would disclose the shape of a
     team's planning activity (PRD §14.3).
     """
@@ -172,7 +190,17 @@ def ingest_artifact(
 
     public_key = resolve_key(artifact.actor_device_id)
     if not public_key:
-        return artifacts.Verdict(False, f"no known key for device {artifact.actor_device_id}")
+        # Two very different situations, and we cannot tell them apart from
+        # here: a revoked or forged device, or a new teammate whose key this
+        # device has not learned yet. Both are refused, because guessing
+        # wrong in the permissive direction is the expensive mistake. The
+        # message names the recoverable one so somebody reading a refusal
+        # knows there is something to try.
+        return artifacts.Verdict(
+            False,
+            f"no known key for device {artifact.actor_device_id}"
+            " (sign in again if this is a new teammate)",
+        )
 
     verdict = artifacts.verify_artifact(artifact, public_key)
     if not verdict:

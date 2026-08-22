@@ -51,6 +51,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import entitlements, identity, sync
+from . import push as push_rules
 from .device_auth import SignedRequest, sign_request, verify_request
 from .sync import Manifest
 
@@ -91,8 +92,12 @@ def authorize(
     issuer_keyring: dict[str, str],
     *,
     now: Any = None,
+    strict: bool = False,
 ) -> PeerIdentity:
-    """Decide whether a caller may read this workspace. Raises if not.
+    """Decide whether a caller may reach this workspace. Raises if not.
+
+    ``strict`` refuses an entitlement that is merely inside its grace
+    window. Set it for operations that write.
 
     Never trusts a claimed device id. The public key travels with the
     request and must hash to the id it claims, which is what lets this work
@@ -122,6 +127,13 @@ def authorize(
     )
     if not verdict.usable or verdict.claims is None:
         raise PeerError(f"entitlement is {verdict.status}")
+    # Reading tolerates a grace-period entitlement, because refusing somebody
+    # who spent a weekend offline is not security. Writing does not: a device
+    # answering a push request is online, so it cannot claim it was unable to
+    # check. This is what keeps a revoked device's write window down to one
+    # entitlement lifetime instead of a lifetime plus the grace period.
+    if strict and verdict.status != entitlements.VALID:
+        raise PeerError(f"pushing needs a current entitlement, and this one is {verdict.status}")
     if verdict.claims.device_id != request.device_id:
         raise PeerError("that entitlement was issued to a different device")
 
@@ -145,6 +157,41 @@ def authorize(
 
 MANIFEST = "manifest"
 FETCH = "fetch"
+#: A sender naming what it has, so the receiver can say what it lacks. Two
+#: round trips rather than one on purpose: a sender that ships everything
+#: blindly wastes exactly the bandwidth this design exists to save, and it
+#: is also what makes an echo — B pushing back what A just sent — cost one
+#: small request instead of a re-upload.
+OFFER = "offer"
+PUSH = "push"
+
+#: Operations that write. Held apart from the read ones because the
+#: entitlement rule differs and that difference must be impossible to miss.
+WRITES = frozenset({OFFER, PUSH})
+
+
+def accepting_pushes() -> bool:
+    """Whether this device takes artifacts it did not ask for.
+
+    On by default: every peer in a mesh is already an authorised teammate,
+    and accepting cannot overwrite anything. A laptop on a metered
+    connection can opt out with ``FLANNER_ACCEPT_PUSHES=0``, and saying no
+    is a plain answer rather than an error — a device that refuses pushes
+    is still a good citizen and still serves every read.
+    """
+    import os
+
+    return os.environ.get("FLANNER_ACCEPT_PUSHES", "1").strip().lower() not in {
+        "0",
+        "no",
+        "false",
+        "off",
+    }
+
+
+#: Rate limiting is per process and per device. Module level so it survives
+#: between requests, which is the only way a window means anything.
+_pushes = push_rules.RateLimiter()
 
 
 def serve_request(
@@ -175,18 +222,53 @@ def serve_request(
     if not workspace_id:
         raise PeerError("workspace_id is required", status=400)
 
+    wanted: list[str] = []
+    items: list[dict[str, Any]] = []
     if operation == FETCH:
         wanted = [str(x) for x in (body.get("artifact_ids") or [])]
         if len(wanted) > sync.MAX_FETCH_BATCH:
             raise PeerError(f"at most {sync.MAX_FETCH_BATCH} artifacts per request", status=413)
+    elif operation in WRITES:
+        # Answered before authorising, because "I do not accept pushes" is
+        # not a secret and making a sender prove itself only to be told no
+        # wastes both sides' time. It is a 200-level fact expressed as a
+        # refusal, not a failure: the device is healthy and still serves
+        # every read.
+        if not accepting_pushes():
+            raise PeerError("this device is not accepting pushes", status=403)
+        if operation == OFFER:
+            wanted = [str(x) for x in (body.get("artifact_ids") or [])]
+            if len(wanted) > sync.MAX_PUSH_BATCH:
+                raise PeerError(f"at most {sync.MAX_PUSH_BATCH} artifacts per offer", status=413)
+        else:
+            items = [x for x in (body.get("artifacts") or []) if isinstance(x, dict)]
+            too_big = push_rules.check_batch(items)
+            if too_big:
+                raise PeerError(too_big, status=413)
     elif operation != MANIFEST:
         raise PeerError(f"unknown operation: {operation}", status=404)
 
-    authorize(payload, workspace_id, dict(current.keyring))
+    caller = authorize(payload, workspace_id, dict(current.keyring), strict=operation in WRITES)
+
+    # After authorisation, so the limit is keyed to a device id that was
+    # actually proved rather than one a caller asserted.
+    if operation == PUSH and not _pushes.allow(caller.device_id):
+        raise PeerError("too many pushes; try again shortly", status=429)
 
     with sessions() as session:
         if operation == MANIFEST:
             return dict(sync.build_manifest(session, workspace_id).to_dict())
+
+        if operation in WRITES:
+            return _serve_write(
+                operation,
+                session,
+                caller,
+                workspace_id,
+                wanted,
+                items,
+                current.resolve_device_key,
+            )
 
         local = sync.LocalPeer(session)
         out = []
@@ -205,6 +287,36 @@ def serve_request(
                 }
             )
         return {"artifacts": out}
+
+
+def _serve_write(
+    operation: str,
+    session: Any,
+    caller: PeerIdentity,
+    workspace_id: str,
+    wanted: list[str],
+    items: list[dict[str, Any]],
+    resolve_key: Any,
+) -> dict[str, Any]:
+    """The receiving half of a push: say what is missing, then take it in."""
+    if operation == OFFER:
+        # Only the subset we lack, so the sender uploads nothing we already
+        # hold. Ids offered for another workspace are simply not asked for.
+        held = sync.build_manifest(session, workspace_id).artifact_ids
+        return {"wanted": sorted(set(wanted) - set(held))}
+
+    report = push_rules.accept(
+        session,
+        items,
+        workspace_id=workspace_id,
+        role=caller.role,
+        resolve_key=resolve_key,
+    )
+    return {
+        "accepted": report.accepted,
+        "already_held": report.already_held,
+        "rejected": [{"artifact_id": a, "reason": r} for a, r in report.rejected],
+    }
 
 
 def create_peer_app(sessions: Any, held: Any) -> Any:
@@ -233,6 +345,16 @@ def create_peer_app(sessions: Any, held: Any) -> Any:
     def fetch(payload: dict[str, Any]) -> dict[str, Any]:
         """Hand over specific artifacts, and only from the named workspace."""
         return _serve(FETCH, payload)
+
+    @app.post("/peer/offer")
+    def offer(payload: dict[str, Any]) -> dict[str, Any]:
+        """Which of these artifacts this device does not already hold."""
+        return _serve(OFFER, payload)
+
+    @app.post("/peer/push")
+    def receive(payload: dict[str, Any]) -> dict[str, Any]:
+        """Take in artifacts a peer sent, each verified against its author."""
+        return _serve(PUSH, payload)
 
     return app
 
@@ -362,6 +484,19 @@ class RemotePeer:
                 out.append((envelope, blob.encode("utf-8") if blob is not None else None))
         return out
 
+    def offer(self, artifact_ids: list[str]) -> list[str]:
+        """Ask which of these the peer lacks. Never sends the artifacts."""
+        out: list[str] = []
+        for start in range(0, len(artifact_ids), sync.MAX_PUSH_BATCH):
+            batch = artifact_ids[start : start + sync.MAX_PUSH_BATCH]
+            body = self._post(OFFER, {"workspace_id": self._workspace, "artifact_ids": batch})
+            out.extend(str(x) for x in (body.get("wanted") or []))
+        return out
+
+    def push(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        """Upload artifacts the peer said it wanted."""
+        return self._post(PUSH, {"workspace_id": self._workspace, "artifacts": items})
+
 
 def pull(
     session: Any,
@@ -391,6 +526,154 @@ def pull(
     return sync.sync_from_peer(session, peer, workspace_id, current.resolve_device_key)
 
 
+def _batches(items: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Split a push into requests the receiver will accept.
+
+    Bounded by count and by bytes, because either alone lets the other
+    through: fifty tiny comments are fine, and two large plan versions are
+    also fine, but fifty large ones are not.
+
+    An item too big to travel even alone is still emitted as its own batch.
+    Silently dropping it here would report success for something that was
+    never sent; letting the receiver refuse it puts the reason in the
+    report where somebody can read it.
+    """
+    out: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    size = 0
+    for item in items:
+        weight = len(str(item.get("payload") or ""))
+        if current and (
+            len(current) >= sync.MAX_PUSH_BATCH or size + weight > sync.MAX_PUSH_BYTES
+        ):
+            out.append(current)
+            current, size = [], 0
+        current.append(item)
+        size += weight
+    if current:
+        out.append(current)
+    return out
+
+
+def push(
+    session: Any,
+    address: str,
+    workspace_id: str,
+    held: Any,
+    *,
+    remote: Any = None,
+) -> sync.SyncReport:
+    """Send a peer everything it lacks for a workspace.
+
+    The mirror of :func:`pull`, and deliberately the same shape: offer ids,
+    upload only what was asked for, report what happened. The receiver
+    decides what it will take, verifies every artifact against its author's
+    key, and may refuse the whole thing — none of which is this side's
+    business beyond reporting it.
+
+    Nothing is queued. A peer that is offline is simply not pushed to, and
+    picks the work up on its next catch-up pull. A disk queue would be a
+    second copy of the artifact store with its own retry semantics, to solve
+    a problem the pull path already solves.
+    """
+    current = held()
+    report = sync.SyncReport()
+    if current is None:
+        report.rejected.append(("<peer>", "this device is not logged in"))
+        return report
+
+    mine = sorted(sync.build_manifest(session, workspace_id).artifact_ids)
+    if not mine:
+        return report
+
+    peer = remote or RemotePeer(address, workspace_id, held)
+    try:
+        wanted = peer.offer(mine)
+    except Exception as e:
+        report.rejected.append(("<offer>", f"peer would not take an offer: {e}"))
+        return report
+    if not wanted:
+        report.already_held.extend(mine)
+        return report
+
+    local = sync.LocalPeer(session)
+    items = [
+        {
+            "envelope": envelope,
+            "payload": blob.decode("utf-8", errors="replace") if blob is not None else None,
+        }
+        for envelope, blob in local.fetch(wanted)
+    ]
+
+    for batch in _batches(items):
+        try:
+            answer = peer.push(batch)
+        except Exception as e:
+            for item in batch:
+                envelope = item.get("envelope") or {}
+                report.rejected.append((str(envelope.get("artifact_id", "<unknown>")), str(e)))
+            continue
+        report.accepted.extend(str(x) for x in (answer.get("accepted") or []))
+        report.already_held.extend(str(x) for x in (answer.get("already_held") or []))
+        for refusal in answer.get("rejected") or []:
+            if isinstance(refusal, dict):
+                report.rejected.append(
+                    (str(refusal.get("artifact_id", "<unknown>")), str(refusal.get("reason", "")))
+                )
+    return report
+
+
+def catch_up(
+    session: Any,
+    workspace_ids: list[str],
+    held: Any,
+    *,
+    dial: Any = None,
+    on_result: Any = None,
+) -> dict[str, sync.SyncReport]:
+    """Pull from every teammate device this one knows about.
+
+    The offline half of the signal. A push tells a device that was running;
+    this is what a device that was asleep does instead, and between the two
+    nobody needs a notification service to learn that a plan moved.
+
+    Peers come from the cached session's device keyring, which is already
+    the list of machines whose signatures this device would accept — so
+    there is no second notion of "known peer" to keep in step with it.
+
+    Every failure is a result, not an exception. Most peers are expected to
+    be unreachable at any given moment; a laptop that is shut cannot be a
+    reason for this device not to start.
+
+    ``dial`` maps a device id to a peer. Required in practice, because
+    choosing a transport means knowing about every transport and this
+    module knows about one.
+    """
+    reports: dict[str, sync.SyncReport] = {}
+    current = held()
+    if current is None:
+        return reports
+
+    for device_id in sorted(current.device_keys):
+        if device_id == current.device_id:
+            continue
+        for workspace_id in workspace_ids:
+            key = f"{device_id}/{workspace_id}"
+            try:
+                remote = dial(device_id, workspace_id) if dial else None
+                report = pull(session, device_id, workspace_id, held, remote=remote)
+            except Exception as e:
+                # Including whatever the transport raises while dialling.
+                # A catch-up that can crash a daemon start is worse than no
+                # catch-up at all.
+                report = sync.SyncReport()
+                report.rejected.append(("<peer>", str(e)))
+            reports[key] = report
+            if on_result is not None:
+                on_result(device_id, workspace_id, report)
+    return reports
+
+
 def _detail(error: Any) -> str:
     import json
 
@@ -407,6 +690,8 @@ __all__ = [
     "PeerIdentity",
     "RemotePeer",
     "authorize",
+    "catch_up",
     "create_peer_app",
     "pull",
+    "push",
 ]

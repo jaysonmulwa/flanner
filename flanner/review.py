@@ -23,10 +23,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy.orm import Session
 
-from . import authz, workflow
+from . import anchors, authz, workflow
 from .assurance import load_review_events
 from .database import (
     PlanFileModel,
@@ -35,6 +36,7 @@ from .database import (
     save_artifact,
 )
 from .plan_ops import workspace_id_for
+from .storage import load_plan_file
 from .workflow import (
     APPROVE,
     DEFAULT_POLICY,
@@ -141,6 +143,111 @@ def propose(
         base_accepted_event_ids=state.accepted_event_ids,
         message=message,
         policy=policy,
+        actor_user_id=authorization.actor,
+    )
+    save_event(session, event, str(plan_file.id))
+    session.commit()
+    return ReviewResult(event=event)
+
+
+def comment(
+    session: Session,
+    *,
+    project: ProjectModel,
+    plan_file: PlanFileModel,
+    quote: str,
+    body: str,
+    occurrence: int = 0,
+    version: int | None = None,
+    actor: str | None = None,
+    roles: dict[str, str] | None = None,
+) -> ReviewResult:
+    """Leave a note against a quotation in a plan.
+
+    Refused before writing rather than after. The projection would drop an
+    unauthorised comment anyway - it has to, because the same rule governs
+    events arriving from peers - but somebody typing at a prompt deserves to
+    be told, not to watch the command succeed and the note never appear.
+    """
+    text = anchors.clip(quote)
+    if not text:
+        raise ValueError("a comment has to quote something")
+    if not body.strip():
+        raise ValueError("a comment has to say something")
+
+    target = get_version(session, plan_file.id, version)
+    if target is None:
+        raise ValueError("that version does not exist")
+
+    # The quotation has to be in the version being commented on. Catching it
+    # here turns a note that would silently never appear into a refusal that
+    # explains itself.
+    try:
+        _, source = load_plan_file(target.file_path)
+    except (FileNotFoundError, OSError) as e:
+        raise ValueError(f"v{target.version} is not readable: {e}") from None
+    if anchors.occurrences(text, source) == 0:
+        raise ValueError(f"that text is not in v{target.version} of this plan")
+
+    authorization = authz.resolve(project, actor=actor)
+    effective_roles = roles if roles is not None else authorization.roles
+    _require(effective_roles, authorization, workflow.MAY_COMMENT, "comment on this plan")
+
+    event = workflow.make_comment(
+        workspace_id=workspace_id_for(project),
+        plan_file_id=str(plan_file.id),
+        target_artifact_id=target.artifact_id or "",
+        target_version=target.version,
+        quote=text,
+        body=body.strip(),
+        occurrence=occurrence,
+        actor_user_id=authorization.actor,
+    )
+    save_event(session, event, str(plan_file.id))
+    session.commit()
+    return ReviewResult(event=event)
+
+
+def import_external(
+    session: Session,
+    *,
+    project: ProjectModel,
+    plan_file: PlanFileModel,
+    reviewer: str,
+    notes: list[dict[str, Any]],
+    reviewed_version: int | None = None,
+    source: str = "packet",
+    actor: str | None = None,
+) -> ReviewResult:
+    """Record notes that came back from somebody outside the mesh.
+
+    Anchored against the version the packet was built from, not the newest
+    one. A reviewer read a particular text and their notes belong to it; if
+    the plan has moved on, that is worth seeing rather than papering over.
+    """
+    # The version the reviewer actually read, not the newest one. They
+    # marked up a particular text; recording their notes against a later
+    # revision they never saw would misattribute every one of them.
+    version = get_version(session, plan_file.id, reviewed_version)
+    if version is None and reviewed_version is not None:
+        version = get_version(session, plan_file.id, None)
+    if version is None:
+        raise ValueError("this plan has no versions to attach review to")
+
+    # A local plan that has never joined a workspace has no signed artifact,
+    # and refusing on that basis would make this command useless for exactly
+    # the people most likely to need it. The event carries the version
+    # number either way; the signature that matters is this device's, which
+    # says where the notes came from.
+    authorization = authz.resolve(project, actor=actor)
+    event = workflow.make_external_review(
+        workspace_id=workspace_id_for(project),
+        plan_file_id=str(plan_file.id),
+        target_artifact_id=version.artifact_id or "",
+        target_version=version.version,
+        reviewer=reviewer,
+        notes=notes,
+        source=source,
         actor_user_id=authorization.actor,
     )
     save_event(session, event, str(plan_file.id))

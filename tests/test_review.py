@@ -525,3 +525,175 @@ def _join(proj, *flags, workspace="ws_core"):
     return CliRunner(env={"FLANNER_HOME": home}).invoke(
         cli, ["join", workspace, "--project", proj.name, *flags]
     )
+
+
+# --- comments ---------------------------------------------------------------
+#
+# A comment is the one review artifact that does not move anything, which is
+# exactly why it has to be strict about where it points. Every refusal below
+# exists because the alternative is a note that silently attaches to nothing,
+# or to the wrong sentence.
+
+
+@pytest.fixture
+def commentable(project):
+    """A plan whose text is long enough to quote from."""
+    session, proj = project
+    plan_file, version = create_plan(
+        session,
+        project=proj,
+        name="policy",
+        content="# Policy\n\nThe retry budget is three attempts.\n",
+        created_by="user",
+    )
+    session.commit()
+    return session, proj, plan_file, version
+
+
+def test_a_comment_records_the_quotation_it_points_at(commentable):
+    session, proj, plan_file, version = commentable
+    result = review.comment(
+        session,
+        project=proj,
+        plan_file=plan_file,
+        quote="The retry budget is three attempts",
+        body="  Is three enough?  ",
+    )
+    payload = result.event.payload
+    assert payload["anchor"]["quote"] == "The retry budget is three attempts"
+    assert payload["body"] == "Is three enough?"
+    assert payload["target_version"] == version.version
+
+
+def test_a_comment_never_moves_the_baseline(commentable):
+    session, proj, plan_file, _ = commentable
+    review.comment(
+        session,
+        project=proj,
+        plan_file=plan_file,
+        quote="The retry budget is three attempts",
+        body="noted",
+    )
+    assert review.status(session, plan_file=plan_file).accepted_artifact_id is None
+
+
+def test_assurance_reads_back_the_comment(commentable):
+    from flanner import assurance
+
+    session, proj, plan_file, _ = commentable
+    review.comment(
+        session,
+        project=proj,
+        plan_file=plan_file,
+        quote="The retry budget is three attempts",
+        body="noted",
+    )
+    loaded = assurance.load_comments(session, str(plan_file.id))
+    assert [e.payload["body"] for e in loaded] == ["noted"]
+
+
+def test_quoting_text_that_is_not_in_the_plan_is_refused(commentable):
+    """Otherwise the note is written, stored, and never shown to anybody."""
+    session, proj, plan_file, _ = commentable
+    with pytest.raises(ValueError, match="not in v1"):
+        review.comment(
+            session,
+            project=proj,
+            plan_file=plan_file,
+            quote="a sentence nobody wrote",
+            body="?",
+        )
+
+
+@pytest.mark.parametrize(
+    "quote,body,message",
+    [
+        ("", "something", "quote something"),
+        ("   ", "something", "quote something"),
+        ("The retry budget is three attempts", "  ", "say something"),
+    ],
+)
+def test_an_empty_comment_is_refused(commentable, quote, body, message):
+    session, proj, plan_file, _ = commentable
+    with pytest.raises(ValueError, match=message):
+        review.comment(session, project=proj, plan_file=plan_file, quote=quote, body=body)
+
+
+def test_commenting_on_a_version_that_does_not_exist_is_refused(commentable):
+    session, proj, plan_file, _ = commentable
+    with pytest.raises(ValueError, match="does not exist"):
+        review.comment(
+            session,
+            project=proj,
+            plan_file=plan_file,
+            quote="The retry budget is three attempts",
+            body="?",
+            version=99,
+        )
+
+
+def test_a_comment_is_checked_against_the_version_it_names_not_the_newest(commentable):
+    """The quotation has to be in the version being commented on. Checking
+    the newest instead would refuse a fair comment on old text, and accept
+    one on text the reader was never looking at."""
+    session, proj, plan_file, _ = commentable
+    record_new_version(
+        session,
+        project=proj,
+        plan_file=plan_file,
+        content="# Policy\n\nRetries are handled by the queue.\n",
+        created_by="user",
+        notes="rewrite",
+    )
+    session.commit()
+
+    result = review.comment(
+        session,
+        project=proj,
+        plan_file=plan_file,
+        quote="The retry budget is three attempts",
+        body="on the old text",
+        version=1,
+    )
+    assert result.event.payload["target_version"] == 1
+
+    with pytest.raises(ValueError, match="not in v2"):
+        review.comment(
+            session,
+            project=proj,
+            plan_file=plan_file,
+            quote="The retry budget is three attempts",
+            body="on the new text",
+        )
+
+
+def test_a_reader_cannot_comment(commentable):
+    """Refused at the prompt rather than dropped later in projection, so
+    somebody who cannot comment is told, not left watching for a note that
+    will never appear."""
+    session, proj, plan_file, _ = commentable
+    with pytest.raises(PermissionError, match="comment on this plan"):
+        review.comment(
+            session,
+            project=proj,
+            plan_file=plan_file,
+            quote="The retry budget is three attempts",
+            body="?",
+            actor="sam",
+            roles={"sam": workflow.READER},
+        )
+
+
+@pytest.mark.parametrize("role", [workflow.COMMENTER, EDITOR, MAINTAINER])
+def test_everyone_above_reader_can_comment(commentable, role):
+    session, proj, plan_file, _ = commentable
+    result = review.comment(
+        session,
+        project=proj,
+        plan_file=plan_file,
+        quote="The retry budget is three attempts",
+        body="?",
+        actor="sam",
+        roles={"sam": role},
+    )
+    assert result.event.payload["body"] == "?"

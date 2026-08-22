@@ -113,6 +113,10 @@ DEFAULT_POLICY = Policy()
 
 # Exported so the write surface can refuse before recording an event that
 # projection would only discard. One definition, so the two cannot drift.
+#: Leaving a note is the lightest thing anybody can do to a plan: it adds
+#: an opinion and changes no text. It is the one capability the reader tier
+#: above `reader` was named for, and until now granted nothing.
+MAY_COMMENT = frozenset({COMMENTER, EDITOR, MAINTAINER})
 MAY_PROPOSE = frozenset({EDITOR, MAINTAINER})
 MAY_REVIEW = frozenset({MAINTAINER})
 _MAY_AUTHOR = MAY_PROPOSE
@@ -156,6 +160,87 @@ def _sign_event(
         **kw,
     )
     return Event(artifact=artifact, payload=payload)
+
+
+def make_comment(
+    *,
+    workspace_id: str,
+    plan_file_id: str,
+    target_artifact_id: str,
+    quote: str,
+    body: str,
+    occurrence: int = 0,
+    target_version: int | None = None,
+    actor_user_id: str | None = None,
+    **kw: Any,
+) -> Event:
+    """A note attached to a quotation in a plan.
+
+    Anchored by what it quotes, never by a line or an offset: the plan will
+    be edited, and a note that had silently slid onto a different paragraph
+    would be worse than one that admits it lost its place.
+
+    A comment is a signed artifact like everything else, so it syncs to
+    peers, verifies offline, and survives being written on a train.
+    """
+    payload = {
+        "target_artifact_id": target_artifact_id,
+        "target_version": target_version,
+        "anchor": {"quote": quote, "occurrence": occurrence},
+        "body": body,
+    }
+    return _sign_event(
+        artifacts.COMMENT,
+        workspace_id,
+        payload,
+        plan_file_id=plan_file_id,
+        actor_user_id=actor_user_id,
+        **kw,
+    )
+
+
+#: Notes from somebody with no device key, vouched for by the device that
+#: imported them. Kept a distinct type so nothing can mistake it for a
+#: teammate's signed comment.
+EXTERNAL_REVIEW = artifacts.REVIEW_EXTERNAL
+
+
+def make_external_review(
+    *,
+    workspace_id: str,
+    plan_file_id: str,
+    target_artifact_id: str,
+    reviewer: str,
+    notes: list[dict[str, Any]],
+    target_version: int | None = None,
+    source: str = "packet",
+    actor_user_id: str | None = None,
+    **kw: Any,
+) -> Event:
+    """Record review from outside the mesh.
+
+    The reviewer has no key, so this event is signed by the device doing the
+    importing. That signature is a claim about provenance — "I received this
+    from someone calling themselves X" — and never about identity. The
+    payload says so in a field rather than in a comment, because consumers
+    have to be able to tell the two apart without reading this docstring.
+    """
+    payload = {
+        "target_artifact_id": target_artifact_id,
+        "target_version": target_version,
+        "reviewer": reviewer,
+        "verified": False,
+        "source": source,
+        "notes": notes,
+    }
+    return _sign_event(
+        EXTERNAL_REVIEW,
+        workspace_id,
+        payload,
+        plan_file_id=plan_file_id,
+        actor_user_id=actor_user_id,
+        **kw,
+    )
 
 
 def make_proposal(

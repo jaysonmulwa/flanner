@@ -541,10 +541,20 @@ def get_project_by_name(session: Session, name: str) -> ProjectModel | None:
 
 
 def list_projects(
-    session: Session, limit: int | None = None, offset: int = 0
+    session: Session, limit: int | None = None, offset: int = 0, sort: str = "updated"
 ) -> list[ProjectModel]:
-    """List projects, newest first; optionally a page of them."""
-    query = session.query(ProjectModel).order_by(ProjectModel.created_at.desc(), ProjectModel.id)
+    """List projects; optionally a page of them.
+
+    ``sort`` orders before paging, so the control on the projects page sorts
+    the whole collection rather than reshuffling whichever fifty rows the
+    current page happens to hold.
+    """
+    order = (
+        (ProjectModel.name.asc(), ProjectModel.id)
+        if sort == "name"
+        else (ProjectModel.updated_at.desc(), ProjectModel.created_at.desc(), ProjectModel.id)
+    )
+    query = session.query(ProjectModel).order_by(*order)
     if offset:
         query = query.offset(offset)
     if limit is not None:
@@ -835,6 +845,49 @@ def list_artifacts(
     if artifact_type is not None:
         query = query.filter_by(artifact_type=artifact_type)
     return query.all()
+
+
+def recent_arrivals(
+    session: Session,
+    *,
+    exclude_device_id: str | None = None,
+    limit: int = 20,
+) -> list[ArtifactModel]:
+    """What reached this device most recently, newest first.
+
+    Ordered by ``received_at`` rather than the envelope's ``created_at``,
+    which is the author's clock and is descriptive only. "What is new to me"
+    is a local question and deserves the local answer.
+
+    ``exclude_device_id`` drops this device's own work, which is stored
+    through the same path and would otherwise crowd out everything a
+    teammate sent.
+    """
+    query = session.query(ArtifactModel).filter(ArtifactModel.received_at.isnot(None))
+    if exclude_device_id:
+        query = query.filter(ArtifactModel.actor_device_id != exclude_device_id)
+    return query.order_by(ArtifactModel.received_at.desc()).limit(limit).all()
+
+
+def last_received_by_device(session: Session) -> dict[str, datetime]:
+    """When something last arrived that each device had signed.
+
+    Note what this does and does not say. It answers "when did I last get
+    work of theirs", not "when did I last hear from them" — an artifact can
+    reach us relayed through a third machine long after its author went
+    offline. Presenting it as a liveness signal would be a lie the data
+    cannot support.
+    """
+    rows = (
+        session.query(
+            ArtifactModel.actor_device_id,
+            func.max(ArtifactModel.received_at),
+        )
+        .filter(ArtifactModel.received_at.isnot(None))
+        .group_by(ArtifactModel.actor_device_id)
+        .all()
+    )
+    return {device_id: stamp for device_id, stamp in rows if stamp is not None}
 
 
 def artifact_parents(session: Session, plan_file_id: str) -> dict[str, tuple[str, ...]]:

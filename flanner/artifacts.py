@@ -34,6 +34,10 @@ PLAN_VERSION = "plan.version"
 PLAN_HEAD = "plan.head"
 REVIEW_PROPOSAL = "review.proposal"
 REVIEW_DECISION = "review.decision"
+#: Notes from somebody with no device key, vouched for by the device that
+#: imported them. A distinct type so nothing can mistake unverified,
+#: outside review for a teammate's signed comment.
+REVIEW_EXTERNAL = "review.external"
 ACCEPTED_HEAD = "plan.accepted_head"
 COMMENT = "comment"
 FRESHNESS_EVIDENCE = "freshness.evidence"
@@ -47,6 +51,7 @@ ARTIFACT_TYPES = frozenset(
         PLAN_HEAD,
         REVIEW_PROPOSAL,
         REVIEW_DECISION,
+        REVIEW_EXTERNAL,
         ACCEPTED_HEAD,
         COMMENT,
         FRESHNESS_EVIDENCE,
