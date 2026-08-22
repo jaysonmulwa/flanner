@@ -59,7 +59,20 @@ ALLOWED = {
     "authz": {"workflow", "session", "entitlements", "database", "plan_ops"},
     # Peer transport. Talks to other devices, never to the control plane,
     # so it may not import account any more than a read command may.
-    "peer": {"entitlements", "identity", "sync", "device_auth", "push"},
+    # `assurance` is here because the serving path has to know which plans
+    # have been claimed as retired, and duplicating that projection would
+    # give two places to disagree about whether a plan is visible. It is a
+    # local read over rows already in this database; the reachability test
+    # below still proves peer cannot get to `account` through it.
+    "peer": {
+        "entitlements",
+        "identity",
+        "sync",
+        "device_auth",
+        "push",
+        "assurance",
+        "artifacts",
+    },
     # The transport carries what peer decides; it never decides anything
     # itself, so it reaches for peer and the device key and nothing else.
     "peer_iroh": {"identity", "peer", "session"},

@@ -256,7 +256,7 @@ class PeerEndpoint:
         """
         return str(self.ready().id().to_bytes().hex())
 
-    def serve(self, sessions: Any, held: Any) -> None:
+    def serve(self, sessions: Any, held: Any, refresh_keys: Any = None) -> None:
         """Answer peer requests until the process ends. Blocks.
 
         Runs the accept loop on the shared background loop and waits, so a
@@ -265,7 +265,7 @@ class PeerEndpoint:
         endpoint = self.ready()
         loop = _Loop.shared()
         loop.run(endpoint.online(), CONNECT_TIMEOUT)
-        loop.submit(_accept_forever(endpoint, sessions, held)).result()
+        loop.submit(_accept_forever(endpoint, sessions, held, refresh_keys)).result()
 
     def close(self) -> None:
         with self._guard:
@@ -274,15 +274,17 @@ class PeerEndpoint:
                 self._endpoint = None
 
 
-async def _accept_forever(endpoint: Any, sessions: Any, held: Any) -> None:
+async def _accept_forever(
+    endpoint: Any, sessions: Any, held: Any, refresh_keys: Any = None
+) -> None:
     while True:
         incoming = await endpoint.accept_next()
         if incoming is None:
             return
-        asyncio.create_task(_answer(incoming, sessions, held))
+        asyncio.create_task(_answer(incoming, sessions, held, refresh_keys))
 
 
-async def _answer(incoming: Any, sessions: Any, held: Any) -> None:
+async def _answer(incoming: Any, sessions: Any, held: Any, refresh_keys: Any = None) -> None:
     """One connection. Never raises: a bad caller must not stop the loop."""
     try:
         connection = await (await incoming.accept()).connect()
@@ -292,7 +294,7 @@ async def _answer(incoming: Any, sessions: Any, held: Any) -> None:
         while True:
             stream = await connection.accept_bi()
             request = await _read(stream.recv())
-            reply = _dispatch(request, sessions, held)
+            reply = _dispatch(request, sessions, held, refresh_keys)
             await _write(stream.send(), reply)
     except Exception:
         # A closed connection is the normal end of this loop, and a caller
@@ -300,13 +302,18 @@ async def _answer(incoming: Any, sessions: Any, held: Any) -> None:
         return
 
 
-def _dispatch(request: dict[str, Any], sessions: Any, held: Any) -> dict[str, Any]:
+def _dispatch(
+    request: dict[str, Any], sessions: Any, held: Any, refresh_keys: Any = None
+) -> dict[str, Any]:
     operation = str(request.get("op") or "")
     payload = request.get("request")
     if not isinstance(payload, dict):
         return {"ok": False, "status": 400, "error": "no signed request"}
     try:
-        return {"ok": True, "body": peer.serve_request(operation, payload, sessions, held)}
+        return {
+            "ok": True,
+            "body": peer.serve_request(operation, payload, sessions, held, refresh_keys),
+        }
     except peer.PeerError as e:
         return {"ok": False, "status": e.status, "error": str(e)}
 

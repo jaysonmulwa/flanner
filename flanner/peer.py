@@ -50,8 +50,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from . import entitlements, identity, sync
+from . import artifacts, entitlements, identity, sync
 from . import push as push_rules
+from .assurance import retired_plan_ids
 from .device_auth import SignedRequest, sign_request, verify_request
 from .sync import Manifest
 
@@ -193,12 +194,16 @@ def accepting_pushes() -> bool:
 #: between requests, which is the only way a window means anything.
 _pushes = push_rules.RateLimiter()
 
+#: Shared by every peer, because the keyring it guards is per organisation.
+_keyring_cooldown = push_rules.Cooldown()
+
 
 def serve_request(
     operation: str,
     payload: dict[str, Any],
     sessions: Any,
     held: Any,
+    refresh_keys: Any = None,
 ) -> dict[str, Any]:
     """Answer one peer request, whatever carried it here.
 
@@ -256,8 +261,14 @@ def serve_request(
         raise PeerError("too many pushes; try again shortly", status=429)
 
     with sessions() as session:
+        # Plans this device has been asked to stop showing. Computed once
+        # per request and used by both read paths, so a retired plan is
+        # neither advertised nor handed over. The tombstones themselves
+        # always travel; they are how the claim reaches anybody else.
+        hidden = retired_plan_ids(session)
+
         if operation == MANIFEST:
-            return dict(sync.build_manifest(session, workspace_id).to_dict())
+            return dict(sync.build_manifest(session, workspace_id, hidden=hidden).to_dict())
 
         if operation in WRITES:
             return _serve_write(
@@ -268,6 +279,7 @@ def serve_request(
                 wanted,
                 items,
                 current.resolve_device_key,
+                refresh_keys,
             )
 
         local = sync.LocalPeer(session)
@@ -277,6 +289,14 @@ def serve_request(
             # belonging to another is withheld even if it was asked for
             # by id. Ids are guessable in principle; access is not.
             if envelope.get("workspace_id") != workspace_id:
+                continue
+            # Asked for by id despite not being offered, which an older
+            # peer or a stale manifest will do. Withheld here too, or the
+            # manifest filter would be advisory.
+            if (
+                envelope.get("plan_file_id") in hidden
+                and envelope.get("artifact_type") != artifacts.PLAN_TOMBSTONE
+            ):
                 continue
             out.append(
                 {
@@ -297,6 +317,7 @@ def _serve_write(
     wanted: list[str],
     items: list[dict[str, Any]],
     resolve_key: Any,
+    refresh_keys: Any = None,
 ) -> dict[str, Any]:
     """The receiving half of a push: say what is missing, then take it in."""
     if operation == OFFER:
@@ -311,6 +332,8 @@ def _serve_write(
         workspace_id=workspace_id,
         role=caller.role,
         resolve_key=resolve_key,
+        refresh_keys=refresh_keys,
+        cooldown=_keyring_cooldown,
     )
     return {
         "accepted": report.accepted,
@@ -319,7 +342,7 @@ def _serve_write(
     }
 
 
-def create_peer_app(sessions: Any, held: Any) -> Any:
+def create_peer_app(sessions: Any, held: Any, refresh_keys: Any = None) -> Any:
     """An HTTP app serving this device's catalog to authorised peers.
 
     ``held`` is a callable returning the current cached session, read per
@@ -332,7 +355,7 @@ def create_peer_app(sessions: Any, held: Any) -> Any:
 
     def _serve(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            return serve_request(operation, payload, sessions, held)
+            return serve_request(operation, payload, sessions, held, refresh_keys)
         except PeerError as e:
             raise HTTPException(e.status, str(e)) from None
 

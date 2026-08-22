@@ -741,3 +741,186 @@ def test_an_unreachable_peer_is_a_result_not_a_crash(alice, bob):
 def test_catching_up_while_signed_out_does_nothing(bob):
     """No session means no keyring, so there is nobody to trust or to ask."""
     assert peer.catch_up(bob.session, [WORKSPACE], lambda: None) == {}
+
+
+# --- a new teammate's first push -------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def fresh_cooldown(monkeypatch):
+    """The keyring cooldown is module state shared by every peer, which is
+    the point of it: one refresh per window across the whole process, so a
+    caller cannot buy another by inventing a device id. That also makes it
+    outlive a test, so each one starts with an unspent window."""
+    from flanner import push as push_rules
+
+    monkeypatch.setattr(peer, "_keyring_cooldown", push_rules.Cooldown())
+
+
+def test_an_unknown_author_is_accepted_after_the_keyring_is_refreshed(alice, bob, serve):
+    """The chicken and egg: a new teammate's key is not in your keyring
+    until you sign in again, so their very first push cannot verify."""
+    # Bob signs in knowing only himself, so Alice is a stranger to him.
+    alice.sign_in(device_keys={alice.device_id: alice.public_key})
+    bob.sign_in(device_keys={bob.device_id: bob.public_key})
+    artifact = a_stored_artifact(alice.session, key=alice.signing_key())
+
+    learned = []
+
+    def refresh():
+        """Stands in for `account.fetch_device_keys`, which the composition
+        root supplies. Returns a resolver rather than nothing, because the
+        one already in hand is bound to the pre-fetch session."""
+        learned.append(True)
+        keys = {alice.device_id: alice.public_key, bob.device_id: bob.public_key}
+        return keys.get
+
+    address = serve(peer.create_peer_app(bob.sessions, bob.held, refresh))
+    report = alice.push_to(address)
+
+    assert learned == [True], "the refresh should have been attempted exactly once"
+    assert report.ok, report.rejected
+    assert report.accepted == [artifact.artifact_id]
+    assert get_artifact(bob.session, artifact.artifact_id) is not None
+
+
+def test_without_a_refresher_the_unknown_author_is_still_refused(alice, bob, serve):
+    """The refusal has to survive on its own; the refresh is an addition."""
+    alice.sign_in(device_keys={alice.device_id: alice.public_key})
+    bob.sign_in(device_keys={bob.device_id: bob.public_key})
+    artifact = a_stored_artifact(alice.session, key=alice.signing_key())
+
+    report = alice.push_to(serve(peer.create_peer_app(bob.sessions, bob.held)))
+
+    assert report.accepted == []
+    assert any("no known key" in reason for _, reason in report.rejected)
+    assert get_artifact(bob.session, artifact.artifact_id) is None
+
+
+def test_a_refresh_that_learns_nothing_leaves_the_refusal_intact(alice, bob, serve):
+    """A revoked or forged device also looks like an unknown author, and
+    must still be refused after the keyring has been consulted."""
+    alice.sign_in(device_keys={alice.device_id: alice.public_key})
+    bob.sign_in(device_keys={bob.device_id: bob.public_key})
+    stranger = Ed25519PrivateKey.generate()
+    artifact = a_stored_artifact(alice.session, key=stranger)
+
+    report = alice.push_to(serve(peer.create_peer_app(bob.sessions, bob.held, lambda: {}.get)))
+
+    assert report.accepted == []
+    assert any("no known key" in reason for _, reason in report.rejected)
+    assert get_artifact(bob.session, artifact.artifact_id) is None
+
+
+def test_the_refresh_happens_once_per_batch_not_once_per_artifact(alice, bob, serve):
+    """Otherwise fifty artifacts signed by fifty invented device ids would
+    be fifty calls to the control plane, on a remote party's say-so."""
+    alice.sign_in(device_keys={alice.device_id: alice.public_key})
+    bob.sign_in(device_keys={bob.device_id: bob.public_key})
+    for i in range(4):
+        a_stored_artifact(alice.session, key=alice.signing_key(), body=f"# plan {i}\n")
+
+    calls = []
+
+    def refresh():
+        calls.append(True)
+        return {alice.device_id: alice.public_key}.get
+
+    report = alice.push_to(serve(peer.create_peer_app(bob.sessions, bob.held, refresh)))
+
+    assert len(calls) == 1
+    assert len(report.accepted) == 4
+
+
+# --- a retired plan stops crossing the wire --------------------------------
+
+
+def a_retired_plan(device, plan_file_id="plan_1"):
+    """Store an artifact for a plan, then a tombstone claiming it retired."""
+    body = "# secret plan\n"
+    stone_payload = '{"restored": false}'
+    # Hashed the way the receiver hashes it, or ingest refuses the payload
+    # before any retirement rule gets a chance to run.
+    artifact = artifacts.make_artifact(
+        artifact_type=artifacts.REVIEW_PROPOSAL,
+        workspace_id=WORKSPACE,
+        content_hash=sync.payload_digest(artifacts.REVIEW_PROPOSAL, body.encode()),
+        signing_key=device.signing_key(),
+        actor_device_id=device.device_id,
+        plan_file_id=plan_file_id,
+    )
+    stone = artifacts.make_artifact(
+        artifact_type=artifacts.PLAN_TOMBSTONE,
+        workspace_id=WORKSPACE,
+        content_hash=sync.payload_digest(artifacts.PLAN_TOMBSTONE, stone_payload.encode()),
+        signing_key=device.signing_key(),
+        actor_device_id=device.device_id,
+        plan_file_id=plan_file_id,
+    )
+    for made, payload in ((artifact, body), (stone, stone_payload)):
+        save_artifact(
+            device.session,
+            artifact_id=made.artifact_id,
+            artifact_type=made.artifact_type,
+            workspace_id=made.workspace_id,
+            content_hash=made.content_hash,
+            actor_device_id=made.actor_device_id,
+            created_at=made.created_at,
+            signature=made.signature,
+            plan_file_id=plan_file_id,
+            payload=payload,
+        )
+    device.session.commit()
+    return artifact, stone
+
+
+def test_a_retired_plan_is_not_offered_or_handed_over(alice, bob, serve):
+    """Hidden from the manifest *and* refused on fetch. Filtering only the
+    manifest would make it advisory: a peer with a stale one would still
+    get the content by asking for the id."""
+    link(alice, bob)
+    artifact, stone = a_retired_plan(alice)
+    address = serve(peer.create_peer_app(alice.sessions, alice.held))
+
+    report = bob.pull_from(address)
+
+    assert artifact.artifact_id not in report.accepted
+    assert get_artifact(bob.session, artifact.artifact_id) is None
+    # Asking by id directly, as a peer holding a stale manifest would.
+    # Inside Bob's home, because signing the request needs his device key.
+    with bob.active():
+        direct = peer.RemotePeer(address, WORKSPACE, bob.held).fetch([artifact.artifact_id])
+    assert direct == []
+
+
+def test_the_tombstone_itself_still_travels(alice, bob, serve):
+    """Otherwise the claim stops at the device that made it, and nobody
+    else ever learns the plan was retired."""
+    link(alice, bob)
+    _, stone = a_retired_plan(alice)
+    address = serve(peer.create_peer_app(alice.sessions, alice.held))
+
+    report = bob.pull_from(address)
+
+    assert stone.artifact_id in report.accepted
+    assert get_artifact(bob.session, stone.artifact_id) is not None
+
+
+def test_a_plan_that_was_never_retired_is_unaffected(alice, bob, serve):
+    link(alice, bob)
+    ordinary = a_stored_artifact(alice.session, key=alice.signing_key())
+    a_retired_plan(alice)
+    address = serve(peer.create_peer_app(alice.sessions, alice.held))
+
+    report = bob.pull_from(address)
+
+    assert ordinary.artifact_id in report.accepted
+
+
+def test_retiring_does_not_hide_a_plan_from_its_own_device(alice):
+    """`hidden` is for what we send. Applying it to our own catalog would
+    have us re-fetch our own artifacts from a peer."""
+    alice.sign_in()
+    artifact, _ = a_retired_plan(alice)
+    mine = sync.build_manifest(alice.session, WORKSPACE)
+    assert artifact.artifact_id in mine.artifact_ids

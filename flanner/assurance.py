@@ -96,6 +96,71 @@ class Assurance:
         }
 
 
+@dataclass(frozen=True)
+class Retirement:
+    """Whether a plan has been asked to disappear, and who asked."""
+
+    retired: bool
+    by: str = ""
+    reason: str = ""
+    at: str = ""
+
+    @property
+    def claimed(self) -> bool:
+        """True when somebody has spoken about this plan either way."""
+        return bool(self.at)
+
+
+def retirement(session: Session, plan_file_id: str) -> Retirement:
+    """The current standing of a plan's tombstones.
+
+    Latest wins, ordered by the envelope timestamp with the artifact id as
+    the tiebreaker. That is a weaker rule than the head resolution used for
+    plan content, and deliberately: two maintainers disagreeing about
+    whether a plan should be visible is not a merge conflict anybody can
+    usefully be shown, and leaving it `conflicted` would mean showing the
+    plan to some people and not others with no way to settle it. Last word
+    wins, and the whole exchange stays in the history.
+
+    A device that never receives the tombstone keeps showing the plan.
+    Nothing here can prevent that, which is exactly why this is called a
+    claim rather than a deletion.
+    """
+    events = _load_typed(session, plan_file_id, artifacts.PLAN_TOMBSTONE)
+    if not events:
+        return Retirement(retired=False)
+    latest = max(events, key=lambda e: (e.artifact.created_at, e.artifact.artifact_id))
+    return Retirement(
+        retired=not bool(latest.payload.get("restored")),
+        by=str(latest.artifact.actor_user_id or latest.artifact.actor_device_id or ""),
+        reason=str(latest.payload.get("reason") or ""),
+        at=str(latest.artifact.created_at or ""),
+    )
+
+
+def retired_plan_ids(session: Session) -> set[str]:
+    """Every plan currently claimed as retired, for filtering a listing.
+
+    One pass over the tombstones rather than a projection per plan, because
+    the callers are list pages that would otherwise do this per row.
+    """
+    by_plan: dict[str, tuple[str, str, bool]] = {}
+    for row in list_artifacts(session, artifact_type=artifacts.PLAN_TOMBSTONE):
+        if row.plan_file_id is None or row.payload is None:
+            continue
+        try:
+            payload = json.loads(row.payload)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        key = (str(row.created_at), str(row.artifact_id))
+        seen = by_plan.get(row.plan_file_id)
+        if seen is None or key > (seen[0], seen[1]):
+            by_plan[row.plan_file_id] = (key[0], key[1], not bool(payload.get("restored")))
+    return {plan for plan, (_, _, retired) in by_plan.items() if retired}
+
+
 def count_review_subjects(session: Session) -> int:
     """How many plans have anything on the Review page.
 

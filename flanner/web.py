@@ -42,6 +42,7 @@ from .database import (
     init_database,
     last_received_by_device,
     list_all_linear_links,
+    list_artifacts,
     list_versions,
     plan_file_counts_by_project,
     recent_plan_files,
@@ -292,6 +293,55 @@ def render_plan_html(content: str, content_hash: str | None) -> str:
 # renders instantly and works offline.
 
 
+def _retirement_view(session: Any, plan_file: Any) -> dict[str, Any] | None:
+    """The banner a retired plan carries, or None when it is not retired."""
+    from .assurance import retirement
+
+    standing = retirement(session, str(plan_file.id))
+    if not standing.retired:
+        return None
+    return {"by": standing.by, "reason": standing.reason, "at": standing.at}
+
+
+def _storage_view(session: Any) -> dict[str, Any]:
+    """What this device is holding, and the fact that it never prunes.
+
+    Shown because "keep everything" is a decision, and a decision nobody can
+    see the cost of is one they never really made. There is no cleanup
+    button: history is the point of an append-only store, and a control
+    that quietly broke lineage would be worse than a growing number.
+    """
+    rows = list_artifacts(session)
+    payload_bytes = sum(len(r.payload or "") for r in rows)
+    plan_bytes = _local_plan_bytes(session)
+    return {
+        "artifacts": len(rows),
+        "payload": _bytes_label(payload_bytes),
+        "plans": _bytes_label(plan_bytes),
+        "total": _bytes_label(payload_bytes + plan_bytes),
+    }
+
+
+def _hidden(session: Any) -> set[str]:
+    """Plans claimed as retired, for every listing and every count.
+
+    Hidden, not gone. The artifacts are all still here and the plan comes
+    back the moment somebody restores it; this is a page honouring a claim,
+    which is the strongest thing an append-only store can offer.
+
+    Counts take the same set as the lists they describe, or the sidebar
+    ends up asserting a number the page beneath it does not show.
+    """
+    from .assurance import retired_plan_ids
+
+    return retired_plan_ids(session)
+
+
+def _visible_plans(session: Any, project_id: Any) -> list[Any]:
+    """A project's plans, minus any claimed as retired."""
+    return db_list_plan_files(session, project_id, exclude=_hidden(session))
+
+
 def _local_plan_bytes(session: Any) -> int:
     """How much plan text this device is holding, on disk.
 
@@ -462,7 +512,7 @@ def _review_rows(session: Any) -> list[dict[str, Any]]:
 
     rows: list[dict[str, Any]] = []
     for project in db_list_projects(session):
-        for plan_file in db_list_plan_files(session, project.id):
+        for plan_file in _visible_plans(session, project.id):
             try:
                 state = review_module.status(session, plan_file=plan_file, project=project)
             except Exception:  # noqa: BLE001 - one bad plan must not blank the page
@@ -512,7 +562,7 @@ def _nav(session: Any) -> dict[str, Any]:
     held = cache.load()
     return {
         "nav_projects": db_count_projects(session),
-        "nav_plans": db_count_plan_files(session),
+        "nav_plans": db_count_plan_files(session, exclude=_hidden(session)),
         "nav_attention": _attention_count(session),
         # Zero when this machine has no account, which is the normal state
         # and the reason the whole Team group hides itself in that case.
@@ -562,7 +612,7 @@ def _needs_attention(session: Any) -> list[dict[str, Any]]:
     rank = {"stale": 0, "suspect": 1, "aging": 2}
     out: list[dict[str, Any]] = []
     for project in db_list_projects(session):
-        for plan_file in db_list_plan_files(session, project.id):
+        for plan_file in _visible_plans(session, project.id):
             record = _plan_freshness(session, plan_file)
             if record and record["status"] in rank:
                 out.append(record)
@@ -579,7 +629,7 @@ def _freshness_mix(session: Any, projects: Any) -> dict[Any, dict[str, int]]:
     out: dict[Any, dict[str, int]] = {}
     for project in projects:
         tally = {"fresh": 0, "aging": 0, "suspect": 0, "stale": 0}
-        for plan_file in db_list_plan_files(session, project.id):
+        for plan_file in _visible_plans(session, project.id):
             record = _plan_freshness(session, plan_file)
             if record:
                 tally[record["status"]] = tally.get(record["status"], 0) + 1
@@ -604,15 +654,15 @@ async def dashboard(request: Request) -> HTMLResponse:
     # Aggregates in SQL; loading every plan file to count them is O(rows)
     # in Python and an N+1 query per project.
     total_projects = db_count_projects(session)
-    total_plans = db_count_plan_files(session)
-    updated_this_week = db_count_plan_files_recent(session, days=7)
-    plan_counts = plan_file_counts_by_project(session)
+    total_plans = db_count_plan_files(session, exclude=_hidden(session))
+    updated_this_week = db_count_plan_files_recent(session, days=7, exclude=_hidden(session))
+    plan_counts = plan_file_counts_by_project(session, exclude=_hidden(session))
 
     projects = db_list_projects(session, limit=12)
 
     recent_activity: list[dict[str, Any]] = [
         {"project": pf.project, "plan_file": pf, "updated_at": pf.updated_at}
-        for pf in recent_plan_files(session, limit=10)
+        for pf in recent_plan_files(session, limit=10, exclude=_hidden(session))
     ]
 
     return templates.TemplateResponse(
@@ -647,7 +697,7 @@ async def projects_list(
     pages = max(1, -(-total // PAGE_SIZE))
     page = min(max(1, page), pages)
     projects = db_list_projects(session, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE, sort=sort)
-    plan_counts = plan_file_counts_by_project(session)
+    plan_counts = plan_file_counts_by_project(session, exclude=_hidden(session))
 
     # The freshness mix per project, which is the column the design leads
     # with. Computed off the request thread: it reads files and shells out
@@ -664,11 +714,13 @@ async def projects_list(
             "plan_counts": plan_counts,
             "freshness_mix": mix,
             "total_projects": total,
-            "total_plans": db_count_plan_files(session),
-            "updated_this_week": db_count_plan_files_recent(session, days=7),
+            "total_plans": db_count_plan_files(session, exclude=_hidden(session)),
+            "updated_this_week": db_count_plan_files_recent(
+                session, days=7, exclude=_hidden(session)
+            ),
             "recent_activity": [
                 {"plan_file": pf, "project": pf.project, "updated_at": pf.updated_at}
-                for pf in recent_plan_files(session, limit=5)
+                for pf in recent_plan_files(session, limit=5, exclude=_hidden(session))
             ],
             "page": page,
             "pages": pages,
@@ -777,7 +829,7 @@ async def project_detail(request: Request, project_id: str, page: int = 1) -> HT
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    total = db_count_plan_files(session, project_uuid)
+    total = db_count_plan_files(session, project_uuid, exclude=_hidden(session))
     pages = max(1, -(-total // PAGE_SIZE))
     page = min(max(1, page), pages)
     plan_files = db_list_plan_files(
@@ -1020,6 +1072,10 @@ async def plan_view(
             # Freshness for the version being shown, so the page can say why
             # it is judged the way it is rather than only that it is.
             "freshness": _freshness_for(project, body, version_obj),
+            # The page still renders for a retired plan; a link somebody
+            # saved should explain itself rather than 404. The banner is
+            # what makes the difference visible.
+            "retirement": _retirement_view(session, plan_file),
             "comments": _comments(session, plan_file, body),
             "outside_notes": _external_notes(session, plan_file),
             "info": {
@@ -1172,7 +1228,7 @@ async def freshness_page(request: Request) -> HTMLResponse:
 
     tally = {"fresh": 0, "aging": 0, "suspect": 0, "stale": 0}
     for project in db_list_projects(session):
-        for plan_file in db_list_plan_files(session, project.id):
+        for plan_file in _visible_plans(session, project.id):
             record = _plan_freshness(session, plan_file)
             if record:
                 tally[record["status"]] = tally.get(record["status"], 0) + 1
@@ -1255,6 +1311,7 @@ async def settings_page(request: Request) -> HTMLResponse:
             "port": request.url.port or 8080,
             "version": __version__,
             "claude": claude,
+            "storage": _storage_view(session),
             **_nav(session),
         },
     )
@@ -1290,7 +1347,7 @@ async def plans_page(request: Request) -> HTMLResponse:
     ensure_db()
     session = get_session()
     rows = []
-    for plan_file in recent_plan_files(session, limit=200):
+    for plan_file in recent_plan_files(session, limit=200, exclude=_hidden(session)):
         rows.append({"plan_file": plan_file, "project": plan_file.project})
     return templates.TemplateResponse(request, "plans.html", {"rows": rows, **_nav(session)})
 
@@ -1323,11 +1380,14 @@ async def api_search_index() -> list[dict[str, str]]:
     ensure_db()
     session = get_session()
     items: list[dict[str, str]] = []
+    # The palette is a listing too. A retired plan reachable by typing its
+    # name would make the hiding look like a bug rather than a decision.
+    hidden = _hidden(session)
     for p in db_list_projects(session):
         items.append(
             {"type": "project", "name": p.name, "context": "", "url": f"/projects/{p.id}"}
         )
-        for pf in p.plan_files:
+        for pf in (x for x in p.plan_files if str(x.id) not in hidden):
             items.append(
                 {"type": "plan", "name": pf.name, "context": p.name, "url": f"/plans/{pf.id}"}
             )
@@ -1348,7 +1408,7 @@ async def api_list_plan_files(project_id: str) -> list[dict[str, Any]]:
     if not get_project(session, project_uuid):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    plan_files = db_list_plan_files(session, project_uuid)
+    plan_files = _visible_plans(session, project_uuid)
 
     return [
         {

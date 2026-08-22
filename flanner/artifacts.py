@@ -39,6 +39,11 @@ REVIEW_DECISION = "review.decision"
 #: outside review for a teammate's signed comment.
 REVIEW_EXTERNAL = "review.external"
 ACCEPTED_HEAD = "plan.accepted_head"
+#: A signed request that peers stop showing and stop serving a plan. Not an
+#: erasure: append-only means the bytes stay, and a device that was offline
+#: when this was signed has them regardless. It is a claim other devices
+#: honour, which is the strongest thing this design can honestly offer.
+PLAN_TOMBSTONE = "plan.tombstone"
 COMMENT = "comment"
 FRESHNESS_EVIDENCE = "freshness.evidence"
 ISSUE_LINK = "issue.link"
@@ -53,6 +58,7 @@ ARTIFACT_TYPES = frozenset(
         REVIEW_DECISION,
         REVIEW_EXTERNAL,
         ACCEPTED_HEAD,
+        PLAN_TOMBSTONE,
         COMMENT,
         FRESHNESS_EVIDENCE,
         ISSUE_LINK,

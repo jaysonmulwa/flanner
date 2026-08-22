@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +22,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    cast,
     create_engine,
     func,
     inspect,
@@ -567,32 +568,64 @@ def count_projects(session: Session) -> int:
     return session.query(func.count(ProjectModel.id)).scalar() or 0
 
 
-def count_plan_files(session: Session, project_id: uuid.UUID | None = None) -> int:
-    """Total plan files, overall or for one project (SQL COUNT)."""
+def _without(query: Any, exclude: Collection[str]) -> Any:
+    """Drop named plans from a plan-file query, if any were named.
+
+    Ids arrive as strings because that is how they are stored on an
+    artifact envelope; the column is a UUID, so the comparison is made
+    against text to avoid a per-row cast.
+    """
+    if not exclude:
+        return query
+    return query.filter(~cast(PlanFileModel.id, String).in_([str(x) for x in exclude]))
+
+
+def count_plan_files(
+    session: Session,
+    project_id: uuid.UUID | None = None,
+    exclude: Collection[str] = (),
+) -> int:
+    """Total plan files, overall or for one project (SQL COUNT).
+
+    ``exclude`` drops plans the caller is hiding. Taken as a parameter
+    rather than worked out here, because deciding what is hidden means
+    reading review artifacts and this layer sits below the module that
+    defines them. Every listing and every count takes the same set, so a
+    sidebar badge cannot disagree with the list it is counting.
+    """
     query = session.query(func.count(PlanFileModel.id))
     if project_id is not None:
         query = query.filter(PlanFileModel.project_id == project_id)
+    query = _without(query, exclude)
     return query.scalar() or 0
 
 
-def plan_file_counts_by_project(session: Session) -> dict[uuid.UUID, int]:
+def plan_file_counts_by_project(
+    session: Session, exclude: Collection[str] = ()
+) -> dict[uuid.UUID, int]:
     """Plan-file count per project in one grouped query."""
     rows = (
-        session.query(PlanFileModel.project_id, func.count(PlanFileModel.id))
+        _without(session.query(PlanFileModel.project_id, func.count(PlanFileModel.id)), exclude)
         .group_by(PlanFileModel.project_id)
         .all()
     )
     return {project_id: count for project_id, count in rows}
 
 
-def recent_plan_files(session: Session, limit: int = 10) -> list[PlanFileModel]:
+def recent_plan_files(
+    session: Session, limit: int = 10, exclude: Collection[str] = ()
+) -> list[PlanFileModel]:
     """Most recently updated plan files across all projects (SQL ORDER BY ... LIMIT)."""
-    return (
-        session.query(PlanFileModel).order_by(PlanFileModel.updated_at.desc()).limit(limit).all()
+    rows: list[PlanFileModel] = (
+        _without(session.query(PlanFileModel), exclude)
+        .order_by(PlanFileModel.updated_at.desc())
+        .limit(limit)
+        .all()
     )
+    return rows
 
 
-def count_plan_files_recent(session: Session, days: int = 7) -> int:
+def count_plan_files_recent(session: Session, days: int = 7, exclude: Collection[str] = ()) -> int:
     """Plan files updated within the last `days` (SQL COUNT).
 
     The cutoff is computed with the same naive-UTC convention as the columns
@@ -600,7 +633,7 @@ def count_plan_files_recent(session: Session, days: int = 7) -> int:
     """
     cutoff = _utcnow() - timedelta(days=days)
     return (
-        session.query(func.count(PlanFileModel.id))
+        _without(session.query(func.count(PlanFileModel.id)), exclude)
         .filter(PlanFileModel.updated_at >= cutoff)
         .scalar()
         or 0
@@ -693,19 +726,22 @@ def get_plan_file(session: Session, plan_file_id: uuid.UUID) -> PlanFileModel | 
 
 
 def list_plan_files(
-    session: Session, project_id: uuid.UUID, limit: int | None = None, offset: int = 0
+    session: Session,
+    project_id: uuid.UUID,
+    limit: int | None = None,
+    offset: int = 0,
+    exclude: Collection[str] = (),
 ) -> list[PlanFileModel]:
     """List plan files for a project, newest first; optionally a page of them."""
-    query = (
-        session.query(PlanFileModel)
-        .filter_by(project_id=project_id)
-        .order_by(PlanFileModel.created_at.desc(), PlanFileModel.id)
-    )
+    query = _without(
+        session.query(PlanFileModel).filter_by(project_id=project_id), exclude
+    ).order_by(PlanFileModel.created_at.desc(), PlanFileModel.id)
     if offset:
         query = query.offset(offset)
     if limit is not None:
         query = query.limit(limit)
-    return query.all()
+    rows: list[PlanFileModel] = query.all()
+    return rows
 
 
 def create_version(
