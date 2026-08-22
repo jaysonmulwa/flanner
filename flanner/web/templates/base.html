@@ -5,17 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}flanner{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}?v={{ asset_version }}">
-    <meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
-    <meta name="theme-color" content="#0f141d" media="(prefers-color-scheme: dark)">
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}?v={{ asset_version }}">
+    <meta name="theme-color" content="#f7f7f8" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#141519" media="(prefers-color-scheme: dark)">
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/tokens.css') }}?v={{ asset_version }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/shell.css') }}?v={{ asset_version }}">
     <script>
     // Apply saved theme + reading preferences before first paint to avoid a flash.
     (function () {
       var d = document.documentElement;
+      // Light is the default. Only an explicit "system" choice hands the
+      // decision to the OS, which is why the attribute is stamped even when
+      // nothing has been saved yet.
       try {
         var t = localStorage.getItem('flanner.theme');
-        if (t === 'light' || t === 'dark') d.dataset.theme = t;  // otherwise follow the OS
-      } catch (e) {}
+        if (t !== 'system') d.dataset.theme = (t === 'dark') ? 'dark' : 'light';
+      } catch (e) { d.dataset.theme = 'light'; }
       try {
         var r = JSON.parse(localStorage.getItem('flanner.reading') || '{}');
         if (r.preset) d.dataset.readingPreset = r.preset;
@@ -28,85 +32,154 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body>
-    <a class="skip-link" href="#main">Skip to content</a>
-    <!-- Navigation -->
-    <nav class="navbar">
-        <div class="container">
-            <div class="nav-brand">
-                <a href="/">
-                    flanner
-                </a>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="/" {% if request.url.path == '/' %}class="active" aria-current="page"{% endif %}>
-                    Dashboard
-                </a></li>
-                <li><a href="/projects" {% if '/projects' in request.url.path %}class="active" aria-current="page"{% endif %}>
-                    Projects
-                </a></li>
-            </ul>
-            <button type="button" class="cmdk-trigger" id="cmdk-open" aria-label="Search (Ctrl+K)"
-                    title="Search projects and plans (Ctrl+K)"><span>Search</span><kbd>⌘K</kbd></button>
-            <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Theme: system"
-                    title="Theme: system"><span aria-hidden="true">◐</span></button>
-        </div>
-    </nav>
+<a class="skip-link" href="#main">Skip to content</a>
 
-    <!-- Main Content -->
-    <main id="main" tabindex="-1" class="main-content">
-        <div class="container">
-            {% if error %}
-            <div class="alert alert-error">
-                {{ error }}
-            </div>
-            {% endif %}
+<div class="shell">
+  <nav class="rail" aria-label="Main">
+    <button type="button" class="btn btn-icon menu-toggle" id="menu-toggle"
+            aria-expanded="false" aria-controls="rail-nav" aria-label="Menu">
+      <span aria-hidden="true">☰</span></button>
 
-            {% if success %}
-            <div class="alert alert-success">
-                {{ success }}
-            </div>
-            {% endif %}
+    <div class="rail-brand">
+      <span class="rail-mark" aria-hidden="true">f</span>
+      <a href="/">flanner <span class="rail-badge">local</span></a>
+    </div>
 
-            {% if info %}
-            <div class="alert alert-info">
-                {{ info }}
-            </div>
-            {% endif %}
+    <button type="button" class="rail-search" id="cmdk-open"
+            aria-label="Search projects and plans (Ctrl+K)">
+      <span aria-hidden="true">⌕</span><span>Search…</span><kbd>⌘K</kbd>
+    </button>
 
-            {% block content %}{% endblock %}
-        </div>
+    <button type="button" class="btn btn-icon rail-theme" data-theme-toggle
+          title="Theme" aria-label="Theme">
+      <span data-theme-glyph aria-hidden="true">○</span></button>
+
+
+    <div class="rail-nav" id="rail-nav">
+      {% set here = request.url.path %}
+      <a href="/" {% if here == '/' %}class="active" aria-current="page"{% endif %}>
+        <span class="glyph" aria-hidden="true">⌂</span> Dashboard</a>
+      <a href="/projects" {% if here.startswith('/projects') %}class="active" aria-current="page"{% endif %}>
+        <span class="glyph" aria-hidden="true">▣</span> Projects
+        {% if nav_projects is not none %}<span class="n tnum">{{ nav_projects }}</span>{% endif %}</a>
+      <a href="/plans" {% if here.startswith('/plans') %}class="active" aria-current="page"{% endif %}>
+        <span class="glyph" aria-hidden="true">▤</span> Plans
+        {% if nav_plans is not none %}<span class="n tnum">{{ nav_plans }}</span>{% endif %}</a>
+      <a href="/freshness" {% if here.startswith('/freshness') %}class="active" aria-current="page"{% endif %}>
+        <span class="glyph" aria-hidden="true">◔</span> Freshness
+        {% if nav_attention %}<span class="n n-warn tnum">{{ nav_attention }}</span>{% endif %}</a>
+      <a href="/integrations" {% if here.startswith('/integrations') %}class="active" aria-current="page"{% endif %}>
+        <span class="glyph" aria-hidden="true">⚯</span> Integrations</a>
+
+      {# Both are always here. Mesh signed out is the page explaining how to
+         join, which is exactly when somebody goes looking for it. Review
+         used to wait for a team, on the reasoning that a proposal cannot
+         exist without one — but comments and returned review packets are
+         both local and need no team at all, so the page has content either
+         way. Hiding it also made the sidebar itself inconsistent: any page
+         that did not compute the signed-in flag dropped the entry. #}
+      <div class="rail-group">Team</div>
+      <a href="/mesh" {% if here.startswith('/mesh') %}class="active" aria-current="page"{% endif %}>
+        <span class="glyph" aria-hidden="true">⬡</span> Mesh
+        {% if nav_peers %}<span class="n tnum">{{ nav_peers }}</span>
+        {% elif not nav_signed_in %}<span class="n">not joined</span>{% endif %}</a>
+      <a href="/review" {% if here.startswith('/review') %}class="active" aria-current="page"{% endif %}>
+        <span class="glyph" aria-hidden="true">◇</span> Review
+        {% if nav_review %}<span class="n tnum">{{ nav_review }}</span>{% endif %}</a>
+      {# Settings is not a team item. It followed the Team group with nothing
+         between them, so the heading appeared to cover it. A rule rather
+         than a second heading: a labelled group of one is heavier than the
+         thing it is labelling. #}
+      <a href="/settings" class="rail-apart {% if here.startswith('/settings') %}active{% endif %}"
+         {% if here.startswith('/settings') %}aria-current="page"{% endif %}>
+        <span class="glyph" aria-hidden="true">⚙</span> Settings</a>
+    </div>
+
+    <div class="rail-foot">
+      <div class="hd"><span class="dot" aria-hidden="true"></span> 100% local</div>
+      <p>SQLite on this machine. No account, nothing leaves your disk.</p>
+      <p class="credit">Made by <a href="https://github.com/jaysonmulwa">Jayson</a> ·
+        <a href="#" data-help-open>shortcuts</a></p>
+    </div>
+  </nav>
+
+  <div class="main">
+    <div class="topbar">
+      {% block topbar_back %}{% endblock %}
+      {% block topbar_main %}<h1>{{ self.title() }}</h1>{% endblock %}
+      <div class="actions">
+        {% block topbar_actions %}{% endblock %}
+        <button type="button" class="btn btn-icon filter-toggle" id="filter-toggle"
+                aria-expanded="false" aria-controls="listctl"
+                aria-label="Filter and sort" title="Filter and sort" hidden>
+          <span aria-hidden="true">⌕</span></button>
+        <button type="button" class="btn btn-icon topbar-theme" id="theme-toggle"
+                data-theme-toggle title="Theme">
+          <span data-theme-glyph aria-hidden="true">○</span>
+        </button>
+      </div>
+    </div>
+
+    <main id="main" tabindex="-1">
+      {% if error or success or info %}
+      <div class="pane" data-flash style="padding-bottom: 0">
+        {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+        {% if success %}<div class="alert alert-success">{{ success }}</div>{% endif %}
+        {% if info %}<div class="alert alert-info">{{ info }}</div>{% endif %}
+      </div>
+      {% endif %}
+      {% block content %}{% endblock %}
     </main>
 
-    <!-- Footer -->
-    <footer class="footer">
-        <div class="container">
-            <p>flanner --- plan files for AI assistants, versioned</p>
-            <p class="footer-credit">Made with ❤️ by <a href="https://github.com/jaysonmulwa">Jayson</a></p>
-        </div>
+    {#
+      Site footer. Deliberately links only to places that exist: every href
+      here resolves, because a footer full of dead links is worse than a
+      short one. No Terms or Status, because this build has neither.
+    #}
+    <footer class="sitefoot">
+      <div class="sitefoot-in">
+        <span class="mark">
+          <span class="dot" aria-hidden="true"></span>
+          flanner <span class="ver mono">{{ app_version }}</span>
+        </span>
+        <nav class="links" aria-label="Footer">
+          <a href="/settings">Settings</a>
+          <a href="/mesh">How syncing works</a>
+          <a href="/review">Review</a>
+          <a href="#" data-help-open>Shortcuts</a>
+          <a href="https://github.com/jaysonmulwa" rel="noopener noreferrer"
+             target="_blank">Source</a>
+        </nav>
+        <span class="note">
+          &copy; {{ app_year }} flanner &middot; runs entirely on this machine
+        </span>
+      </div>
     </footer>
+  </div>
+</div>
 
-    <!-- Command palette (Cmd/Ctrl+K) -->
-    <dialog id="cmdk" class="cmdk" aria-label="Search projects and plans">
-        <input type="text" id="cmdk-input" class="cmdk-input" role="combobox"
-               aria-controls="cmdk-list" aria-expanded="true" autocomplete="off"
-               spellcheck="false" placeholder="Search projects and plans...">
-        <ul id="cmdk-list" class="cmdk-list" role="listbox" aria-label="Results"></ul>
-        <p class="cmdk-hint"><kbd>↑</kbd><kbd>↓</kbd> navigate &nbsp; <kbd>↵</kbd> open &nbsp; <kbd>esc</kbd> close</p>
-    </dialog>
+<!-- Command palette (Cmd/Ctrl+K) -->
+<dialog id="cmdk" class="cmdk" aria-label="Search projects and plans">
+    <input type="text" id="cmdk-input" class="cmdk-input" role="combobox"
+           aria-controls="cmdk-list" aria-expanded="true" autocomplete="off"
+           spellcheck="false" placeholder="Search projects and plans...">
+    <ul id="cmdk-list" class="cmdk-list" role="listbox" aria-label="Results"></ul>
+    <p class="cmdk-hint"><kbd>↑</kbd><kbd>↓</kbd> navigate &nbsp; <kbd>↵</kbd> open &nbsp; <kbd>esc</kbd> close</p>
+</dialog>
 
-    <!-- Keyboard shortcuts help (press ?) -->
-    <dialog id="help" class="help-dialog" aria-label="Keyboard shortcuts">
-        <h2 class="help-title">Keyboard shortcuts</h2>
-        <dl class="help-list">
-            <div><dt><kbd>Ctrl</kbd><kbd>K</kbd></dt><dd>Search projects and plans</dd></div>
-            <div><dt><kbd>Ctrl</kbd><kbd>S</kbd></dt><dd>Save (in the plan editor)</dd></div>
-            <div><dt><kbd>?</kbd></dt><dd>Show this help</dd></div>
-            <div><dt><kbd>Esc</kbd></dt><dd>Close a dialog or popover</dd></div>
-        </dl>
-        <form method="dialog"><button class="btn btn-sm">Close</button></form>
-    </dialog>
+<!-- Keyboard shortcuts help (press ?) -->
+<dialog id="help" class="help-dialog" aria-label="Keyboard shortcuts">
+    <h2 class="help-title">Keyboard shortcuts</h2>
+    <dl class="help-list">
+        <div><dt><kbd>Ctrl</kbd><kbd>K</kbd></dt><dd>Search projects and plans</dd></div>
+        <div><dt><kbd>Ctrl</kbd><kbd>S</kbd></dt><dd>Save (in the plan editor)</dd></div>
+        <div><dt><kbd>?</kbd></dt><dd>Show this help</dd></div>
+        <div><dt><kbd>Esc</kbd></dt><dd>Close a dialog or popover</dd></div>
+    </dl>
+    <form method="dialog"><button class="btn">Close</button></form>
+</dialog>
 
-    <script src="{{ url_for('static', path='/js/app.js') }}?v={{ asset_version }}"></script>
-    {% block extra_scripts %}{% endblock %}
+<script src="{{ url_for('static', path='/js/app.js') }}?v={{ asset_version }}"></script>
+{% block extra_scripts %}{% endblock %}
 </body>
 </html>

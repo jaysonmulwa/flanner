@@ -9,16 +9,16 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import Any, NoReturn
 
 import click
-from rich.console import Console
-from rich.table import Table
+from rich.text import Text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from . import identity, tui
 from .database import (
     ProjectModel,
-    delete_project,
     get_project_by_name,
     get_session,
     init_database,
@@ -28,7 +28,8 @@ from .exceptions import FlannerError
 from .git_integration import find_git_root, update_gitignore
 from .storage import init_storage
 
-console = Console()
+# One console for the whole CLI, carrying the palette in tui.THEME.
+console = tui.console
 
 
 def get_mcp_dir() -> Path:
@@ -219,9 +220,9 @@ def start(port: int) -> None:
 
     # Note: In production, you would start the server in background
     # For now, we'll just show instructions
-    console.print("\n" + "=" * 60, style="cyan")
-    console.print("MCP SERVER READY", style="cyan bold")
-    console.print("=" * 60 + "\n", style="cyan")
+    console.print()
+    tui.ok("MCP server ready")
+    console.print()
 
     console.print("Add to your Claude Code MCP settings:\n", style="white")
 
@@ -264,69 +265,74 @@ def status() -> None:
     mcp_dir = get_mcp_dir()
     db_path = mcp_dir / "data.db"
 
-    console.print("\n" + "=" * 60, style="cyan")
-    console.print("FLANNER STATUS", style="cyan bold")
-    console.print("=" * 60 + "\n", style="cyan")
+    from .claude_integration import check_server_status
 
-    # Server status
+    rows: list[tuple[str, Any]] = []
+
+    # Server
+    running_pid: int | None = None
     if pid_file.exists():
         try:
-            pid = int(pid_file.read_text())
-            os.kill(pid, 0)
-            console.print("Server Status: Running", style="green")
-            console.print(f"PID: {pid}", style="green")
+            candidate = int(pid_file.read_text())
+            os.kill(candidate, 0)
+            running_pid = candidate
         except (OSError, ValueError):
-            console.print("Server Status: Stopped", style="yellow")
             pid_file.unlink()
+    if running_pid is not None:
+        server = tui.dot("ok", label="running")
+        server.append(f"  (pid {running_pid})", style="muted")
     else:
-        console.print("Server Status: Stopped", style="yellow")
+        server = tui.dot("unknown", label="stopped")
+        server.append("  start it with ", style="muted")
+        server.append("flanner start", style="accent")
+    rows.append(("MCP server", server))
 
-    # Database status
+    # Database
     if db_path.exists():
-        console.print(f"\nDatabase: {db_path}", style="white")
-
-        # Get project count
+        rows.append(("Database", Text(str(db_path), style="value")))
         try:
             init_database(str(db_path))
             session = get_session()
             projects = db_list_projects(session)
-            console.print(f"Projects: {len(projects)}", style="white")
-
-            # Show total plan files
             total_plans = sum(len(p.plan_files) for p in projects)
-            console.print(f"Total Plan Files: {total_plans}", style="white")
+            # Its own row rather than appended to the path: the path is long
+            # enough to push the counts off the edge of an 80-column terminal,
+            # and the counts are the part worth reading.
+            catalog = Text()
+            catalog.append(
+                f"{len(projects)} project{'' if len(projects) == 1 else 's'}", style="value"
+            )
+            catalog.append(f"  {tui.MIDDOT}  ", style="muted")
+            catalog.append(f"{total_plans} plan{'' if total_plans == 1 else 's'}", style="value")
+            rows.append(("Catalog", catalog))
         except (FlannerError, SQLAlchemyError):
-            console.print("Database: Unable to read", style="red")
+            rows.append(("Catalog", Text("unreadable", style="bad")))
     else:
-        console.print("\nDatabase: Not initialized", style="yellow")
+        rows.append(("Database", Text("not initialized yet", style="warn")))
 
-    # Claude Code Integration Status
-    console.print("\n" + "-" * 60, style="cyan")
-    console.print("CLAUDE CODE INTEGRATION", style="cyan bold")
-    console.print("-" * 60, style="cyan")
-
-    from .claude_integration import check_server_status
-
+    # Claude Code
     claude_status = check_server_status()
-
-    console.print(f"\nConfig Path: {claude_status['config_path']}", style="white")
-
-    if claude_status["registered"]:
-        if claude_status["config_valid"]:
-            console.print("MCP Server: Registered & Valid", style="green")
-        else:
-            console.print("MCP Server: Registered (config outdated)", style="yellow")
-            console.print(f"  {claude_status['message']}", style="yellow")
+    if claude_status["registered"] and claude_status["config_valid"]:
+        registered = tui.dot("ok", label="registered")
+    elif claude_status["registered"]:
+        registered = tui.dot("warn", label="registered")
+        registered.append("  config is out of date", style="warn")
     else:
-        console.print("MCP Server: Not Registered", style="yellow")
+        registered = tui.dot("unknown", label="not registered")
+        registered.append("  run ", style="muted")
+        registered.append("flanner register", style="accent")
+    rows.append(("Claude Code", registered))
+    rows.append(("Config file", Text(str(claude_status["config_path"]), style="muted")))
 
+    console.print()
+    console.print(tui.fields(rows))
     if claude_status.get("action_needed"):
-        console.print(f"\nAction needed: {claude_status['action_needed']}", style="yellow")
-
+        console.print()
+        tui.warn(str(claude_status["action_needed"]))
     console.print()
 
 
-@cli.command()
+@cli.command("list")
 @click.option("--project", default=None, help="Project name")
 @click.option(
     "--output",
@@ -334,7 +340,7 @@ def status() -> None:
     default="table",
     help="Output format",
 )
-def list(project: str | None, output: str) -> None:
+def list_cmd(project: str | None, output: str) -> None:
     """List all projects or plan files"""
     import json as json_module
 
@@ -371,27 +377,32 @@ def list(project: str | None, output: str) -> None:
             )
             return
 
-        console.print(f"\nPlan files for project: {project}\n", style="cyan bold")
-
         if not proj.plan_files:
-            console.print("No plan files yet.", style="yellow")
+            console.print()
+            tui.note(f"No plans in {project} yet. Your agents will fill this in.")
+            console.print()
             return
 
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("ID", style="dim")
-        table.add_column("Name")
-        table.add_column("Version")
-        table.add_column("Updated")
-
+        # The id column is gone: a uuid nobody types was eating a third of the
+        # width and then being truncated anyway. The name is what every other
+        # command takes as an argument.
+        listing = tui.table("Plan", ("Ver", {"justify": "right"}), "Updated by", "Updated")
         for pf in proj.plan_files:
-            table.add_row(
-                str(pf.id),
-                pf.name,
-                f"v{pf.current_version}",
-                pf.updated_at.strftime("%Y-%m-%d %H:%M") if pf.updated_at else "N/A",
+            listing.add_row(
+                Text(f"{pf.name}.md", style="value"),
+                Text(f"v{pf.current_version}", style="muted"),
+                Text(getattr(pf, "created_by", None) or "user", style="muted"),
+                Text(
+                    pf.updated_at.strftime("%Y-%m-%d %H:%M") if pf.updated_at else "never",
+                    style="muted",
+                ),
             )
-
-        console.print(table)
+        console.print()
+        console.print(listing)
+        console.print()
+        count = len(proj.plan_files)
+        tui.note(f"{count} plan{'' if count == 1 else 's'} in {project}")
+        console.print()
     else:
         # List all projects
         projects = db_list_projects(session)
@@ -417,23 +428,20 @@ def list(project: str | None, output: str) -> None:
             console.print("No projects yet. Run 'flanner init' to create one.", style="yellow")
             return
 
-        console.print("\nProjects:\n", style="cyan bold")
-
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("ID", style="dim")
-        table.add_column("Name")
-        table.add_column("Plan Dir")
-        table.add_column("# Plans")
-        table.add_column("Created")
-
+        listing = tui.table(
+            "Project", ("Plans", {"justify": "right"}), "Plan directory", "Created"
+        )
         for p in projects:
-            table.add_row(
-                str(p.id),
-                p.name,
-                p.plan_directory,
-                str(len(p.plan_files)),
-                p.created_at.strftime("%Y-%m-%d") if p.created_at else "N/A",
+            listing.add_row(
+                Text(p.name, style="value"),
+                Text(str(len(p.plan_files)), style="muted"),
+                Text(p.plan_directory, style="code"),
+                Text(
+                    p.created_at.strftime("%Y-%m-%d") if p.created_at else "never", style="muted"
+                ),
             )
+        console.print()
+        table = listing
 
         console.print(table)
         console.print()
@@ -555,16 +563,15 @@ def delete(project_name: str, force: bool) -> None:
             return
 
     # Delete project (cascade deletes plan files and versions)
-    if delete_project(session, project.id):
-        console.print(f"\nOK Project '{project_name}' deleted successfully", style="green")
-        console.print(
-            "  Note: Plan files on disk were NOT deleted. You may want to manually remove:",
-            style="cyan",
-        )
-        if project.project_root:
-            console.print(f"  {project.project_root}/{project.plan_directory}/", style="cyan")
-    else:
-        console.print("ERROR Failed to delete project", style="red")
+    project_root, plan_directory = project.project_root, project.plan_directory
+    _write("delete_project", project_id=str(project.id))
+    console.print(f"\nOK Project '{project_name}' deleted successfully", style="green")
+    console.print(
+        "  Note: Plan files on disk were NOT deleted. You may want to manually remove:",
+        style="cyan",
+    )
+    if project_root:
+        console.print(f"  {project_root}/{plan_directory}/", style="cyan")
 
 
 def _port_in_use(host: str, port: int) -> bool:
@@ -649,7 +656,14 @@ def web(port: int, host: str, open_browser: bool) -> None:
     if open_browser:
         _open_browser_when_ready(host, port)
 
-    # Start web server
+    # Start web server. While it runs it is the local write daemon: advertise
+    # it (port + token) so the stdio MCP server forwards writes here instead of
+    # mutating shared state from a second process (PRD Phase 1).
+    from . import ipc
+
+    token = ipc.new_token()
+    os.environ[ipc.TOKEN_ENV] = token
+    ipc.write_daemon_info(port, token)
     try:
         import uvicorn
 
@@ -660,6 +674,8 @@ def web(port: int, host: str, open_browser: bool) -> None:
         console.print("\n\nOK Web server stopped", style="green")
     except Exception as e:
         console.print(f"\nERROR Error starting web server: {e}", style="red")
+    finally:
+        ipc.clear_daemon_info()
 
 
 @cli.command()
@@ -793,29 +809,37 @@ def unregister() -> None:
 @cli.command()
 def claude_info() -> None:
     """Show Claude Code integration information"""
-    console.print("\n" + "=" * 60, style="cyan")
-    console.print("CLAUDE CODE INTEGRATION INFO", style="cyan bold")
-    console.print("=" * 60 + "\n", style="cyan")
+    console.print()
 
     from .claude_integration import get_claude_config_info, print_registration_instructions
 
     info = get_claude_config_info()
 
-    console.print(f"Configuration Path: {info['config_path']}", style="white")
-    console.print(f"Config File Exists: {info['config_exists']}", style="white")
-    console.print(
-        f"Server Registered: {info['server_registered']}",
-        style="green" if info["server_registered"] else "yellow",
+    registered = (
+        tui.dot("ok", label="registered")
+        if info["server_registered"]
+        else tui.dot("unknown", label="not registered")
     )
-    console.print(f"Total MCP Servers: {info['total_servers']}", style="white")
+    console.print(
+        tui.fields(
+            [
+                ("MCP server", registered),
+                ("Config file", Text(str(info["config_path"]), style="value")),
+                ("File exists", Text("yes" if info["config_exists"] else "no", style="muted")),
+                ("MCP servers", Text(str(info["total_servers"]), style="muted")),
+            ]
+        )
+    )
 
     if info["our_server_config"]:
-        console.print("\nCurrent Configuration:", style="cyan")
+        console.print()
+        tui.note("Current configuration")
         import json
 
         console.print(json.dumps(info["our_server_config"], indent=2), style="white")
     else:
-        console.print("\nNot registered. Use 'flanner register' to add.", style="yellow")
+        console.print()
+        tui.note("Not registered. Run flanner register to add it.")
         print_registration_instructions()
 
 
@@ -964,12 +988,10 @@ def _sync_project(
 )
 def sync(project: str | None, dry_run: bool) -> None:
     """Scan .plans directory and import existing plan files into database"""
-    console.print("\n" + "=" * 60, style="cyan")
-    console.print("SYNC PLAN FILES", style="cyan bold")
-    console.print("=" * 60 + "\n", style="cyan")
+    console.print()
 
     if dry_run:
-        console.print("[DRY RUN MODE - No changes will be made]\n", style="yellow")
+        tui.note("Dry run. Nothing will be written.")
 
     mcp_dir = get_mcp_dir()
     db_path = mcp_dir / "data.db"
@@ -1000,17 +1022,352 @@ def sync(project: str | None, dry_run: bool) -> None:
     for proj in projects:
         _sync_project(session, proj, dry_run, totals)
 
-    console.print("\n" + "=" * 60, style="cyan")
-    console.print("SYNC SUMMARY", style="cyan bold")
-    console.print("=" * 60, style="cyan")
-    console.print(f"Files scanned: {totals['scanned']}", style="white")
-    console.print(f"Files imported: {totals['imported']}", style="green")
-    console.print(f"Files skipped: {totals['skipped']}", style="yellow")
-    console.print(f"Errors: {totals['error']}", style="red")
+    # Only the counts that actually happened. A row of zeroes buries the one
+    # number worth reading, which is usually "imported".
+    summary = Text()
+    summary.append(f"{totals['scanned']} scanned", style="value")
+    for label, key, style in (
+        ("imported", "imported", "ok"),
+        ("skipped", "skipped", "muted"),
+        ("errors", "error", "bad"),
+    ):
+        if totals[key]:
+            summary.append(f"  {tui.MIDDOT}  ", style="muted")
+            summary.append(f"{totals[key]} {label}", style=style)
+    console.print()
+    console.print(summary)
     console.print()
 
     if dry_run and totals["imported"] > 0:
-        console.print("Run without --dry-run to actually import the files", style="cyan")
+        tui.note("Nothing written. Run flanner sync to apply.")
+
+
+_REVIEW_STYLES = {
+    "open": "cyan",
+    "accepted": "green",
+    "superseded": "blue",
+    "rejected": "red",
+    "changes_requested": "yellow",
+    "withdrawn": "dim",
+    "stale": "dark_orange",
+}
+
+
+@cli.group()
+def review() -> None:
+    """Propose plans for review and record decisions"""
+
+
+def _resolve_plan(
+    session: Session, project: str | None, plan_name: str
+) -> tuple[ProjectModel, Any]:
+    """Find a project and one of its plans, or exit 1 explaining which failed."""
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        _no_project(project)
+    plan_file = next((p for p in proj.plan_files if p.name == plan_name), None)
+    if plan_file is None:
+        console.print(f"ERROR Plan '{plan_name}' not found in '{proj.name}'", style="red")
+        raise SystemExit(1)
+    return proj, plan_file
+
+
+@review.command("propose")
+@click.argument("plan_name")
+@click.option("--project", default=None, help="Project name")
+@click.option("--message", default="", help="Note for reviewers")
+@click.option("--actor", default=None, help="Who is proposing (defaults to your entitlement)")
+def review_propose(plan_name: str, project: str | None, message: str, actor: str | None) -> None:
+    """Offer a plan's newest version for review"""
+    from .review import propose
+
+    session = _require_session()
+    proj, plan_file = _resolve_plan(session, project, plan_name)
+    try:
+        result = propose(session, project=proj, plan_file=plan_file, message=message, actor=actor)
+    except (ValueError, PermissionError) as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print(f"\nOK Proposed '{plan_name}' for review", style="green")
+    console.print(f"  proposal: {result.event.event_id}", style="cyan")
+    console.print(f"  version:  {result.event.payload['target_artifact_id']}", style="dim")
+
+
+@review.command("decide")
+@click.argument("plan_name")
+@click.argument(
+    "decision", type=click.Choice(["approve", "reject", "request_changes", "withdraw"])
+)
+@click.option("--proposal", default=None, help="Proposal id (defaults to the only open one)")
+@click.option("--project", default=None, help="Project name")
+@click.option("--actor", default=None, help="Who is deciding (defaults to your entitlement)")
+def review_decide(
+    plan_name: str, decision: str, proposal: str | None, project: str | None, actor: str | None
+) -> None:
+    """Approve, reject, request changes on, or withdraw a proposal"""
+    from .review import decide, status
+
+    session = _require_session()
+    proj, plan_file = _resolve_plan(session, project, plan_name)
+
+    if proposal is None:
+        open_ones = [
+            view
+            for view in status(session, plan_file=plan_file, project=proj).proposals.values()
+            if view.state in ("open", "stale", "changes_requested")
+        ]
+        if len(open_ones) != 1:
+            console.print(
+                f"ERROR {len(open_ones)} proposals are open; name one with --proposal.",
+                style="red",
+            )
+            raise SystemExit(1)
+        proposal = open_ones[0].proposal_id
+
+    try:
+        result = decide(
+            session,
+            project=proj,
+            plan_file=plan_file,
+            proposal_id=proposal,
+            action=decision,
+            actor=actor,
+        )
+    except ValueError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print(f"\nOK Recorded {decision} on '{plan_name}'", style="green")
+    if result.advanced_baseline:
+        console.print("  the accepted baseline now points at this version", style="green")
+    else:
+        console.print(f"  baseline unchanged: {result.reason}", style="yellow")
+
+
+def _print_comments(session: Session, plan_file: Any) -> None:
+    """Notes teammates left, with whether each still finds its text."""
+    from .anchors import AMBIGUOUS, STRANDED, Anchor, resolve
+    from .assurance import load_comments
+    from .database import get_version
+    from .storage import load_plan_file
+
+    notes = load_comments(session, str(plan_file.id))
+    if not notes:
+        return
+
+    current = get_version(session, plan_file.id, None)
+    body = ""
+    if current is not None:
+        try:
+            _, body = load_plan_file(current.file_path)
+        except (FileNotFoundError, OSError):
+            body = ""
+
+    console.print()
+    heading = Text()
+    heading.append(f"{len(notes)} comment{'' if len(notes) == 1 else 's'}", style="value")
+    console.print(heading)
+    console.print()
+    listing = tui.table(
+        "By", ("On", {"overflow": "fold"}), ("Note", {"overflow": "fold"}), "Anchor"
+    )
+    for event in notes:
+        payload = event.payload
+        anchor_data = payload.get("anchor") or {}
+        state = resolve(Anchor.from_dict(anchor_data), body) if body else None
+        if state is None:
+            mark = Text("unknown", style="muted")
+        elif state.status == STRANDED:
+            mark = Text("lost its place", style="bad")
+        elif state.status == AMBIGUOUS:
+            mark = Text("several matches", style="warn")
+        elif state.status == "moved":
+            mark = Text("text changed", style="warn")
+        else:
+            mark = Text("anchored", style="ok")
+        listing.add_row(
+            Text(str(event.actor or "unknown"), style="muted"),
+            Text(str(anchor_data.get("quote") or "")[:40], style="muted"),
+            Text(str(payload.get("body") or ""), style="value"),
+            mark,
+        )
+    console.print(listing)
+    console.print()
+
+
+def _print_external_review(session: Session, plan_file: Any) -> None:
+    """Notes imported from outside, kept apart from the proposals.
+
+    Separate because they did not come from a device this team can verify,
+    and must not read as though they had.
+    """
+    from .assurance import load_external_reviews
+
+    imported = load_external_reviews(session, str(plan_file.id))
+    if not imported:
+        return
+    total = sum(len(e.payload.get("notes") or []) for e in imported)
+    console.print()
+    heading = Text()
+    heading.append(f"{total} note{'' if total == 1 else 's'} from outside", style="value")
+    heading.append("   unverified", style="warn")
+    console.print(heading)
+    console.print()
+    outside = tui.table("From", ("On", {"overflow": "fold"}), ("Note", {"overflow": "fold"}))
+    for event in imported:
+        who = str(event.payload.get("reviewer") or "unnamed")
+        for note in event.payload.get("notes") or []:
+            outside.add_row(
+                Text(who, style="muted"),
+                Text(str(note.get("quote", ""))[:38], style="muted"),
+                Text(str(note.get("body", "")), style="value"),
+            )
+    console.print(outside)
+    console.print()
+
+
+@review.command("status")
+@click.argument("plan_name")
+@click.option("--project", default=None, help="Project name")
+def review_status(plan_name: str, project: str | None) -> None:
+    """Show a plan's proposals and its accepted baseline"""
+    from . import authz
+    from .review import status
+
+    session = _require_session()
+    proj, plan_file = _resolve_plan(session, project, plan_name)
+    state = status(session, plan_file=plan_file, project=proj)
+
+    authorization = authz.resolve(proj)
+    if not authorization.enforced:
+        console.print(
+            "review here is advisory: this project has not joined a workspace", style="dim"
+        )
+    elif not authorization.roles:
+        console.print(f"WARN cannot authorize review: {authorization.reason}", style="yellow")
+
+    if state.conflicted:
+        console.print(
+            "WARN the accepted baseline is contested; merge before implementing", style="red"
+        )
+    elif state.accepted_artifact_id:
+        console.print(f"accepted: {state.accepted_artifact_id}", style="green")
+    else:
+        console.print("accepted: nothing approved yet", style="yellow")
+
+    if not state.proposals:
+        console.print("\nNo proposals recorded.", style="dim")
+        # Outside review can exist with no proposal at all, and is the
+        # whole point of having sent a packet, so it is not skipped here.
+        _print_comments(session, plan_file)
+        _print_external_review(session, plan_file)
+        return
+
+    table = tui.table("Proposal", "State", "Proposer", "Approvals")
+    for view in state.proposals.values():
+        style = _REVIEW_STYLES.get(view.state, "white")
+        table.add_row(
+            view.proposal_id[:19] + "...",
+            f"[{style}]{view.state}[/{style}]",
+            view.proposer,
+            ", ".join(view.approvals) or "--",
+        )
+    console.print(table)
+
+    _print_comments(session, plan_file)
+    _print_external_review(session, plan_file)
+
+
+_FINDING_STYLES = {
+    "missing_file": "red",
+    "hash_mismatch": "yellow",
+    "unreadable_file": "red",
+    "orphan_file": "cyan",
+    "unknown_plan": "yellow",
+    "stale_current_version": "cyan",
+    "no_project_root": "red",
+    "signature_invalid": "red",
+    "artifact_missing": "red",
+    "unverified_signer": "blue",
+}
+
+
+@cli.command()
+@click.option("--project", default=None, help="Project name")
+@click.option("--repair", is_flag=True, help="Adopt orphan files and fix stale version counters")
+@click.option(
+    "--output",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+def doctor(project: str | None, repair: bool, output: str) -> None:
+    """Check the catalog against the plan files on disk"""
+    import json as json_module
+
+    from .reconcile import reconcile_project
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        _no_project(project)
+
+    findings = reconcile_project(session, proj, repair=repair)
+
+    if output == "json":
+        click.echo(
+            json_module.dumps(
+                [
+                    {
+                        "kind": f.kind,
+                        "plan": f.plan,
+                        "detail": f.detail,
+                        "path": f.path,
+                        "repairable": f.repairable,
+                    }
+                    for f in findings
+                ],
+                indent=2,
+            )
+        )
+        return
+
+    if not findings:
+        console.print(
+            f"OK Catalog, files, and signatures all agree for '{proj.name}'", style="green"
+        )
+        return
+
+    table = tui.table("Issue", "Plan", "Detail")
+    for finding in findings:
+        style = _FINDING_STYLES.get(finding.kind, "white")
+        table.add_row(f"[{style}]{finding.kind}[/{style}]", finding.plan, finding.detail)
+    console.print(table)
+
+    unchecked = [f for f in findings if f.informational]
+    if unchecked and len(unchecked) == len(findings):
+        console.print(
+            f"\nNo problems found. {len(unchecked)} item(s) could not be verified on "
+            "this device; the note above says why.",
+            style="green",
+        )
+        return
+
+    if repair:
+        fixed = sum(1 for f in findings if f.repairable)
+        console.print(f"\nRepaired {fixed} of {len(findings)} findings.", style="green")
+        remaining = [f for f in findings if not f.repairable and not f.informational]
+        if remaining:
+            console.print(
+                f"{len(remaining)} need a human: files are missing or were edited outside "
+                "flanner, so no automatic fix is safe.",
+                style="yellow",
+            )
+    elif any(f.repairable for f in findings):
+        console.print(
+            "\nRun 'flanner doctor --repair' to fix the repairable ones.", style="yellow"
+        )
 
 
 _FRESHNESS_STYLES = {"fresh": "green", "aging": "yellow", "suspect": "dark_orange", "stale": "red"}
@@ -1037,10 +1394,7 @@ def freshness(plan_name: str | None, project: str | None, output: str) -> None:
     session = _require_session()
     proj = _resolve_project_or_cwd(session, project)
     if not proj:
-        console.print(
-            "ERROR Project not found. Run from inside a project or pass --project.", style="red"
-        )
-        raise SystemExit(1)
+        _no_project(project)
 
     plans = db_list_plan_files(session, proj.id)
     if plan_name:
@@ -1051,8 +1405,11 @@ def freshness(plan_name: str | None, project: str | None, output: str) -> None:
     if not plans:
         console.print(f"No plan files found for project '{proj.name}'", style="yellow")
         return
+    if not proj.project_root:
+        console.print(f"ERROR Project '{proj.name}' has no project_root configured", style="red")
+        raise SystemExit(1)
 
-    results = []
+    results: list[tuple[Any, Any, dict[str, Any]]] = []
     for plan in plans:
         version_obj = get_version(session, plan.id, None)
         if not version_obj:
@@ -1070,49 +1427,82 @@ def freshness(plan_name: str | None, project: str | None, output: str) -> None:
     if output == "json":
         click.echo(
             json_module.dumps(
-                [
-                    {"plan": p.name, "version": v.version, **e}
-                    for p, v, e in results
-                ],
+                [{"plan": p.name, "version": v.version, **e} for p, v, e in results],
                 indent=2,
             )
         )
         return
 
+    # One plan named: the full case for the verdict, which is what someone
+    # asking about a single plan wants. The table below is for scanning.
     if plan_name and len(results) == 1:
         plan, version_obj, evidence = results[0]
-        style = _FRESHNESS_STYLES.get(evidence["status"], "white")
-        console.print(f"\n{plan.name} v{version_obj.version}: ", style="bold", end="")
-        console.print(evidence["status"], style=f"bold {style}")
+        console.print()
+        headline = Text()
+        headline.append_text(tui.dot(evidence["status"]))
+        headline.append("  ")
+        headline.append(f"{plan.name}.md", style="value")
+        headline.append(f"  v{version_obj.version}", style="muted")
+        console.print(headline)
+        console.print()
         for reason in evidence["reasons"]:
-            console.print(f"  - {reason}")
-        for key in (
-            "anchored_at_commit",
-            "referenced_paths",
-            "referenced_symbols",
-            "invalid_refs",
-            "commits_since_anchor",
-            "churn_scope",
-            "age_days",
-        ):
-            if evidence.get(key) not in (None, []):
-                console.print(f"  {key}: {evidence[key]}", style="dim")
+            if evidence["status"] == "stale":
+                tui.bad(reason)
+            else:
+                tui.warn(reason)
+        if not evidence["reasons"]:
+            tui.ok("nothing has drifted since this was written")
+
+        detail = [
+            ("Anchor", "anchored_at_commit"),
+            ("Commits since", "commits_since_anchor"),
+            ("Age (days)", "age_days"),
+            ("Dead refs", "invalid_refs"),
+            ("Cited paths", "referenced_paths"),
+            ("Cited symbols", "referenced_symbols"),
+        ]
+        rows = []
+        for label, key in detail:
+            got = evidence.get(key)
+            if got in (None, [], ""):
+                continue
+            shown = ", ".join(str(x) for x in got) if isinstance(got, list) else str(got)
+            rows.append((label, Text(shown, style="code")))
+        if rows:
+            console.print()
+            console.print(tui.fields(rows))
+        console.print()
         return
 
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Plan")
-    table.add_column("Ver")
-    table.add_column("Status")
-    table.add_column("Evidence")
+    listing = tui.table(
+        "Plan",
+        ("Ver", {"justify": "right"}),
+        "Status",
+        ("Evidence", {"overflow": "fold"}),
+    )
+    counts: dict[str, int] = {}
     for plan, version_obj, evidence in results:
-        style = _FRESHNESS_STYLES.get(evidence["status"], "white")
-        table.add_row(
-            plan.name,
-            f"v{version_obj.version}",
-            f"[{style}]{evidence['status']}[/{style}]",
-            evidence["reasons"][0] if evidence["reasons"] else "",
+        status = evidence["status"]
+        counts[status] = counts.get(status, 0) + 1
+        listing.add_row(
+            Text(f"{plan.name}.md", style="value"),
+            Text(f"v{version_obj.version}", style="muted"),
+            tui.dot(status),
+            Text(evidence["reasons"][0] if evidence["reasons"] else "", style="muted"),
         )
-    console.print(table)
+    console.print()
+    console.print(listing)
+    console.print()
+
+    summary = tui.tally(counts)
+    worst = next((s for s in reversed(tui.FRESHNESS_ORDER) if counts.get(s)), None)
+    if worst and worst != "fresh":
+        example = next(p.name for p, _, e in results if e["status"] == worst)
+        summary.append(f"  {tui.DASH} run ", style="muted")
+        summary.append(f"flanner freshness {example}", style="accent")
+        summary.append(" for the full evidence", style="muted")
+    console.print(summary)
+    console.print()
 
 
 @cli.group()
@@ -1127,7 +1517,6 @@ def jira() -> None:
 @click.option("--project-key", default=None, help="Default JIRA project key (e.g., PROJ)")
 def jira_config(project_name: str, url: str, project_key: str | None) -> None:
     """Configure JIRA integration for a project"""
-    from .database import create_jira_config
     from .jira_utils import is_valid_jira_url, normalize_jira_url
 
     mcp_dir = get_mcp_dir()
@@ -1155,14 +1544,19 @@ def jira_config(project_name: str, url: str, project_key: str | None) -> None:
     # Create or update JIRA config
     try:
         normalized_url = normalize_jira_url(url)
-        jira_config = create_jira_config(session, project.id, normalized_url, project_key)
+        result = _write(
+            "configure_jira",
+            project_id=str(project.id),
+            jira_url=normalized_url,
+            jira_project_key=project_key,
+        )
 
         console.print(
             f"\nOK JIRA configuration updated for project '{project_name}'", style="green"
         )
-        console.print(f"  JIRA URL: {jira_config.jira_url}", style="white")
-        if jira_config.jira_project_key:
-            console.print(f"  Default Project Key: {jira_config.jira_project_key}", style="white")
+        console.print(f"  JIRA URL: {result['jira_url']}", style="white")
+        if result.get("jira_project_key"):
+            console.print(f"  Default Project Key: {result['jira_project_key']}", style="white")
     except Exception as e:
         console.print(f"ERROR Failed to configure JIRA: {e}", style="red")
 
@@ -1179,7 +1573,7 @@ def jira_link(
     plan_name: str, issue: str, issue_type: str | None, notes: str | None, project: str | None
 ) -> None:
     """Link a plan file to a JIRA issue"""
-    from .database import create_jira_link, get_jira_config
+    from .database import get_jira_config
     from .jira_utils import format_jira_issue_key, generate_jira_issue_url, is_valid_jira_issue_key
 
     mcp_dir = get_mcp_dir()
@@ -1236,7 +1630,14 @@ def jira_link(
 
     # Create link
     try:
-        create_jira_link(session, plan_file.id, formatted_issue, issue_type, notes)
+        _write(
+            "link_plan_to_jira",
+            plan_file_id=str(plan_file.id),
+            jira_issue_key=formatted_issue,
+            issue_type=issue_type,
+            notes=notes,
+            created_by="user",
+        )
 
         console.print(f"\nOK Linked '{plan_name}' to {formatted_issue}", style="green")
 
@@ -1266,7 +1667,6 @@ def jira_link(
 @click.option("--project", default=None, help="Project name")
 def jira_unlink(plan_name: str, issue: str | None, unlink_all: bool, project: str | None) -> None:
     """Unlink a plan file from JIRA issue(s)"""
-    from .database import delete_all_jira_links, delete_jira_link_by_key
     from .jira_utils import format_jira_issue_key
 
     mcp_dir = get_mcp_dir()
@@ -1306,10 +1706,17 @@ def jira_unlink(plan_name: str, issue: str | None, unlink_all: bool, project: st
         console.print(f"ERROR Plan '{plan_name}' not found", style="red")
         raise SystemExit(1)
 
-    # Unlink
+    # Unlink. A missing link is a warning here, not a failure, so these go
+    # through dispatch directly rather than the exit-on-error helper.
+    from .services import dispatch
+
     try:
         if unlink_all or not issue:
-            count = delete_all_jira_links(session, plan_file.id)
+            result = dispatch("unlink_jira_issue", {"plan_file_id": str(plan_file.id)})
+            if result.get("error"):
+                console.print(f"ERROR {result['message']}", style="red")
+                raise SystemExit(1)
+            count = result.get("count", 0)
             if count > 0:
                 console.print(
                     f"\nOK Unlinked {count} JIRA issue(s) from '{plan_name}'", style="green"
@@ -1318,8 +1725,11 @@ def jira_unlink(plan_name: str, issue: str | None, unlink_all: bool, project: st
                 console.print(f"\n No JIRA links found for '{plan_name}'", style="yellow")
         else:
             formatted_issue = format_jira_issue_key(issue)
-            deleted = delete_jira_link_by_key(session, plan_file.id, formatted_issue)
-            if deleted:
+            result = dispatch(
+                "unlink_jira_issue",
+                {"plan_file_id": str(plan_file.id), "jira_issue_key": formatted_issue},
+            )
+            if result.get("success"):
                 console.print(f"\nOK Unlinked '{plan_name}' from {formatted_issue}", style="green")
             else:
                 console.print(f"\nERROR Link to {formatted_issue} not found", style="yellow")
@@ -1368,11 +1778,7 @@ def jira_links(project: str | None) -> None:
 
         console.print(f"\n{proj.name}:", style="cyan bold")
 
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Plan File")
-        table.add_column("JIRA Issue")
-        table.add_column("Type")
-        table.add_column("Created")
+        table = tui.table("Plan File", "JIRA Issue", "Type", "Created")
 
         # Get JIRA config for URL generation
         get_jira_config(session, proj.id)
@@ -1467,6 +1873,23 @@ def jira_show(plan_name: str, project: str | None) -> None:
         console.print()
 
 
+def _write(op: str, **args: Any) -> dict[str, Any]:
+    """Run one write operation through the shared service layer.
+
+    Routes to the local daemon when one is running, so the CLI cannot mutate
+    shared state behind its back (PRD Phase 1 single-writer discipline), and
+    executes in-process otherwise. Reports the operation's own message and
+    exits 1 on failure, so every CLI write fails the same way.
+    """
+    from .services import dispatch
+
+    result = dispatch(op, args)
+    if result.get("error"):
+        console.print(f"ERROR {result['message']}", style="red")
+        raise SystemExit(1)
+    return result
+
+
 def _require_session() -> Session:
     """Open the flanner database or exit 1 if it isn't initialized."""
     db_path = get_mcp_dir() / "data.db"
@@ -1475,6 +1898,22 @@ def _require_session() -> Session:
         raise SystemExit(1)
     init_database(str(db_path))
     return get_session()
+
+
+def _no_project(project: str | None) -> NoReturn:
+    """Explain which lookup failed, then exit.
+
+    Telling somebody to "pass --project" when they just passed --project is
+    the kind of message that makes a tool feel like it is not listening. The
+    name they gave is the useful thing to echo back.
+    """
+    if project:
+        console.print(f"ERROR No project named '{project}'.", style="red")
+        tui.hint("Run flanner list to see the projects this machine knows about.")
+    else:
+        console.print("ERROR Not inside a known project.", style="red")
+        tui.hint("Run this from inside a project, or name one with --project.")
+    raise SystemExit(1)
 
 
 def _resolve_project_or_cwd(session: Session, project: str | None) -> ProjectModel | None:
@@ -1498,7 +1937,6 @@ def linear() -> None:
 @click.option("--workspace", required=True, help="Linear workspace slug or URL (e.g. acme)")
 def linear_config(project_name: str, workspace: str) -> None:
     """Configure Linear integration for a project"""
-    from .database import create_linear_config
     from .linear_utils import is_valid_linear_workspace, normalize_linear_workspace
 
     if not is_valid_linear_workspace(workspace):
@@ -1514,11 +1952,11 @@ def linear_config(project_name: str, workspace: str) -> None:
 
     try:
         slug = normalize_linear_workspace(workspace)
-        config = create_linear_config(session, proj.id, slug)
+        result = _write("configure_linear", project_id=str(proj.id), workspace=slug)
         console.print(
             f"\nOK Linear configuration updated for project '{project_name}'", style="green"
         )
-        console.print(f"  Workspace: {config.workspace}", style="white")
+        console.print(f"  Workspace: {result['workspace']}", style="white")
     except Exception as e:
         console.print(f"ERROR Failed to configure Linear: {e}", style="red")
 
@@ -1592,12 +2030,8 @@ def linear_link_cmd(
     With LINEAR_API_KEY set, the issue is verified and its title/state cached
     (unless --no-verify). A missing issue aborts; a network error links anyway.
     """
-    from .database import create_linear_link, get_linear_config
-    from .exceptions import LinearError
-    from .linear_api import attach_url_to_issue, fetch_issue_by_identifier, get_api_key
     from .linear_utils import (
         format_linear_issue_id,
-        generate_linear_issue_url,
         is_valid_linear_issue_id,
     )
 
@@ -1620,39 +2054,31 @@ def linear_link_cmd(
         console.print(f"ERROR Plan '{plan_name}' not found in project '{proj.name}'", style="red")
         raise SystemExit(1)
 
-    api_key = get_api_key()
-    issue_title: str | None = None
-    issue_state: str | None = None
-    if not no_verify and api_key:
-        try:
-            fetched = fetch_issue_by_identifier(issue_id, api_key)
-            if fetched is None:
-                console.print(f"ERROR Linear issue {issue_id} not found", style="red")
-                raise SystemExit(1)
-            issue_title = fetched["title"]
-            issue_state = fetched["state"]
-            if attach_url and fetched.get("id"):
-                attach_url_to_issue(fetched["id"], attach_url, plan_file.name, api_key)
-                console.print(f"  Attached {attach_url} to {issue_id}", style="white")
-        except LinearError as e:
-            console.print(f"  WARN {e}; linking without verification", style="yellow")
+    # Issue verification, URL attachment, and the write all happen in the
+    # shared service, so the CLI and the MCP tool cannot drift apart; it
+    # reports back whatever it managed to observe.
+    result = _write(
+        "link_plan_to_linear",
+        plan_file_id=str(plan_file.id),
+        linear_issue_id=issue_id,
+        notes=notes,
+        verify=not no_verify,
+        attach_url=attach_url,
+        created_by="user",
+    )
 
-    try:
-        create_linear_link(session, plan_file.id, issue_id, issue_title, issue_state, notes)
-        console.print(f"\nOK Linked '{plan_name}' to {issue_id}", style="green")
+    if result.get("warning"):
+        console.print(f"  WARN {result['warning']}", style="yellow")
+    elif attach_url and result.get("issue_title"):
+        console.print(f"  Attached {attach_url} to {issue_id}", style="white")
 
-        config = get_linear_config(session, proj.id)
-        if config:
-            url = generate_linear_issue_url(config.workspace, issue_id)
-            console.print(f"  URL: {url}", style="cyan")
-        if issue_title:
-            console.print(f"  Issue: [{issue_state}] {issue_title}", style="white")
-        if notes:
-            console.print(f"  Notes: {notes}", style="white")
-    except ValueError as e:
-        console.print(f"ERROR {e}", style="red")
-    except Exception as e:
-        console.print(f"ERROR Failed to create link: {e}", style="red")
+    console.print(f"\nOK Linked '{plan_name}' to {issue_id}", style="green")
+    if result.get("linear_url"):
+        console.print(f"  URL: {result['linear_url']}", style="cyan")
+    if result.get("issue_title"):
+        console.print(f"  Issue: [{result['issue_state']}] {result['issue_title']}", style="white")
+    if notes:
+        console.print(f"  Notes: {notes}", style="white")
 
 
 @linear.command("unlink")
@@ -1664,7 +2090,6 @@ def linear_unlink(
     plan_name: str, issue: str | None, unlink_all: bool, project: str | None
 ) -> None:
     """Unlink a plan file from Linear issue(s)"""
-    from .database import delete_all_linear_links, delete_linear_link_by_id
     from .linear_utils import format_linear_issue_id
 
     session = _require_session()
@@ -1678,9 +2103,17 @@ def linear_unlink(
         console.print(f"ERROR Plan '{plan_name}' not found", style="red")
         raise SystemExit(1)
 
+    # As with jira unlink, a missing link is a warning rather than a failure,
+    # so this uses dispatch directly instead of the exit-on-error helper.
+    from .services import dispatch
+
     try:
         if unlink_all or not issue:
-            count = delete_all_linear_links(session, plan_file.id)
+            result = dispatch("unlink_linear_issue", {"plan_file_id": str(plan_file.id)})
+            if result.get("error"):
+                console.print(f"ERROR {result['message']}", style="red")
+                raise SystemExit(1)
+            count = result.get("count", 0)
             if count > 0:
                 console.print(
                     f"\nOK Unlinked {count} Linear issue(s) from '{plan_name}'", style="green"
@@ -1689,7 +2122,11 @@ def linear_unlink(
                 console.print(f"\n No Linear links found for '{plan_name}'", style="yellow")
         else:
             issue_id = format_linear_issue_id(issue)
-            if delete_linear_link_by_id(session, plan_file.id, issue_id):
+            result = dispatch(
+                "unlink_linear_issue",
+                {"plan_file_id": str(plan_file.id), "linear_issue_id": issue_id},
+            )
+            if result.get("success"):
                 console.print(f"\nOK Unlinked '{plan_name}' from {issue_id}", style="green")
             else:
                 console.print(f"\nERROR Link to {issue_id} not found", style="yellow")
@@ -1725,11 +2162,7 @@ def linear_links(project: str | None) -> None:
             continue
 
         console.print(f"\n{proj.name}:", style="cyan bold")
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Plan File")
-        table.add_column("Linear Issue")
-        table.add_column("State")
-        table.add_column("Created")
+        table = tui.table("Plan File", "Linear Issue", "State", "Created")
         for link in links:
             table.add_row(
                 link["plan_file_name"],
@@ -1827,3 +2260,1141 @@ def linear_refresh(plan_name: str, project: str | None) -> None:
 
 if __name__ == "__main__":
     cli()
+
+
+# --- account -----------------------------------------------------------------
+# Team features need a signed entitlement; local plan work never does. These
+# commands are the only ones in the CLI that talk to the control plane.
+
+_ENTITLEMENT_STYLE = {
+    "valid": "green",
+    "in_grace": "yellow",
+    "expired": "red",
+    "untrusted_key": "red",
+    "bad_signature": "red",
+    "malformed": "dim",
+}
+
+
+@cli.command()
+@click.argument("code")
+@click.option("--endpoint", default=None, help="Control plane URL (defaults to Flanner Mesh)")
+@click.option("--label", default=None, help="Name for this device (defaults to the hostname)")
+def login(code: str, endpoint: str | None, label: str | None) -> None:
+    """Enroll this device with an enrollment code from your team console"""
+    from . import account
+    from . import session as session_cache
+
+    try:
+        current = account.login(
+            code, endpoint=endpoint or session_cache.DEFAULT_ENDPOINT, label=label
+        )
+    except account.SessionError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print(f"OK Enrolled as {current.user_id} ({current.device_id})", style="green")
+    _print_entitlement(current)
+
+
+@cli.command()
+def logout() -> None:
+    """Forget this device's session (the device keeps its identity)"""
+    from . import session as account
+
+    if account.clear():
+        console.print("OK Signed out on this device", style="green")
+        console.print(
+            "This device is still enrolled. Revoke it from the team console to end its access.",
+            style="dim",
+        )
+    else:
+        console.print("Not signed in on this device", style="dim")
+
+
+@cli.command()
+@click.option("--refresh", "do_refresh", is_flag=True, help="Renew the entitlement first")
+def whoami(do_refresh: bool) -> None:
+    """Show this device's identity and what it is currently entitled to"""
+    from . import account
+    from . import identity as device
+    from . import session as cache
+
+    console.print(f"Device  {device.device_id()}")
+
+    current: cache.Session | None
+    if do_refresh:
+        # An explicit --refresh is a request, not a heuristic. ensure_fresh
+        # would skip the call while the held entitlement is still valid,
+        # which is exactly when someone runs this to pick up a new grant.
+        try:
+            current = account.refresh()
+        except account.SessionError as e:
+            console.print(f"WARN could not renew: {e}", style="yellow")
+            current = cache.load()
+    else:
+        current = cache.load()
+    if current is None:
+        console.print("Account not signed in", style="dim")
+        console.print("Local plan work needs no account. Run 'flanner login' to join a team.")
+        return
+
+    console.print(f"Account {current.user_id} in {current.organization_id}")
+    console.print(f"Server  {current.endpoint}")
+    _print_entitlement(current)
+
+
+def _print_entitlement(current: Any) -> None:
+    """Report what the held entitlement allows, and where it stands."""
+    verdict = current.status()
+    style = _ENTITLEMENT_STYLE.get(verdict.status, "dim")
+    console.print(f"Access  {verdict.status}", style=style)
+    if verdict.reason:
+        console.print(f"        {verdict.reason}", style=style)
+    if verdict.claims is None:
+        return
+
+    console.print(f"Expires {verdict.claims.expires_at}")
+    capabilities = verdict.claims.workspace_capabilities
+    if not capabilities:
+        console.print("No workspace access granted yet", style="dim")
+        return
+    table = tui.table("Workspace", "Role")
+    for capability in capabilities:
+        table.add_row(capability.workspace_id, capability.role)
+    console.print(table)
+
+
+@cli.command()
+@click.argument("workspace_id", required=False)
+@click.option("--project", default=None, help="Project name (uses current directory if omitted)")
+@click.option("--clear", "clear_binding", is_flag=True, help="Leave the workspace")
+@click.option(
+    "--no-adopt",
+    is_flag=True,
+    help="Do not bring existing plans into the workspace",
+)
+def join(
+    workspace_id: str | None, project: str | None, clear_binding: bool, no_adopt: bool
+) -> None:
+    """Bind a project to a control-plane workspace, making review binding
+
+    Until a project joins one, review runs but authorizes nothing. After it
+    joins, roles come from the signed entitlement this device holds.
+
+    Deliberately not exposed over MCP: joining or leaving a workspace changes
+    who may approve a plan, which is not a decision an agent should make on
+    the user's behalf.
+    """
+    if not workspace_id and not clear_binding:
+        console.print("ERROR Give a workspace id, or --clear to leave.", style="red")
+        raise SystemExit(1)
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        _no_project(project)
+
+    if clear_binding:
+        proj.workspace_id = None
+        session.commit()
+        console.print(f"OK '{proj.name}' left its workspace", style="green")
+        console.print("Review still runs here, but it authorizes nothing.", style="dim")
+        return
+
+    from .plan_ops import adopt_into_workspace
+
+    # The guard at the top requires one of a workspace id or --clear, and
+    # --clear has returned by now. Repeated as a real check rather than an
+    # assertion, which `python -O` would strip.
+    if not workspace_id:
+        console.print("ERROR Give a workspace id.", style="red")
+        raise SystemExit(1)
+
+    proj.workspace_id = workspace_id
+    session.commit()
+    console.print(f"OK '{proj.name}' joined workspace {workspace_id}", style="green")
+
+    if no_adopt:
+        console.print("Existing plans stay local and will not sync, as asked.", style="yellow")
+        console.print(
+            "      Run 'flanner join' again without --no-adopt to bring them across.",
+            style="dim",
+        )
+        return
+
+    # A workspace id is inside the signed envelope, so joining cannot move
+    # what was written before it. Each plan's current content is signed
+    # afresh into the workspace instead, as a root there.
+    report = adopt_into_workspace(session, project=proj, workspace_id=workspace_id)
+    if report.moved:
+        console.print(
+            f"Brought {report.moved} plan(s) into the workspace: " + ", ".join(report.adopted),
+            style="green",
+        )
+        console.print(
+            "      Their current content syncs from now on. Earlier history"
+            " stays on this machine, because it was signed for a workspace"
+            " nobody else can verify.",
+            style="dim",
+        )
+    if report.already_there:
+        console.print(f"already in this workspace: {len(report.already_there)}", style="dim")
+    for name, why in report.skipped:
+        console.print(f"skipped {name}: {why}", style="dim")
+
+    from . import authz
+
+    authorization = authz.resolve(proj)
+    if authorization.roles:
+        console.print(f"You hold: {authorization.roles[authorization.actor]}", style="green")
+    else:
+        console.print(f"No access yet: {authorization.reason}", style="yellow")
+
+
+@cli.command()
+@click.argument("token")
+@click.option("--as", "user_id", required=True, help="The user id to join as")
+@click.option("--endpoint", default=None, help="Control plane URL (defaults to Flanner Mesh)")
+@click.option("--label", default=None, help="Name for this device (defaults to the hostname)")
+def accept(token: str, user_id: str, endpoint: str | None, label: str | None) -> None:
+    """Accept an invitation, joining a team and enrolling this device"""
+    from . import account
+    from . import session as session_cache
+
+    try:
+        current = account.accept_invitation(
+            token,
+            user_id=user_id,
+            endpoint=endpoint or session_cache.DEFAULT_ENDPOINT,
+            label=label,
+        )
+    except account.SessionError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print(f"OK Joined as {current.user_id} ({current.device_id})", style="green")
+    _print_entitlement(current)
+    console.print(
+        "\nRun 'flanner join <workspace-id>' in a project to make its review binding.",
+        style="dim",
+    )
+
+
+@cli.group()
+def devices() -> None:
+    """Manage the machines enrolled under your account"""
+
+
+@devices.command("list")
+def devices_list() -> None:
+    """Show every machine enrolled under your account"""
+    from . import account
+
+    enrolled = _console_call(account.list_devices)
+    if not enrolled:
+        console.print("No devices enrolled.", style="dim")
+        return
+
+    table = tui.table("Device", "Name", "Enrolled", "Last seen")
+    for device in enrolled:
+        here = " (this one)" if device.get("this_device") else ""
+        table.add_row(
+            device["device_id"] + here,
+            device.get("label") or "-",
+            (device.get("enrolled_at") or "")[:10],
+            (device.get("last_seen_at") or "never")[:10],
+        )
+    console.print(table)
+
+
+@devices.command("add")
+def devices_add() -> None:
+    """Mint a code to enroll another machine under your account"""
+    from . import account
+
+    code, expires_at = _console_call(account.request_enrollment_code)
+    console.print("Run this on the other machine:", style="dim")
+    console.print(f"\n  flanner login {code}\n", style="cyan")
+    console.print(f"The code expires at {expires_at} and works once.", style="dim")
+
+
+@devices.command("revoke")
+@click.argument("device_id")
+def devices_revoke(device_id: str) -> None:
+    """Retire a machine, so it stops receiving entitlements"""
+    from . import account
+    from . import identity as this
+
+    _console_call(account.revoke_device, device_id)
+    console.print(f"OK {device_id} revoked", style="green")
+    if device_id == this.device_id():
+        console.print("That was this machine. Run 'flanner logout' here too.", style="yellow")
+    console.print("Entitlements it already holds stay valid until they expire.", style="dim")
+
+
+@cli.command()
+@click.argument("email")
+@click.option("--admin", is_flag=True, help="Invite as an organization admin")
+def invite(email: str, admin: bool) -> None:
+    """Invite someone to your organization (admins only)"""
+    from . import account
+
+    token = _console_call(account.invite_member, email, admin=admin)
+    console.print(f"OK Invited {email}", style="green")
+    console.print("\nSend them this:", style="dim")
+    console.print(f"\n  flanner accept {token} --as <their-user-id>\n", style="cyan")
+    console.print("An invitation costs no seat until it is accepted.", style="dim")
+
+
+@cli.command()
+def members() -> None:
+    """List your organization's members and seat count (admins only)"""
+    from . import account
+
+    result = _console_call(account.list_members)
+    console.print(f"Seats in use: {result.get('seats', 0)}\n")
+
+    table = tui.table("Member", "Email", "Role", "State")
+    for member in result.get("members") or []:
+        style = "dim" if member["state"] != "active" else None
+        table.add_row(
+            member.get("user_id") or "(not joined)",
+            member.get("email") or "-",
+            member["role"],
+            member["state"],
+            style=style,
+        )
+    console.print(table)
+
+
+def _console_call(action: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run a control-plane call, reporting a refusal rather than a traceback."""
+    from . import account
+
+    try:
+        return action(*args, **kwargs)
+    except account.SessionError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+
+@cli.group()
+def peer() -> None:
+    """Sync plans directly with another device"""
+
+
+def _catch_up_in_background(dial: Any) -> None:
+    """Pull from known peers while the server is already answering.
+
+    In a thread on purpose. Catching up means dialling machines that are
+    mostly asleep, and doing that before binding would make start-up time a
+    function of how many colleagues have shut their laptops.
+    """
+    import threading
+
+    from . import peer as peer_transport
+    from . import session as cache
+
+    def run() -> None:
+        with get_session() as session:
+            workspaces = sorted(
+                {p.workspace_id for p in db_list_projects(session) if p.workspace_id}
+            )
+            if not workspaces:
+                return
+
+            def report(device_id: str, _workspace: str, result: Any) -> None:
+                if result.accepted:
+                    tui.ok(f"caught up {len(result.accepted)} from {tui.code(device_id[:12])}")
+
+            peer_transport.catch_up(session, workspaces, cache.load, dial=dial, on_result=report)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+@peer.command("serve")
+@click.option("--host", default="0.0.0.0", help="Address to listen on (--http only)")  # noqa: S104
+@click.option("--port", default=None, type=int, help="Port to listen on (--http only)")
+@click.option(
+    "--http",
+    is_flag=True,
+    help="Listen on a port instead, for peers already on the same network",
+)
+def peer_serve(host: str, port: int | None, http: bool) -> None:
+    """Serve this device's catalog to authorised peers
+
+    Reachable without a listening port, a forwarded port or administrator
+    rights: this device dials out and answers on that connection. Nothing is
+    served to a caller who cannot produce a signed request and a matching
+    entitlement, so being reachable grants nothing on its own.
+    """
+    import uvicorn
+
+    from . import identity as device_identity
+    from . import peer as peer_transport
+    from . import peer_iroh
+    from . import session as cache
+
+    if cache.load() is None:
+        console.print("ERROR Not signed in, so no peer can be authorised.", style="red")
+        console.print("Run 'flanner login' first.", style="dim")
+        raise SystemExit(1)
+
+    if not http:
+        endpoint = peer_iroh.shared_endpoint()
+        try:
+            endpoint.ready()
+        except peer_transport.PeerError as e:
+            console.print(f"ERROR {e}", style="red")
+            console.print("Use 'flanner peer serve --http' to listen on a port.", style="dim")
+            raise SystemExit(1) from None
+        console.print("Serving plans to authorised peers.", style="green")
+        console.print(f"This device: {device_identity.device_id()}", style="dim")
+        console.print(
+            "Peers pull with 'flanner peer pull <device-id>'. No port is open.",
+            style="dim",
+        )
+        _catch_up_in_background(
+            lambda device_id, workspace_id: peer_iroh.peer_for(device_id, workspace_id, cache.load)
+        )
+        try:
+            endpoint.serve(get_session, cache.load)
+        except KeyboardInterrupt:
+            endpoint.close()
+        return
+
+    listen_on = port or peer_transport.DEFAULT_PORT
+    console.print(f"Serving plans to authorised peers on {host}:{listen_on}", style="green")
+    console.print(
+        "Callers need a signed request and an entitlement for the workspace.", style="dim"
+    )
+    # Over HTTP a peer is named by address, and this device knows device ids
+    # rather than addresses, so there is nobody to dial. Catching up here is
+    # a manual `flanner peer pull <address>`.
+    uvicorn.run(
+        # get_session is already a factory returning a context-managed
+        # Session, which is exactly the shape the app wants.
+        peer_transport.create_peer_app(get_session, cache.load),
+        host=host,
+        port=listen_on,
+        log_level="warning",
+    )
+
+
+@peer.command("status")
+@click.argument("device_id", required=False)
+def peer_status(device_id: str | None) -> None:
+    """Show how this device is reachable, or how it reaches one peer
+
+    With no argument, what a peer sees when it tries to reach this machine.
+    With a device id, whether the connection to that machine goes direct or
+    through a relay. Both work; a relay is slower, and that difference is
+    invisible until someone is waiting for a sync.
+    """
+    from . import peer as peer_transport
+    from . import peer_iroh
+    from . import session as cache
+
+    try:
+        if device_id:
+            route = peer_iroh.route_to(device_id, cache.load)
+            console.print(f"Peer       {route.device_id}")
+            console.print(
+                f"Connection {route.connection}",
+                style="yellow" if route.relayed else "green",
+            )
+            if route.address:
+                console.print(f"Path       {route.address}")
+            if route.rtt_ms:
+                console.print(f"Round trip {route.rtt_ms} ms")
+            if route.relayed:
+                console.print(
+                    "Relayed, so slower. Usually a firewall that refuses to be\n"
+                    "punched through. Nothing is broken and nothing is exposed.",
+                    style="dim",
+                )
+            return
+
+        status = peer_iroh.local_status(cache.load)
+    except peer_transport.PeerError as e:
+        console.print(f"ERROR {e}", style="red")
+        if not peer_iroh.available():
+            console.print(
+                "Everything else works. Only reaching a peer that has no " "address needs it.",
+                style="dim",
+            )
+        raise SystemExit(1) from None
+
+    console.print(f"This device {status.device_id}", style="green")
+    console.print("Peers reach it with 'flanner peer pull <device-id>'.", style="dim")
+    if status.home_relay:
+        console.print(f"Home relay  {status.home_relay}")
+    if status.configured_relay:
+        console.print(f"Own relay   {status.configured_relay}")
+    for address in status.addresses:
+        console.print(f"Address     {address}")
+    console.print(
+        "Addresses are how peers try to reach this machine directly.\n"
+        "No port is listening: this device dials out and answers there.",
+        style="dim",
+    )
+    _print_arrivals()
+
+
+def _print_arrivals(limit: int = 8) -> None:
+    """What teammates' work reached this device most recently.
+
+    The whole notification system, and deliberately so: there is no service
+    that could tell anybody a plan changed without also telling us, and
+    knowing which plans a team touches is exactly the metadata this design
+    refuses to hold. A list you can look at when you want one is what is
+    left, and it turns out to be enough.
+    """
+    from .database import recent_arrivals
+    from .utils import format_relative_time
+
+    # `peer status` answers about reachability and works before this device
+    # has a catalog at all, so an uninitialised database is a normal state
+    # here rather than an error.
+    if not (get_mcp_dir() / "data.db").exists():
+        return
+    session = _require_session()
+    arrivals = recent_arrivals(session, exclude_device_id=identity.device_id(), limit=limit)
+    if not arrivals:
+        console.print("\nNothing has arrived from a teammate yet.", style="dim")
+        return
+
+    console.print()
+    table = tui.table("Arrived", "What", "From")
+    for artifact in arrivals:
+        table.add_row(
+            format_relative_time(artifact.received_at) if artifact.received_at else "unknown",
+            artifact.artifact_type,
+            # Not truncated. A device id is twenty characters and two
+            # teammates' ids share a prefix, so shortening it turns the one
+            # column that says who into a column that says nothing.
+            artifact.actor_device_id,
+        )
+    console.print(table)
+
+
+@peer.command("pull")
+@click.argument("address")
+@click.option("--project", default=None, help="Project name (uses current directory if omitted)")
+def peer_pull(address: str, project: str | None) -> None:
+    """Pull whatever a peer holds for this project's workspace that we lack
+
+    Give a device id to reach a peer wherever it is, or an http address for
+    one already on this network.
+    """
+    from . import peer as peer_transport
+    from . import peer_iroh
+    from . import session as cache
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        _no_project(project)
+    if not proj.workspace_id:
+        console.print("ERROR This project has not joined a workspace.", style="red")
+        console.print("Run 'flanner join <workspace-id>' first.", style="dim")
+        raise SystemExit(1)
+
+    try:
+        remote = peer_iroh.peer_for(address, proj.workspace_id, cache.load)
+    except peer_transport.PeerError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    report = peer_transport.pull(session, address, proj.workspace_id, cache.load, remote=remote)
+
+    console.print(f"accepted: {len(report.accepted)}", style="green")
+    if report.already_held:
+        console.print(f"already held: {len(report.already_held)}", style="dim")
+    for artifact_id, reason in report.rejected:
+        console.print(f"REJECTED {artifact_id}: {reason}", style="red")
+    if not report.ok:
+        raise SystemExit(1)
+
+
+def _sync_report(report: Any, *, verb: str, idle: str) -> None:
+    """One shape for both directions, so pull and push read the same."""
+    if report.accepted:
+        tui.ok(f"{verb} {len(report.accepted)}")
+    else:
+        tui.note(idle)
+    if report.already_held:
+        tui.note(f"{len(report.already_held)} already there")
+    for artifact_id, reason in report.rejected:
+        tui.bad(f"{tui.code(artifact_id[:12])} {reason}")
+    if not report.ok:
+        raise SystemExit(1)
+
+
+@peer.command("push")
+@click.argument("address")
+@click.option("--project", default=None, help="Project name (uses current directory if omitted)")
+def peer_push(address: str, project: str | None) -> None:
+    """Send a peer whatever it lacks for this project's workspace
+
+    The peer decides what it will take. It checks every artifact against
+    its author's key, refuses anything your role does not cover, and may
+    decline pushes entirely — all of which show up here as refusals rather
+    than as failures.
+
+    Nothing is queued for a peer that is offline. They pick it up on their
+    next pull.
+    """
+    from . import peer as peer_transport
+    from . import peer_iroh
+    from . import session as cache
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        _no_project(project)
+    if not proj.workspace_id:
+        tui.bad("This project has not joined a workspace.")
+        tui.hint(f"Run {tui.command('flanner join <workspace-id>')} first.")
+        raise SystemExit(1)
+
+    try:
+        remote = peer_iroh.peer_for(address, proj.workspace_id, cache.load)
+    except peer_transport.PeerError as e:
+        tui.bad(str(e))
+        raise SystemExit(1) from None
+
+    report = peer_transport.push(session, address, proj.workspace_id, cache.load, remote=remote)
+    _sync_report(report, verb="sent", idle="nothing to send")
+
+
+@cli.group()
+def mesh() -> None:
+    """Join and inspect the private network this team's devices share"""
+
+
+def _runtime(url: str = "") -> Any:
+    """The mesh client wrapper.
+
+    The CLI is a composition root, so this is the one place in the client
+    package that names a provider. Everything else speaks `flanner.mesh`,
+    and a test allows exactly this file and the adapter itself.
+    """
+    from .mesh_netbird import NetBirdRuntime
+
+    return NetBirdRuntime(management_url=url)
+
+
+@mesh.command("status")
+def mesh_status() -> None:
+    """Show whether this device is on the team's private network"""
+    runtime = _runtime()
+    if not runtime.installed():
+        console.print("Mesh client not installed.", style="dim")
+        console.print(
+            "You almost certainly do not need one. 'flanner peer pull' reaches\n"
+            "devices wherever they are, without a VPN or administrator rights.\n"
+            "Run 'flanner peer status' to see how this machine is reached.",
+            style="dim",
+        )
+        return
+
+    status = runtime.status()
+    console.print(
+        f"Network {'connected' if status.enrolled else 'not connected'}",
+        style="green" if status.enrolled else "yellow",
+    )
+    if status.message:
+        console.print(f"        {status.message}", style="dim")
+    for endpoint in status.endpoints:
+        console.print(f"Address {endpoint}")
+
+    peers = runtime.peers()
+    if not peers:
+        return
+    table = tui.table("Peer address", "Connection")
+    for peer in peers:
+        table.add_row(peer.endpoint, peer.connection)
+    console.print(table)
+    console.print(
+        "Addresses only. Who a peer is gets settled by the signed handshake,\n"
+        "never by the network.",
+        style="dim",
+    )
+
+
+@mesh.command("join")
+def mesh_join() -> None:
+    """Join the private network, using a credential from the control plane"""
+    from . import account
+    from .exceptions import MeshError
+    from .mesh import Enrollment
+
+    runtime = _runtime()
+    if not runtime.installed():
+        console.print("ERROR The mesh client is not installed on this machine.", style="red")
+        raise SystemExit(1)
+
+    try:
+        offered = account.mesh_credential()
+    except account.SessionError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    if offered is None:
+        console.print("This team has no managed network.", style="yellow")
+        console.print(
+            "Nothing to join; syncing over your existing network still works.", style="dim"
+        )
+        return
+
+    credential, management_url, expires_at = offered
+    try:
+        _runtime(management_url).enroll(
+            Enrollment(credential=credential, device_id="", expires_at=expires_at)
+        )
+    except MeshError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print("OK Joined the team's private network", style="green")
+
+
+@mesh.command("leave")
+def mesh_leave() -> None:
+    """Disconnect this device from the private network"""
+    runtime = _runtime()
+    if not runtime.installed():
+        console.print("Mesh client not installed.", style="dim")
+        return
+    runtime.leave()
+    console.print("OK Disconnected", style="green")
+    console.print("Plans and local work are untouched.", style="dim")
+
+
+# --- history, diff and why ------------------------------------------------------
+#
+# Three commands the mockups show. They read what is already recorded - the
+# version rows and the files they point at - so none of them needs a network
+# call or a git checkout.
+
+
+def _version_bodies(versions: list[Any]) -> dict[int, str]:
+    """The text of each version, skipping any whose file has gone missing."""
+    from .storage import load_plan_file
+
+    bodies: dict[int, str] = {}
+    for version in versions:
+        try:
+            bodies[version.version] = load_plan_file(version.file_path)[1]
+        except (FileNotFoundError, OSError):
+            continue
+    return bodies
+
+
+def _churn(before: str | None, after: str) -> tuple[int, int]:
+    """Lines added and removed between two versions.
+
+    The first version counts as all-added: it did not replace anything, and
+    reporting +0 for a plan somebody just wrote would be a lie of omission.
+    """
+    import difflib
+
+    if before is None:
+        return len(after.splitlines()), 0
+    added = removed = 0
+    for line in difflib.unified_diff(before.splitlines(), after.splitlines(), lineterm="", n=0):
+        if line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+    return added, removed
+
+
+def _section_of(lines: list[str], index: int) -> str:
+    """The nearest markdown heading at or above a line.
+
+    A hunk header reading `@@ ## Rollout @@` says where you are in the
+    document. The line numbers difflib offers instead are true and useless.
+    """
+    for i in range(min(index, len(lines) - 1), -1, -1):
+        if lines[i].startswith("#"):
+            return lines[i].strip()
+    return ""
+
+
+@review.command("comment")
+@click.argument("plan_name")
+@click.option("--on", "quote", required=True, help="The text to attach the note to")
+@click.option("-m", "--message", required=True, help="The note")
+@click.option("--project", default=None, help="Project name")
+@click.option("--version", "wanted", default=None, type=int, help="Version to comment on")
+def review_comment(
+    plan_name: str, quote: str, message: str, project: str | None, wanted: int | None
+) -> None:
+    """Leave a note against a quotation in a plan
+
+    The note is anchored to what it quotes, not to a line number, so it
+    survives the plan being edited above it. If the quoted text is later
+    rewritten the note says it lost its place rather than sliding onto a
+    sentence nobody meant.
+    """
+    from . import review as review_module
+
+    session = _require_session()
+    proj, plan_file = _resolve_plan(session, project, plan_name)
+    try:
+        review_module.comment(
+            session,
+            project=proj,
+            plan_file=plan_file,
+            quote=quote,
+            body=message,
+            version=wanted,
+        )
+    except ValueError as e:
+        console.print(f"ERROR {e}", style="red")
+        raise SystemExit(1) from None
+
+    console.print()
+    tui.ok("Comment recorded")
+    console.print()
+    console.print(
+        tui.fields(
+            [
+                ("On", Text(anchors_clip(quote), style="code")),
+                ("Note", Text(message, style="value")),
+            ]
+        )
+    )
+    console.print()
+    tui.hint(f"See it with flanner review status {plan_file.name}")
+    console.print()
+
+
+def anchors_clip(text: str) -> str:
+    from .anchors import clip
+
+    return clip(text)
+
+
+@review.command("pack")
+@click.argument("plan_name")
+@click.option("--project", default=None, help="Project name")
+@click.option("--version", "wanted", default=None, type=int, help="Version to pack")
+@click.option("--output", default=None, help="Where to write it")
+@click.option("--no-fonts", is_flag=True, help="Leave the typefaces out, for a smaller file")
+def review_pack(
+    plan_name: str, project: str | None, wanted: int | None, output: str | None, no_fonts: bool
+) -> None:
+    """Write a plan as one file somebody outside the team can annotate
+
+    No server, no upload, no account: the recipient opens the file and marks
+    it up. They send back the JSON it exports and you run `flanner review
+    import` on it.
+
+    The packet carries the plan and nothing else. Notes your own team has
+    left stay where they are.
+    """
+    from pathlib import Path as _Path
+
+    from . import packet as packet_module
+    from .database import get_version
+    from .storage import load_plan_file
+
+    session = _require_session()
+    proj, plan_file = _resolve_plan(session, project, plan_name)
+    version = get_version(session, plan_file.id, wanted)
+    if version is None:
+        console.print(f"ERROR v{wanted} of '{plan_file.name}' does not exist", style="red")
+        raise SystemExit(1)
+    try:
+        _, body = load_plan_file(version.file_path)
+    except FileNotFoundError:
+        console.print(f"ERROR v{version.version} is no longer on disk", style="red")
+        raise SystemExit(1) from None
+
+    built = packet_module.build(
+        plan_name=plan_file.name,
+        version=version.version,
+        body=body,
+        project_name=proj.name,
+        authored_at=version.created_at,
+        embed_fonts=not no_fonts,
+    )
+    target = _Path(output or f"{plan_file.name}.v{version.version}.review.html")
+    target.write_text(built.html, encoding="utf-8")
+
+    console.print()
+    tui.ok(f"Wrote [value]{target}[/value]")
+    console.print()
+    console.print(
+        tui.fields(
+            [
+                ("Plan", Text(f"{plan_file.name}.md  v{version.version}", style="value")),
+                ("Size", Text(f"{built.kib} KiB", style="value")),
+                ("Sections", Text(str(len(built.headings)), style="muted")),
+                ("Contains", Text("this plan only, no team review", style="muted")),
+            ]
+        )
+    )
+    console.print()
+    tui.hint("Send that file to your reviewer. They need nothing installed.")
+    tui.hint(f"When it comes back: flanner review import <file> --project {proj.name}")
+    console.print()
+
+
+@review.command("import")
+@click.argument("path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--project", default=None, help="Project name")
+@click.option("--plan", "plan_override", default=None, help="Attach to this plan instead")
+def review_import(path: str, project: str | None, plan_override: str | None) -> None:
+    """Take back the notes a review packet exported
+
+    The reviewer had no device key, so nothing they wrote is signed by them.
+    This device signs that it received the notes: a claim about where they
+    came from, never about who wrote them. They are recorded as unverified
+    and shown that way.
+    """
+    import json as json_module
+    from pathlib import Path as _Path
+
+    from . import review as review_module
+
+    try:
+        payload = json_module.loads(_Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        console.print(f"ERROR could not read that review: {e}", style="red")
+        raise SystemExit(1) from None
+
+    header = payload.get("packet") or {}
+    notes = payload.get("notes") or []
+    reviewer = str(payload.get("reviewer") or "").strip() or "an unnamed reviewer"
+    named = plan_override or str(header.get("plan") or "")
+    if not named:
+        console.print("ERROR that file does not say which plan it belongs to", style="red")
+        raise SystemExit(1)
+    if not notes:
+        console.print()
+        tui.note("That review has no notes in it. Nothing to record.")
+        console.print()
+        return
+
+    session = _require_session()
+    proj, plan_file = _resolve_plan(session, project, named)
+
+    packed_at = header.get("version")
+    current = plan_file.current_version
+    if packed_at and packed_at != current:
+        tui.warn(
+            f"Written against v{packed_at}; this plan is now at v{current}. "
+            "Notes are recorded against what was reviewed."
+        )
+
+    review_module.import_external(
+        session,
+        project=proj,
+        plan_file=plan_file,
+        reviewer=reviewer,
+        notes=notes,
+        reviewed_version=packed_at if isinstance(packed_at, int) else None,
+        source=str(payload.get("source") or "packet"),
+    )
+
+    console.print()
+    tui.ok(f"Recorded {len(notes)} note{'' if len(notes) == 1 else 's'} from {reviewer}")
+    console.print()
+    listing = tui.table("On", ("Note", {"overflow": "fold"}))
+    for note in notes[:12]:
+        listing.add_row(
+            Text(str(note.get("quote", ""))[:44], style="muted"),
+            Text(str(note.get("body", "")), style="value"),
+        )
+    console.print(listing)
+    if len(notes) > 12:
+        console.print()
+        tui.note(f"{len(notes) - 12} more not shown.")
+    console.print()
+    tui.warn("Unverified: the reviewer has no device key, so nothing here is signed by them.")
+    console.print()
+
+
+@cli.command()
+@click.argument("plan_name")
+@click.option("--project", default=None, help="Project name")
+@click.option("--limit", default=0, type=int, help="Show only the newest N versions")
+def history(plan_name: str, project: str | None, limit: int) -> None:
+    """Every version of a plan, newest first"""
+    from .database import get_linear_links, list_versions
+    from .utils import format_relative_time
+
+    session = _require_session()
+    proj, plan_file = _resolve_plan(session, project, plan_name)
+
+    versions = list_versions(session, plan_file.id)
+    if not versions:
+        console.print()
+        tui.note(f"{plan_file.name} has no versions recorded.")
+        console.print()
+        return
+
+    bodies = _version_bodies(versions)
+    linked = {link.plan_file_id: link for link in get_linear_links(session, plan_file.id)}
+
+    listing = tui.table(
+        ("Ver", {"justify": "right"}),
+        "When",
+        "By",
+        ("Change", {"justify": "right"}),
+        "Note",
+    )
+    shown = versions[:limit] if limit > 0 else versions
+    for version in shown:
+        previous = bodies.get(version.version - 1)
+        added, removed = _churn(previous, bodies.get(version.version, ""))
+
+        change = Text()
+        change.append(f"+{added}", style="ok")
+        if removed:
+            change.append(f" -{removed}", style="bad")
+
+        note = Text(version.notes or "", style="muted")
+        if version.version == 1 and not version.notes:
+            note = Text("created", style="muted")
+        if linked and version.version == plan_file.current_version:
+            note.append("  linked ", style="muted")
+            note.append(next(iter(linked.values())).linear_issue_id, style="accent")
+
+        listing.add_row(
+            Text(f"v{version.version}", style="value"),
+            Text(
+                format_relative_time(version.created_at) if version.created_at else "unknown",
+                style="muted",
+            ),
+            Text(version.created_by or "user", style="muted"),
+            change,
+            note,
+        )
+
+    console.print()
+    console.print(listing)
+    console.print()
+    total = len(versions)
+    tui.note(f"{total} version{'' if total == 1 else 's'} of {plan_file.name} in {proj.name}")
+    if total > 1:
+        newest, older = versions[0].version, versions[1].version
+        tui.hint(f"Compare with flanner diff {plan_file.name} v{older} v{newest}")
+    console.print()
+
+
+@cli.command()
+@click.argument("plan_name")
+@click.argument("from_version", required=False)
+@click.argument("to_version", required=False)
+@click.option("--project", default=None, help="Project name")
+def diff(
+    plan_name: str, from_version: str | None, to_version: str | None, project: str | None
+) -> None:
+    """What changed between two versions of a plan
+
+    With no versions given, compares the last two. Versions may be written
+    as `3` or `v3`.
+    """
+    import difflib
+
+    from .database import list_versions
+
+    session = _require_session()
+    _, plan_file = _resolve_plan(session, project, plan_name)
+    versions = list_versions(session, plan_file.id)
+    numbers = sorted(v.version for v in versions)
+
+    if len(numbers) < 2 and not (from_version and to_version):
+        console.print()
+        tui.note(f"{plan_file.name} has only one version, so there is nothing to compare.")
+        console.print()
+        return
+
+    def parse(raw: str | None, fallback: int) -> int:
+        if raw is None:
+            return fallback
+        try:
+            return int(raw.lstrip("vV"))
+        except ValueError:
+            console.print(f"ERROR '{raw}' is not a version number", style="red")
+            raise SystemExit(1) from None
+
+    # The defaults are only meaningful when both versions were omitted, and
+    # numbers[-2] raises on a single-version plan, so they are not computed
+    # unless they are needed.
+    left = parse(from_version, numbers[-2] if from_version is None else 0)
+    right = parse(to_version, numbers[-1] if to_version is None else 0)
+    bodies = _version_bodies(versions)
+    for wanted in (left, right):
+        if wanted not in bodies:
+            console.print(f"ERROR v{wanted} of '{plan_file.name}' is not on disk", style="red")
+            raise SystemExit(1)
+
+    before = bodies[left].splitlines()
+    after = bodies[right].splitlines()
+
+    console.print()
+    header = Text()
+    header.append(f"{plan_file.name}.md", style="value")
+    header.append(f"  v{left} ", style="muted")
+    header.append(tui.ARROW, style="muted")
+    header.append(f" v{right}", style="muted")
+    console.print(header)
+    console.print()
+
+    printed = False
+    for group in difflib.SequenceMatcher(None, before, after).get_grouped_opcodes(3):
+        printed = True
+        section = _section_of(after, group[0][3])
+        rule = Text()
+        rule.append("@@ ", style="muted")
+        rule.append(section or f"lines {group[0][3] + 1}-{group[-1][4]}", style="accent")
+        rule.append(" @@", style="muted")
+        console.print(rule)
+        for tag, i1, i2, j1, j2 in group:
+            if tag in ("replace", "delete"):
+                for line in before[i1:i2]:
+                    console.print(Text(f"- {line}", style="bad"))
+            if tag in ("replace", "insert"):
+                for line in after[j1:j2]:
+                    console.print(Text(f"+ {line}", style="ok"))
+            if tag == "equal":
+                for line in before[i1:i2]:
+                    console.print(Text(f"  {line}", style="muted"))
+        console.print()
+
+    if not printed:
+        tui.note("No differences. The two versions have identical text.")
+        console.print()
+        return
+
+    added, removed = _churn(bodies[left], bodies[right])
+    summary = Text()
+    summary.append(f"+{added}", style="ok")
+    summary.append(" added", style="muted")
+    if removed:
+        summary.append(f"  {tui.MIDDOT}  ", style="muted")
+        summary.append(f"-{removed}", style="bad")
+        summary.append(" removed", style="muted")
+    console.print(summary)
+    console.print()
+
+
+@cli.command()
+@click.argument("plan_name")
+@click.option("--project", default=None, help="Project name")
+@click.pass_context
+def why(ctx: click.Context, plan_name: str, project: str | None) -> None:
+    """Why a plan is judged fresh, aging, suspect or stale
+
+    The same evidence `flanner freshness <plan>` prints. Kept as its own
+    command because "why is this stale" is the question people actually
+    have, and it is not obvious that a command called freshness answers it.
+    """
+    ctx.invoke(freshness, plan_name=plan_name, project=project, output="table")

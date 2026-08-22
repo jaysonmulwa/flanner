@@ -1,103 +1,68 @@
 {% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
 
-{% block title %}Dashboard - flanner{% endblock %}
+{% block topbar_main %}
+<h1>Dashboard</h1>
+{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-primary" href="/projects/new">New project</a>
+{% endblock %}
 
 {% block content %}
-<div class="dashboard">
-    <header class="page-header">
-        <h1>Dashboard</h1>
-        <a href="/projects/new" class="btn btn-primary">
-            New Project
-        </a>
-    </header>
+<div class="pane">
 
-    <!-- Stats Cards -->
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-value">{{ total_projects }}</div>
-            <div class="stat-label">Total Projects</div>
-        </div>
+  <div class="stat-grid">
+    <div class="stat"><div class="v tnum">{{ total_projects }}</div><div class="k">Projects</div></div>
+    <div class="stat"><div class="v tnum">{{ total_plans }}</div><div class="k">Plan files</div></div>
+    <div class="stat"><div class="v tnum">{{ updated_this_week }}</div><div class="k">Updated this week</div></div>
+  </div>
 
-        <div class="stat-card">
-            <div class="stat-value">{{ total_plans }}</div>
-            <div class="stat-label">Plan Files</div>
-        </div>
-
-        <div class="stat-card">
-            <div class="stat-value">{{ updated_this_week }}</div>
-            <div class="stat-label">Updated this week</div>
-        </div>
+  {% if projects %}
+  <div class="card">
+    <div class="card-head">Projects
+      <span class="note">{{ projects | length }} shown</span>
+      <a class="btn btn-sm" style="margin-left:auto" href="/projects">all {{ total_projects }} projects</a></div>
+    <div class="tablewrap">
+      {% for project in projects %}
+      <div class="grid-row cols-recent">
+        <span>
+          <a class="name" href="/projects/{{ project.id }}">{{ project.name }}</a>
+          {% if project.description %}<div class="sub">{{ project.description }}</div>{% endif %}
+        </span>
+        <span class="path tnum">{{ plan_counts.get(project.id, 0) }} plans</span>
+        <span class="path">{{ project.plan_directory }}</span>
+        <span class="when">{{ project.created_at.strftime('%d %b %Y') if project.created_at }}</span>
+      </div>
+      {% endfor %}
     </div>
+  </div>
+  {% else %}
+  <div class="card empty">
+    <h2>Nothing here yet</h2>
+    <p>Create a project and flanner takes over the plan files your agents write in it.</p>
+    <a class="btn btn-primary" href="/projects/new">New project</a>
+  </div>
+  {% endif %}
 
-    <!-- Projects Overview -->
-    <section class="content-section">
-        <h2>Projects</h2>
-        {% if projects %}
-        <div class="projects-grid">
-            {% for project in projects %}
-            <div class="project-card">
-                <div class="project-header">
-                    <h3>{{ project.name }}</h3>
-                    <span class="badge">{{ plan_counts.get(project.id, 0) }} files</span>
-                </div>
-                <p class="project-description">
-                    {{ project.description or 'No description' }}
-                </p>
-                <div class="project-meta">
-                    <span class="meta-item">
-                        {{ project.plan_directory }}
-                    </span>
-                    <span class="meta-item">
-                        {{ project.created_at.strftime('%Y-%m-%d') if project.created_at else '-' }}
-                    </span>
-                </div>
-                <div class="project-actions">
-                    <a href="/projects/{{ project.id }}" class="btn btn-sm btn-primary">
-                        View
-                    </a>
-                    <a href="/projects/{{ project.id }}/plans/new" class="btn btn-sm btn-secondary">
-                        New Plan
-                    </a>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        {% if total_projects > projects|length %}
-        <p class="see-all"><a href="/projects">all {{ total_projects }} projects &rarr;</a></p>
-        {% endif %}
-        {% else %}
-        <div class="empty-state">
-        {% include "_empty_glyph.html" %}
-            <h3>No Projects Yet</h3>
-            <p>Get started by creating your first project.</p>
-            <a href="/projects/new" class="btn btn-primary">
-                Create Project
-            </a>
-        </div>
-        {% endif %}
-    </section>
+  {% if recent_activity %}
+  <div class="card">
+    <div class="card-head">Recent Activity</div>
+    <div style="padding: 4px 18px 10px">
+      {% for item in recent_activity %}
+      <div style="display:flex; align-items:center; gap:10px; padding:9px 0;
+                  {% if not loop.first %}border-top:1px solid var(--divider);{% endif %}
+                  font-size:12.5px">
+        <span class="vtag {% if loop.first %}vtag-current{% endif %}">v{{ item.plan_file.current_version }}</span>
+        <a class="name" href="/plans/{{ item.plan_file.id }}">{{ item.plan_file.name }}.md</a>
+        <span style="color:var(--text-3)">in {{ item.project.name }}</span>
+        <span style="margin-left:auto; color:var(--text-4); font-size:11.5px">
+          {{ item.updated_at | relative_time }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 
-    <!-- Recent Activity -->
-    {% if recent_activity %}
-    <section class="content-section">
-        <h2>Recent Activity</h2>
-        <div class="activity-list">
-            {% for item in recent_activity %}
-            <div class="activity-item">
-                <div class="activity-content">
-                    <div class="activity-title">
-                        <a href="/plans/{{ item.plan_file.id }}">{{ item.plan_file.name }}</a>
-                        <span class="activity-version">v{{ item.plan_file.current_version }}</span>
-                    </div>
-                    <div class="activity-meta">
-                        <span>in <a href="/projects/{{ item.project.id }}">{{ item.project.name }}</a></span>
-                        <span class="activity-time">{{ item.updated_at|relative_time if item.updated_at }}</span>
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-    </section>
-    {% endif %}
 </div>
 {% endblock %}

@@ -35,24 +35,31 @@ def test_refuses_newer_schema(tmp_path):
 
 
 def test_runs_pending_migration(tmp_path, monkeypatch):
+    """A database one version behind runs exactly the step it is missing.
+
+    Written against whatever the current version happens to be, so a real
+    schema bump does not need this test edited.
+    """
     engine = create_engine(f"sqlite:///{tmp_path / 'upgrade.db'}")
     try:
-        _apply_schema(engine)  # existing db at v1
-        assert _user_version(engine) == 1
+        _apply_schema(engine)  # fresh db, stamped current
+        current = _user_version(engine)
+        assert current == dbmod.SCHEMA_VERSION
 
+        pending = current + 1
         ran = []
 
-        def migration_2(conn):
-            ran.append(2)
+        def next_migration(conn):
+            ran.append(pending)
             conn.exec_driver_sql("CREATE TABLE marker (id INTEGER)")
 
-        monkeypatch.setattr(dbmod, "SCHEMA_VERSION", 2)
-        monkeypatch.setitem(dbmod.MIGRATIONS, 2, migration_2)
+        monkeypatch.setattr(dbmod, "SCHEMA_VERSION", pending)
+        monkeypatch.setitem(dbmod.MIGRATIONS, pending, next_migration)
 
         _apply_schema(engine)
 
-        assert ran == [2]  # the pending step actually executed
-        assert _user_version(engine) == 2
+        assert ran == [pending]  # the pending step actually executed
+        assert _user_version(engine) == pending
     finally:
         engine.dispose()
 
@@ -60,8 +67,9 @@ def test_runs_pending_migration(tmp_path, monkeypatch):
 def test_missing_migration_is_an_error(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'gap.db'}")
     try:
-        _apply_schema(engine)  # v1
-        monkeypatch.setattr(dbmod, "SCHEMA_VERSION", 3)  # no migration 2 or 3 registered
+        _apply_schema(engine)  # fresh db, stamped current
+        # Claim a version beyond the last registered step.
+        monkeypatch.setattr(dbmod, "SCHEMA_VERSION", dbmod.SCHEMA_VERSION + 1)
         with pytest.raises(DatabaseError, match="No migration registered"):
             _apply_schema(engine)
     finally:

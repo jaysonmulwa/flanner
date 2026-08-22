@@ -42,8 +42,9 @@ _SYMBOL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+$")
 def _git(project_root: str, *args: str) -> str | None:
     """Run a read-only git command; None on any failure (fail open)."""
     try:
-        result = subprocess.run(
-            ["git", *args],
+        # Fixed argument list, no shell, and git is resolved from PATH by design.
+        result = subprocess.run(  # noqa: S603
+            ["git", *args],  # noqa: S607
             cwd=project_root,
             capture_output=True,
             text=True,
@@ -86,10 +87,20 @@ def extract_refs(body: str) -> tuple[list[str], list[str]]:
 
 
 def resolve_anchor(project_root: str, authored_at: datetime | None) -> str | None:
-    """Latest commit at or before the plan version's authored time."""
+    """Latest commit at or before the plan version's authored time.
+
+    The timestamp is made explicitly UTC first. Version timestamps are
+    stored naive-UTC to match the SQLite columns, and git reads a bare
+    timestamp as *local* time, so passing one through unqualified shifts
+    the cutoff by the machine's offset: east of UTC the anchor is too old
+    and plans look staler than they are, while west of UTC commits made
+    after the plan was written fall inside the window and a stale plan
+    looks fresh.
+    """
     if authored_at is None:
         return None
-    return _git(project_root, "rev-list", "-1", f"--before={authored_at.isoformat()}", "HEAD")
+    stamp = authored_at if authored_at.tzinfo else authored_at.replace(tzinfo=timezone.utc)
+    return _git(project_root, "rev-list", "-1", f"--before={stamp.isoformat()}", "HEAD")
 
 
 def _check_symbol(project_root: str, symbol: str) -> list[str]:
@@ -178,7 +189,11 @@ def _status(
     if invalid_refs:
         shown = ", ".join(invalid_refs[:3])
         more = f" (+{len(invalid_refs) - 3} more)" if len(invalid_refs) > 3 else ""
-        noun = "reference that no longer exists" if len(invalid_refs) == 1 else "references that no longer exist"
+        noun = (
+            "reference that no longer exists"
+            if len(invalid_refs) == 1
+            else "references that no longer exist"
+        )
         reasons.append(f"cites {len(invalid_refs)} {noun}: {shown}{more}")
         return "stale", reasons
 

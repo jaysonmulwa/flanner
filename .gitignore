@@ -57,6 +57,11 @@ Thumbs.db
 # MCP Plan Manager
 .plans/
 
+# A throwaway FLANNER_HOME used to drive the web UI against sample data.
+# Holds a generated device key and a signed-in session, so it must never be
+# committed: this repository is public.
+.ui-preview/
+
 # Local artifacts
 *.db
 log.txt

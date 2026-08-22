@@ -13,9 +13,28 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def hash_content(content: str) -> str:
+def normalize_newlines(content: str) -> str:
+    """Line endings as LF, whatever the sender used.
+
+    A browser submits textarea content with CRLF regardless of platform, so
+    text that came back untouched from an editor is not byte-identical to
+    the text that went in. Plans are stored LF-only, so this is what "the
+    same content" has to mean.
     """
-    Generate SHA256 hash of content.
+    return content.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def hash_content(content: str) -> str:
+    """SHA256 of a plan body, over its normalised form.
+
+    Normalising here rather than at each call site is deliberate. This hash
+    decides whether saving creates a new version, and ``storage`` writes the
+    normalised text. Hashing the raw input meant a save from the browser
+    never matched the version it came from, so every save through the editor
+    produced an identical new version.
+
+    Only version rows use this. Artifact ids are hashed separately in
+    ``artifacts``, over a signed payload, and are unaffected.
 
     Args:
         content: Content to hash
@@ -23,7 +42,7 @@ def hash_content(content: str) -> str:
     Returns:
         Hexadecimal hash string
     """
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return hashlib.sha256(normalize_newlines(content).encode("utf-8")).hexdigest()
 
 
 def sanitize_filename(name: str) -> str:

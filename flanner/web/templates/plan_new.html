@@ -1,95 +1,55 @@
 {% extends "base.html" %}
+{% block title %}New plan{% endblock %}
 
-{% block title %}New Plan File - {{ project.name }} - flanner{% endblock %}
+{% block topbar_back %}
+<a class="btn back" href="/projects/{{ project.id }}" aria-label="Back to {{ project.name }}" title="Back to {{ project.name }}"><span aria-hidden="true">←</span></a>
+{% endblock %}
+
+{% block topbar_main %}
+<nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/projects">Projects</a><span class="sep">/</span>
+    <a href="/projects/{{ project.id }}">{{ project.name }}</a><span class="sep">/</span>
+    <span class="here">New plan</span>
+  </nav>
+{% endblock %}
 
 {% block content %}
-<div class="form-page">
-    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">~</a><span class="crumb-sep"> / </span><a href="/projects">projects</a><span class="crumb-sep"> / </span><a href="/projects/{{ project.id }}">{{ project.name }}</a><span class="crumb-sep"> / </span><span class="crumb-here">new-plan</span></nav>
-    <header class="page-header">
-        <div>
-            <h1>Create New Plan File</h1>
-            <p class="page-subtitle">in <a href="/projects/{{ project.id }}">{{ project.name }}</a></p>
-        </div>
-        <a href="/projects/{{ project.id }}" class="btn btn-secondary">
-            Back to Project
-        </a>
-    </header>
-
-    <div class="form-container">
-        <form method="POST" action="/projects/{{ project.id }}/plans/new" class="form">
-            <div class="form-group">
-                <label for="name">Plan Name <span class="required">*</span></label>
-                <input
-                    type="text"
-                    id="name"
-                    name="name"
-                    class="form-control"
-                    value="{{ name or '' }}"
-                    required
-                    placeholder="architecture"
-                    data-check-unique="plan"
-                    data-check-scope="{{ project.name }}"
-                >
-                <small class="field-error" role="alert" hidden></small>
-                <small class="form-help">
-                    Name without extension (e.g., "architecture", "api-design", "requirements")
-                </small>
-            </div>
-
-            <div class="form-group">
-                <label for="description">Description</label>
-                <textarea
-                    id="description"
-                    name="description"
-                    class="form-control"
-                    rows="2"
-                    placeholder="Brief description of this plan..."
-                >{{ description or '' }}</textarea>
-            </div>
-
-            <div class="form-group">
-                <label for="content">Content <span class="required">*</span></label>
-                <textarea
-                    id="content"
-                    name="content"
-                    class="form-control markdown-editor"
-                    rows="20"
-                    required
-                    placeholder="# Plan Title
-
-## Overview
-
-Write your plan content here in Markdown...
-
-## Sections
-
-- Feature 1
-- Feature 2"
-                >{{ content or '' }}</textarea>
-                <small class="form-help">
-                    Supports Markdown formatting. Frontmatter will be added automatically.
-                </small>
-            </div>
-
-            <div class="form-actions">
-                <button type="submit" class="btn btn-primary">
-                    Create Plan File
-                </button>
-                <a href="/projects/{{ project.id }}" class="btn btn-secondary">
-                    Cancel
-                </a>
-            </div>
-        </form>
-
-        <div class="info-box">
-            <h3>Plan File Features</h3>
-            <ul>
-                <li>Automatic version tracking (v1, v2, v3...)</li>
-                <li>YAML frontmatter automatically added</li>
-                <li>Full version history with diffs</li>
-                <li>Git-ignored (won't be committed)</li>
-            </ul>
-        </div>
+<div class="pane centred">
+  <form method="post" action="/projects/{{ project.id }}/plans/new"
+        style="width:720px; max-width:100%; display:flex; flex-direction:column; gap:16px">
+    <div>
+      <div style="font-size:20px; font-weight:700; letter-spacing:-.01em">New plan</div>
+      <div style="font-size:13px; color:var(--text-3); margin-top:4px">
+        Written into {{ project.plan_directory }} with a versioned header. Usually your
+        agent does this; here is the manual route.</div>
     </div>
+
+    <div class="card card-pad" style="display:flex; flex-direction:column; gap:16px">
+      <div class="field">
+        <label class="field-label" for="name">Plan name</label>
+        <input class="input" type="text" id="name" name="name" required autofocus
+               data-check-unique="plan" data-check-scope="{{ project.name }}"
+               aria-describedby="name-error"
+               value="{{ name or '' }}" placeholder="auth-rework">
+        <p class="field-error" id="name-error" hidden>This project already has a plan with that name.</p>
+        <p class="hint">Becomes the file name. No extension needed.</p>
+      </div>
+      <div class="field">
+        <label class="field-label" for="description">Description <span class="opt">(optional)</span></label>
+        <input class="input" type="text" id="description" name="description"
+               value="{{ description or '' }}">
+      </div>
+      <div class="field">
+        <label class="field-label" for="content">Content</label>
+        <textarea class="textarea mono" id="content" name="content" rows="18"
+                  placeholder="# Auth Rework&#10;&#10;What is changing and why.">{{ content or '' }}</textarea>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <a class="btn" href="/projects/{{ project.id }}">Cancel</a>
+      <button class="btn btn-primary" type="submit">Create plan</button>
+    </div>
+  </form>
 </div>
 {% endblock %}

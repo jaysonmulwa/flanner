@@ -1,13 +1,16 @@
 {% extends "base.html" %}
+{% block title %}{{ status_label }}{% endblock %}
 
-{% block title %}{{ status_code }} - flanner{% endblock %}
+{% block topbar_main %}
+<h1>{{ status_label }}</h1>
+{% endblock %}
 
 {% block content %}
-<nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">~</a><span class="crumb-sep"> / </span><span class="crumb-here">error</span></nav>
-<div class="empty-state">
-        {% include "_empty_glyph.html" %}
-    <h3>{{ status_code }} {{ status_label }}</h3>
+<div class="pane">
+  <div class="card empty">
+    <h2>{{ status_code }} {{ status_label }}</h2>
     <p>{{ detail }}</p>
-    <a href="/" class="btn btn-primary">Back to Dashboard</a>
+    <a class="btn btn-primary" href="/">Back to Dashboard</a>
+  </div>
 </div>
 {% endblock %}

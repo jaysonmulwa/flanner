@@ -1,0 +1,121 @@
+"""Tests for the locked, atomic plan write path (PRD Phase 1)."""
+
+import os
+import time
+from pathlib import Path
+
+import pytest
+
+import flanner.plan_ops as plan_ops
+from flanner.database import create_plan_file, create_project, get_session
+from flanner.exceptions import DatabaseError
+from flanner.plan_ops import plan_write_lock, record_new_version, write_version
+
+
+@pytest.fixture
+def plan(db, tmp_path):
+    session = get_session()
+    root = tmp_path / "proj"
+    root.mkdir()
+    project = create_project(session, name="p", project_root=str(root), auto_gitignore=False)
+    plan_file = create_plan_file(session, project_id=project.id, name="alpha")
+    write_version(
+        session,
+        project=project,
+        plan_file=plan_file,
+        version=1,
+        content="# v1\n",
+        created_by="test",
+        notes="init",
+    )
+    session.commit()
+    return session, project, plan_file
+
+
+def _plan_dir(project):
+    return Path(project.project_root) / project.plan_directory
+
+
+def test_write_is_atomic_and_leaves_no_temp_files(plan):
+    session, project, plan_file = plan
+    v1 = _plan_dir(project) / "alpha_v1.md"
+    assert v1.exists()
+    assert "# v1" in v1.read_text(encoding="utf-8")
+    leftovers = list(_plan_dir(project).glob("*.tmp"))
+    assert leftovers == []
+
+
+def test_record_new_version_increments_and_commits(plan):
+    session, project, plan_file = plan
+    version = record_new_version(
+        session,
+        project=project,
+        plan_file=plan_file,
+        content="# v2\n",
+        created_by="test",
+        notes="",
+    )
+    assert version.version == 2
+    assert plan_file.current_version == 2
+    assert (_plan_dir(project) / "alpha_v2.md").exists()
+    # v1 untouched
+    assert "# v1" in (_plan_dir(project) / "alpha_v1.md").read_text(encoding="utf-8")
+
+
+def test_refresh_under_lock_sees_concurrent_bump(plan):
+    session, project, plan_file = plan
+    # Simulate another process having advanced the plan: update the DB behind
+    # the object's back and expire it, as if this process's copy were stale.
+    from flanner.database import PlanFileModel
+
+    session.query(PlanFileModel).filter_by(id=plan_file.id).update({"current_version": 4})
+    session.commit()
+    session.expire(plan_file)
+    version = record_new_version(
+        session,
+        project=project,
+        plan_file=plan_file,
+        content="# v5\n",
+        created_by="test",
+        notes="",
+    )
+    assert version.version == 5
+
+
+def test_never_reuses_version_number_taken_on_disk(plan):
+    session, project, plan_file = plan
+    # A file for v2 exists on disk but not in the catalog (drift). The writer
+    # must skip it, never overwrite.
+    stray = _plan_dir(project) / "alpha_v2.md"
+    stray.write_text("do not overwrite\n", encoding="utf-8")
+    version = record_new_version(
+        session,
+        project=project,
+        plan_file=plan_file,
+        content="# next\n",
+        created_by="test",
+        notes="",
+    )
+    assert version.version == 3
+    assert stray.read_text(encoding="utf-8") == "do not overwrite\n"
+
+
+def test_lock_contention_times_out(plan, monkeypatch):
+    session, project, plan_file = plan
+    monkeypatch.setattr(plan_ops, "_LOCK_TIMEOUT_S", 0.3)
+    with plan_write_lock(project.project_root, project.plan_directory):
+        with pytest.raises(DatabaseError, match="write lock"):
+            with plan_write_lock(project.project_root, project.plan_directory):
+                pass
+
+
+def test_stale_lock_is_taken_over(plan):
+    session, project, plan_file = plan
+    lock_path = _plan_dir(project) / ".flanner.lock"
+    lock_path.write_text("999999", encoding="utf-8")
+    old = time.time() - 120
+    os.utime(lock_path, (old, old))
+    # Acquires despite the existing (stale) lock file
+    with plan_write_lock(project.project_root, project.plan_directory):
+        assert lock_path.exists()
+    assert not lock_path.exists()
