@@ -1,89 +1,108 @@
 {% extends "base.html" %}
+{% block title %}Projects{% endblock %}
 
-{% block title %}Projects - flanner{% endblock %}
+{% block topbar_main %}
+<h1>Projects</h1>
+{% endblock %}
+
+{% block topbar_actions %}
+<div class="listctl" id="listctl">
+<label class="sr-only" for="list-filter">Filter</label>
+    <input class="input input-sm" type="search" id="list-filter" data-list-filter
+           placeholder="Filter projects…" autocomplete="off" spellcheck="false">
+    <form method="get" action="/projects" id="sort-form">
+      <label class="field-label" for="sort" style="display:none">Sort</label>
+      <select class="btn" name="sort" id="sort" onchange="this.form.requestSubmit()">
+        <option value="updated" {% if sort != 'name' %}selected{% endif %}>Sort: Recently updated</option>
+        <option value="name" {% if sort == 'name' %}selected{% endif %}>Sort: Name</option>
+      </select>
+    </form>
+</div>
+    <a class="btn btn-primary" href="/projects/new">New project</a>
+{% endblock %}
 
 {% block content %}
-<div class="projects-page">
-    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">~</a><span class="crumb-sep"> / </span><span class="crumb-here">projects</span></nav>
-    <header class="page-header">
-        <h1>Projects</h1>
-        <a href="/projects/new" class="btn btn-primary">
-            New Project
-        </a>
-    </header>
+<div class="pane">
 
-    {% if projects %}
-    <div data-listgroup>
-        <div class="list-controls">
-            <input type="search" class="list-filter" data-list-filter
-                   placeholder="Filter projects..." aria-label="Filter projects by name">
-            <label class="list-sort">Sort
-                <select data-list-sort aria-label="Sort projects">
-                    <option value="name:asc">Name (A-Z)</option>
-                    <option value="created:desc">Newest first</option>
-                    <option value="created:asc">Oldest first</option>
-                    <option value="files:desc">Most files</option>
-                </select>
-            </label>
-        </div>
-        <div class="projects-table-container">
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Description</th>
-                    <th>Plan Directory</th>
-                    <th>Files</th>
-                    <th>Created</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody data-list>
-                {% for project in projects %}
-                <tr data-list-item data-name="{{ project.name }}"
-                    data-created="{{ project.created_at.isoformat() if project.created_at else '' }}"
-                    data-files="{{ plan_counts.get(project.id, 0) }}">
-                    <td>
-                        <a href="/projects/{{ project.id }}" class="table-link">
-                            <strong>{{ project.name }}</strong>
-                        </a>
-                    </td>
-                    <td>{{ project.description or '-' }}</td>
-                    <td><code>{{ project.plan_directory }}</code></td>
-                    <td>
-                        <span class="badge">{{ plan_counts.get(project.id, 0) }}</span>
-                    </td>
-                    <td>{{ project.created_at.strftime('%Y-%m-%d') if project.created_at else '-' }}</td>
-                    <td>
-                        <div class="table-actions">
-                            <a href="/projects/{{ project.id }}" class="btn btn-sm btn-primary" title="View Project">View Project</a>
-                            <a href="/projects/{{ project.id }}/plans/new" class="btn btn-sm btn-secondary" title="New Plan">New Plan</a>
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-                <tr class="list-empty" data-list-empty hidden><td colspan="6">No projects match that filter.</td></tr>
-            </tbody>
-        </table>
-        </div>
-    </div>
-    {% else %}
-    <div class="empty-state">
-        {% include "_empty_glyph.html" %}
-        <h3>No Projects Yet</h3>
-        <p>Create your first project to get started with plan file management.</p>
-        <a href="/projects/new" class="btn btn-primary">
-            Create Project
-        </a>
-    </div>
-    {% endif %}
+  <div class="stat-grid">
+    <div class="stat"><div class="v tnum">{{ total_projects }}</div><div class="k">Projects</div></div>
+    <div class="stat"><div class="v tnum">{{ total_plans }}</div><div class="k">Plan files</div></div>
+    <div class="stat"><div class="v tnum">{{ updated_this_week }}</div><div class="k">Updated this week</div></div>
+  </div>
 
-{% if pages > 1 %}
-<nav class="pager" aria-label="Pagination">
-    {% if page > 1 %}<a href="?page={{ page - 1 }}">&larr; prev</a>{% endif %}
-    <span>page {{ page }} / {{ pages }} ({{ total }} total)</span>
-    {% if page < pages %}<a href="?page={{ page + 1 }}">next &rarr;</a>{% endif %}
-</nav>
-{% endif %}
+  {% if projects %}
+  <div class="card" data-listgroup>
+    <div class="tablewrap">
+      <div class="grid-head cols-projects">
+        <span>Project</span><span>Plans</span><span>Plan directory</span>
+        <span>Freshness</span><span>Updated</span>
+      </div>
+      <div data-list>
+      {% for project in projects %}
+      <div class="grid-row cols-projects" data-list-item
+           data-name="{{ project.name }}"
+           data-files="{{ plan_counts.get(project.id, 0) }}"
+           data-updated="{{ (project.updated_at or project.created_at).isoformat() if (project.updated_at or project.created_at) }}">
+        <span>
+          <a class="name" href="/projects/{{ project.id }}">{{ project.name }}</a>
+          {% if project.description %}<div class="sub">{{ project.description }}</div>{% endif %}
+        </span>
+        <span class="path tnum">{{ plan_counts.get(project.id, 0) }}</span>
+        <span class="path" title="{{ project.project_root or '' }}/{{ project.plan_directory }}">
+          {{ project.plan_directory }}</span>
+        <span>
+          {% set mix = freshness_mix.get(project.id) %}
+          {% if mix %}
+          <span class="dots">
+            {% if mix.fresh %}<span class="d d-fresh"></span>{{ mix.fresh }}{% endif %}
+            {% if mix.aging %}<span class="d d-aging"></span>{{ mix.aging }}{% endif %}
+            {% if mix.suspect %}<span class="d d-suspect"></span>{{ mix.suspect }}{% endif %}
+            {% if mix.stale %}<span class="d d-stale"></span>{{ mix.stale }}{% endif %}
+          </span>
+          {% else %}<span class="sub">—</span>{% endif %}
+        </span>
+        <span class="when">{{ project.updated_at | relative_time if project.updated_at
+                              else project.created_at | relative_time }}</span>
+      </div>
+      {% endfor %}
+      </div>
+      <div class="empty-filter" data-list-empty hidden>Nothing matches that filter.</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="card empty">
+    <h2>No projects yet</h2>
+    <p>Point flanner at a repository and it takes over the plan files your agents write there.</p>
+    <a class="btn btn-primary" href="/projects/new">New project</a>
+  </div>
+  {% endif %}
+
+  {% if recent_activity %}
+  <div class="card">
+    <div class="card-head">Recent activity</div>
+    <div style="padding: 4px 18px 10px">
+      {% for item in recent_activity %}
+      <div style="display:flex; align-items:center; gap:10px; padding:9px 0;
+                  {% if not loop.first %}border-top:1px solid var(--divider);{% endif %}
+                  font-size:12.5px">
+        <span class="vtag {% if loop.first %}vtag-current{% endif %}">v{{ item.plan_file.current_version }}</span>
+        <a class="name" href="/plans/{{ item.plan_file.id }}">{{ item.plan_file.name }}.md</a>
+        <span style="color:var(--text-3)">updated in {{ item.project.name }}</span>
+        <span style="margin-left:auto; color:var(--text-4); font-size:11.5px">
+          {{ item.updated_at | relative_time }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if total_pages and total_pages > 1 %}
+  <div class="footnote" style="justify-content:center">
+    {% if page > 1 %}<a class="btn btn-sm" href="/projects?page={{ page - 1 }}&sort={{ sort }}">Previous</a>{% endif %}
+    <span>page {{ page }} / {{ total_pages }} ({{ total_projects }} total)</span>
+    {% if page < total_pages %}<a class="btn btn-sm" href="/projects?page={{ page + 1 }}&sort={{ sort }}">Next</a>{% endif %}
+  </div>
+  {% endif %}
+
 </div>
 {% endblock %}

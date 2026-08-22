@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Review{% endblock %}
+
+{% block topbar_main %}
+<h1>Review</h1>
+<span class="sub">Proposals waiting on a decision, and what people said</span>
+{% endblock %}
+
+{% block content %}
+<div class="pane">
+
+  {% if rows %}
+  <div class="card">
+    <div class="tablewrap">
+      <div class="grid-head cols-review">
+        <span>Plan</span><span>Project</span><span>Waiting</span><span>State</span>
+      </div>
+      {% for row in rows %}
+      <div class="grid-row cols-review">
+        <span><a class="name" href="/plans/{{ row.plan_file.id }}">{{ row.plan_file.name }}.md</a></span>
+        <span class="when">{{ row.project.name if row.project else '—' }}</span>
+        <span class="tnum">
+          {{ row.pending | length }}
+          {#
+            Two different pills because they are two different things. A
+            teammate's comment was signed by a device in this mesh; a note
+            from outside could not be. Counting them together would erase
+            the one distinction this page exists to keep.
+          #}
+          {% if row.comments %}
+          <span class="pill pill-quiet" title="comments from the mesh">
+            {{ row.comments }} note{{ '' if row.comments == 1 else 's' }}</span>
+          {% endif %}
+          {% if row.outside %}
+          <span class="pill pill-aging" title="notes from outside the team">
+            +{{ row.outside | length }}</span>
+          {% endif %}
+        </span>
+        <span>
+          {% if row.conflicted %}<span class="pill pill-stale">contested</span>
+          {% elif row.pending %}<span class="pill pill-aging">open</span>
+          {% elif row.outside %}<span class="pill pill-quiet">outside review</span>
+          {% elif row.comments %}<span class="pill pill-quiet">commented</span>
+          {% else %}<span class="pill pill-fresh">settled</span>{% endif %}
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="card empty">
+    <h2>Nothing is waiting</h2>
+    <p>No plan here has an open proposal. This page fills in when somebody
+       proposes a revision, whether they are on this machine or another one.</p>
+  </div>
+  {% endif %}
+
+  <div class="card card-pad card-prose">
+    <h2 class="card-title">Deciding from here</h2>
+    <p>
+      Reviewing is a signed record, not a form post, so it happens at the
+      command line where this machine's key lives. A browser session cannot
+      sign anything — that separation is what stops a page on the internet
+      accepting a plan on your behalf.</p>
+    <div class="cmd">
+      <span class="p" aria-hidden="true">$</span>
+      <span class="t" id="review-cmd">flanner review status &lt;plan&gt;</span>
+      <button type="button" class="cmd-copy" data-copy="#review-cmd"
+              aria-label="Copy command" title="Copy command">
+        <svg class="ic-copy" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+          <rect x="2.6" y="4.6" width="8.8" height="9.8" rx="1.3" fill="none"
+                stroke="currentColor" stroke-width="1.4"/>
+          <path d="M5.4 2.1h6.3a1.6 1.6 0 0 1 1.6 1.6v7.4" fill="none"
+                stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <svg class="ic-done" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+          <path d="M2.8 8.4l3.3 3.3L13.2 4.6" fill="none" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
+    <p class="hint">Then <code class="mono">flanner review decide &lt;plan&gt; --accept</code>
+       or <code class="mono">--reject</code>. The decision syncs to your peers
+       like any other version.</p>
+  </div>
+
+  <div class="footnote">
+    <span class="i" aria-hidden="true">i</span>
+    <b>n notes</b> are comments from the mesh, each signed by a teammate's
+    device. A <b>+n</b> counts notes returned in a review packet by somebody
+    outside the team; those are unsigned, so they are recorded as received
+    rather than authored. Neither kind moves a plan's accepted baseline —
+    pointing at a paragraph is not the same as deciding about it.
+  </div>
+
+  <div class="footnote">
+    <span class="i" aria-hidden="true">i</span>
+    Review decisions never reach the control plane. It holds accounts, devices
+    and access; what anyone thinks of a plan stays on the machines that hold
+    the plan. <a href="/mesh">How syncing works</a>.
+  </div>
+
+</div>
+{% endblock %}

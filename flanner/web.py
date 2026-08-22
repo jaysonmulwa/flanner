@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 from collections import OrderedDict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -16,16 +17,20 @@ import markdown
 import nh3
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
 from . import __version__, ipc, services
-from .database import count_plan_files as db_count_plan_files
-from .database import count_plan_files_recent as db_count_plan_files_recent
-from .database import count_projects as db_count_projects
 from .database import (
+    PlanFileModel,
     create_project,
     delete_project,
     get_linear_config,
@@ -35,14 +40,20 @@ from .database import (
     get_session,
     get_version,
     init_database,
+    last_received_by_device,
     list_all_linear_links,
     list_versions,
     plan_file_counts_by_project,
     recent_plan_files,
 )
+from .database import count_plan_files as db_count_plan_files
+from .database import count_plan_files_recent as db_count_plan_files_recent
+from .database import count_projects as db_count_projects
 from .database import list_plan_files as db_list_plan_files
 from .database import list_projects as db_list_projects
 from .exceptions import DatabaseError
+from .freshness import compute_freshness
+from .frontmatter import read_managed
 from .git_integration import find_git_root, update_gitignore, validate_git_repo
 from .linear_utils import generate_linear_issue_url
 from .plan_ops import create_plan, record_new_version
@@ -171,6 +182,19 @@ def _asset_version() -> str:
 
 
 templates.env.globals["asset_version"] = _asset_version()
+# Sidebar counts default to absent, so a page that cannot count (an error
+# page, say) renders the nav without numbers instead of failing.
+templates.env.globals["nav_projects"] = None
+templates.env.globals["nav_plans"] = None
+templates.env.globals["nav_attention"] = 0
+templates.env.globals["nav_signed_in"] = False
+templates.env.globals["nav_peers"] = 0
+templates.env.globals["nav_review"] = 0
+templates.env.globals["app_version"] = __version__
+# Stamped once at import. A footer year that re-read the clock on every
+# render would be the only thing on the page that could change without the
+# page changing, and nobody is running this process across New Year.
+templates.env.globals["app_year"] = datetime.now(timezone.utc).year
 
 _STATUS_LABELS = {400: "Bad Request", 404: "Not Found", 500: "Server Error"}
 
@@ -260,6 +284,317 @@ def render_plan_html(content: str, content_hash: str | None) -> str:
 # =============================================================================
 
 
+# --- the mesh -----------------------------------------------------------------
+#
+# Everything the CLI prints for `flanner whoami` and `flanner peer status`,
+# read from the same places: the cached session file and the entitlement it
+# holds. All local. Nothing here makes a network call, which is why the page
+# renders instantly and works offline.
+
+
+def _local_plan_bytes(session: Any) -> int:
+    """How much plan text this device is holding, on disk.
+
+    Exists to give the "nothing is uploaded" claim a denominator. A bare
+    "0 B held by flanner" is true but unmeasured, and a number nobody
+    computed reads as decoration; beside a real figure for what is here, it
+    says something.
+
+    Current versions only, not every revision: the question is how much of
+    your work this is about, not how much history the store has kept.
+    """
+    total = 0
+    for plan_file in session.query(PlanFileModel).all():
+        version = get_version(session, plan_file.id, plan_file.current_version)
+        if version is None:
+            continue
+        try:
+            total += Path(version.file_path).stat().st_size
+        except OSError:
+            # A plan whose file has moved still counts as zero rather than
+            # blanking the page. This is a stat tile, not an integrity check.
+            continue
+    return total
+
+
+def _bytes_label(count: int) -> str:
+    """Bytes as something a person reads, at one decimal place."""
+    if count < 1024:
+        return f"{count} B"
+    for unit in ("KB", "MB", "GB"):
+        count_f = count / 1024
+        if count_f < 1024 or unit == "GB":
+            return f"{count_f:.1f} {unit}"
+        count = int(count_f)
+    return f"{count} B"
+
+
+def _mesh_state(session: Any = None) -> dict[str, Any]:
+    """This device's identity, account, access and known peers.
+
+    ``session`` is optional so the page still renders before this device has
+    a catalog; without it the peer list simply carries no arrival times.
+    """
+    from . import identity as device_identity
+    from . import session as cache
+
+    state: dict[str, Any] = {
+        "device_id": device_identity.device_id(),
+        "signed_in": False,
+    }
+    current = cache.load()
+    if current is None:
+        return state
+
+    # The verdict carries the parsed claims when the token could be read at
+    # all, so a malformed entitlement still renders a page saying so rather
+    # than raising.
+    verdict = current.status()
+    claims = verdict.claims
+
+    state.update(
+        {
+            "signed_in": True,
+            "user_id": current.user_id,
+            "organization_id": current.organization_id,
+            "endpoint": current.endpoint,
+            "relay_url": current.relay_url,
+            "status": verdict.status,
+            "reason": verdict.reason,
+            # A peer is a device this one already holds a public key for.
+            # Without the key there is nothing to verify, so the keyring is
+            # the honest definition of "who this machine can sync with".
+            "peers": sorted(current.device_keys or {}),
+            # When work signed by each device last reached this one. Not
+            # "when they were last online": an artifact can arrive relayed
+            # through a third machine long after its author went away, and
+            # dressing that up as a liveness light would be a claim the
+            # data cannot support.
+            "last_received": last_received_by_device(session) if session is not None else {},
+            "local_bytes": _bytes_label(_local_plan_bytes(session)) if session is not None else "",
+            "workspaces": sorted(current.keyring or {}),
+        }
+    )
+    if claims is not None:
+        state["plan"] = claims.plan
+        state["features"] = list(claims.features)
+        state["expires_at"] = claims.expires_at
+        state["grants"] = [
+            {"workspace_id": c.workspace_id, "role": c.role} for c in claims.workspace_capabilities
+        ]
+    return state
+
+
+def _comments(session: Any, plan_file: Any, body: str) -> list[dict[str, Any]]:
+    """Teammates' notes, each with whether it still finds its text.
+
+    Resolved against the version being shown, not the one it was written
+    on, because that is the question a reader has: does this note still
+    apply to what is in front of me?
+    """
+    from .anchors import AMBIGUOUS, EXACT, MOVED, STRANDED, Anchor, resolve
+    from .assurance import load_comments
+
+    said = {
+        EXACT: ("anchored", "fresh"),
+        MOVED: ("the text around it changed", "aging"),
+        AMBIGUOUS: ("quoted text appears several times", "aging"),
+        STRANDED: ("lost its place", "stale"),
+    }
+    out: list[dict[str, Any]] = []
+    for event in load_comments(session, str(plan_file.id)):
+        payload = event.payload
+        raw = payload.get("anchor") or {}
+        state = resolve(Anchor.from_dict(raw), body)
+        label, tone = said[state.status]
+        out.append(
+            {
+                "by": str(event.actor or "unknown"),
+                "quote": str(raw.get("quote") or ""),
+                "body": str(payload.get("body") or ""),
+                "version": payload.get("target_version"),
+                "state": state.status,
+                "label": label,
+                "tone": tone,
+                "anchored": state.anchored,
+                "matched": state.matched,
+            }
+        )
+    return out
+
+
+def _external_notes(session: Any, plan_file: Any) -> list[dict[str, Any]]:
+    """Notes a reviewer outside the mesh sent back, flattened for display.
+
+    Read through `load_external_reviews` rather than the review projection,
+    because these must never move a plan's accepted baseline. Every one is
+    marked unverified: the reviewer had no device key, so the only signature
+    involved says which device received the notes, not who wrote them.
+    """
+    from .assurance import load_external_reviews
+
+    out: list[dict[str, Any]] = []
+    for event in load_external_reviews(session, str(plan_file.id)):
+        payload = event.payload
+        who = str(payload.get("reviewer") or "an unnamed reviewer")
+        for note in payload.get("notes") or []:
+            out.append(
+                {
+                    "reviewer": who,
+                    "quote": str(note.get("quote") or ""),
+                    "body": str(note.get("body") or ""),
+                    "at": str(note.get("at") or ""),
+                    "version": payload.get("target_version"),
+                    "source": str(payload.get("source") or "packet"),
+                }
+            )
+    return out
+
+
+def _review_rows(session: Any) -> list[dict[str, Any]]:
+    """Every plan that has a review event, worst first.
+
+    Plans nobody has proposed a change to are left out: a list of everything
+    would bury the handful that need a decision.
+    """
+    from . import review as review_module
+    from .assurance import load_comments
+
+    rows: list[dict[str, Any]] = []
+    for project in db_list_projects(session):
+        for plan_file in db_list_plan_files(session, project.id):
+            try:
+                state = review_module.status(session, plan_file=plan_file, project=project)
+            except Exception:  # noqa: BLE001 - one bad plan must not blank the page
+                logger.warning("could not project review state for %s", plan_file.id)
+                continue
+            outside = _external_notes(session, plan_file)
+            comments = load_comments(session, str(plan_file.id))
+            if (
+                not state.proposals
+                and not state.pending
+                and not state.rejected
+                and not outside
+                and not comments
+            ):
+                continue
+            rows.append(
+                {
+                    "plan_file": plan_file,
+                    "project": project,
+                    "pending": list(state.pending),
+                    "rejected": [{"id": i, "why": why} for i, why in state.rejected],
+                    "conflicted": state.conflicted,
+                    "accepted": state.accepted_artifact_id,
+                    "outside": outside,
+                    # Counted, not resolved. Whether each one still finds its
+                    # text is a per-version question, and answering it here
+                    # would mean rendering every plan in the database to
+                    # draw one list.
+                    "comments": len(comments),
+                }
+            )
+    rows.sort(key=lambda r: (not r["conflicted"], -len(r["pending"]), -r["comments"]))
+    return rows
+
+
+def _nav(session: Any) -> dict[str, Any]:
+    """Counts the sidebar shows on every page.
+
+    Cheap aggregates in SQL. The attention count is what the Freshness
+    badge reports, and it is deliberately the same number the page itself
+    lists — a badge that disagrees with the page it links to is worse than
+    no badge.
+    """
+    from . import session as cache
+    from .assurance import count_review_subjects
+
+    held = cache.load()
+    return {
+        "nav_projects": db_count_projects(session),
+        "nav_plans": db_count_plan_files(session),
+        "nav_attention": _attention_count(session),
+        # Zero when this machine has no account, which is the normal state
+        # and the reason the whole Team group hides itself in that case.
+        "nav_signed_in": held is not None,
+        "nav_peers": len(held.device_keys or {}) if held else 0,
+        "nav_review": count_review_subjects(session),
+    }
+
+
+def _plan_freshness(session: Any, plan_file: Any) -> dict[str, Any] | None:
+    """Freshness for a plan's latest version, or None if it cannot be judged."""
+    version = get_version(session, plan_file.id, None)
+    if version is None:
+        return None
+    project = get_project(session, plan_file.project_id)
+    root = project.project_root if project else None
+    if not root:
+        return None
+    try:
+        body = read_managed(Path(version.file_path).read_text(encoding="utf-8"))[1]
+    except (OSError, ValueError):
+        return None
+    record = compute_freshness(root, body, version.created_at)
+    record["plan_file"] = plan_file
+    record["project"] = project
+    record["version"] = version
+    return record
+
+
+def _freshness_for(project: Any, body: str, version: Any) -> dict[str, Any] | None:
+    """Evidence for one already-loaded version. None when git cannot judge it."""
+    root = project.project_root if project else None
+    if not root:
+        return None
+    try:
+        return compute_freshness(root, body, version.created_at)
+    except Exception:  # noqa: BLE001 - a plan must render even if git is odd
+        return None
+
+
+def _needs_attention(session: Any) -> list[dict[str, Any]]:
+    """Every plan that is not fresh, worst first.
+
+    Ordered by evidence rather than by date, because a plan edited this
+    morning can already be wrong and one from March can still be true.
+    """
+    rank = {"stale": 0, "suspect": 1, "aging": 2}
+    out: list[dict[str, Any]] = []
+    for project in db_list_projects(session):
+        for plan_file in db_list_plan_files(session, project.id):
+            record = _plan_freshness(session, plan_file)
+            if record and record["status"] in rank:
+                out.append(record)
+    out.sort(key=lambda r: (rank[r["status"]], -len(r.get("reasons") or [])))
+    # A number the client-side sort control can order by. Worst is highest, so
+    # "most drifted" is a descending sort like every other column.
+    for row in out:
+        row["drift_rank"] = len(rank) - rank[row["status"]]
+    return out
+
+
+def _freshness_mix(session: Any, projects: Any) -> dict[Any, dict[str, int]]:
+    """How each project's plans are distributed across the four statuses."""
+    out: dict[Any, dict[str, int]] = {}
+    for project in projects:
+        tally = {"fresh": 0, "aging": 0, "suspect": 0, "stale": 0}
+        for plan_file in db_list_plan_files(session, project.id):
+            record = _plan_freshness(session, plan_file)
+            if record:
+                tally[record["status"]] = tally.get(record["status"], 0) + 1
+        if any(tally.values()):
+            out[project.id] = tally
+    return out
+
+
+def _attention_count(session: Any) -> int:
+    try:
+        return len(_needs_attention(session))
+    except Exception:  # noqa: BLE001 - a badge must never break a page
+        return 0
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request) -> HTMLResponse:
     """Dashboard - show all projects"""
@@ -284,6 +619,7 @@ async def dashboard(request: Request) -> HTMLResponse:
         request,
         "dashboard.html",
         {
+            **_nav(session),
             "plan_counts": plan_counts,
             "request": request,
             "projects": projects,
@@ -297,29 +633,48 @@ async def dashboard(request: Request) -> HTMLResponse:
 
 @app.get("/projects", response_class=HTMLResponse)
 async def projects_list(
-    request: Request, page: int = 1, message: str | None = None
+    request: Request, page: int = 1, message: str | None = None, sort: str = "updated"
 ) -> HTMLResponse:
     """List projects, a page at a time"""
     ensure_db()
     session = get_session()
     success = {"deleted": "Project deleted."}.get(message or "")
+    # Anything unrecognised falls back rather than erroring: this arrives from
+    # a query string, and a bookmarked ?sort=nonsense should still render.
+    sort = sort if sort in ("updated", "name") else "updated"
 
     total = db_count_projects(session)
     pages = max(1, -(-total // PAGE_SIZE))
     page = min(max(1, page), pages)
-    projects = db_list_projects(session, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE)
+    projects = db_list_projects(session, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE, sort=sort)
     plan_counts = plan_file_counts_by_project(session)
+
+    # The freshness mix per project, which is the column the design leads
+    # with. Computed off the request thread: it reads files and shells out
+    # to git, and a slow repo should not block the event loop.
+    mix = await run_in_threadpool(_freshness_mix, session, projects)
 
     return templates.TemplateResponse(
         request,
         "projects.html",
         {
+            **_nav(session),
             "request": request,
             "projects": projects,
             "plan_counts": plan_counts,
+            "freshness_mix": mix,
+            "total_projects": total,
+            "total_plans": db_count_plan_files(session),
+            "updated_this_week": db_count_plan_files_recent(session, days=7),
+            "recent_activity": [
+                {"plan_file": pf, "project": pf.project, "updated_at": pf.updated_at}
+                for pf in recent_plan_files(session, limit=5)
+            ],
             "page": page,
             "pages": pages,
+            "total_pages": pages,
             "total": total,
+            "sort": sort,
             "success": success,
         },
     )
@@ -351,6 +706,7 @@ async def create_project_post(
                 request,
                 "project_new.html",
                 {
+                    **_nav(session),
                     "request": request,
                     "error": (
                         "Could not find git repository. Please specify project root manually."
@@ -363,7 +719,11 @@ async def create_project_post(
         return templates.TemplateResponse(
             request,
             "project_new.html",
-            {"request": request, "error": f"{project_root} is not a valid git repository"},
+            {
+                **_nav(session),
+                "request": request,
+                "error": f"{project_root} is not a valid git repository",
+            },
         )
 
     # Create project
@@ -391,6 +751,7 @@ async def create_project_post(
             request,
             "project_new.html",
             {
+                **_nav(session),
                 "request": request,
                 "error": str(e),
                 "name": name,
@@ -433,6 +794,7 @@ async def project_detail(request: Request, project_id: str, page: int = 1) -> HT
         request,
         "project_detail.html",
         {
+            **_nav(session),
             "request": request,
             "project": project,
             "plan_files": plan_files,
@@ -482,7 +844,7 @@ async def new_plan_form(request: Request, project_id: str) -> HTMLResponse:
         raise HTTPException(status_code=404, detail="Project not found")
 
     return templates.TemplateResponse(
-        request, "plan_new.html", {"request": request, "project": project}
+        request, "plan_new.html", {**_nav(session), "request": request, "project": project}
     )
 
 
@@ -526,6 +888,7 @@ async def create_plan_post(
             request,
             "plan_new.html",
             {
+                **_nav(session),
                 "request": request,
                 "project": project,
                 "error": str(e),
@@ -536,6 +899,43 @@ async def create_plan_post(
         )
 
     return RedirectResponse(url=f"/plans/{plan_file.id}", status_code=303)
+
+
+@app.get("/plans/{plan_file_id}/download")
+async def plan_download(plan_file_id: str, version: int | None = None) -> FileResponse:
+    """Send one version of a plan as a file.
+
+    The button used to point straight at the absolute path recorded in the
+    database, which is not a URL. The browser asked this server for a path
+    beginning with a drive letter, and got a 404 every time.
+
+    The path is resolved from the version row rather than taken from the
+    request, so this cannot be talked into serving something else.
+    """
+    ensure_db()
+    session = get_session()
+    try:
+        plan_file_uuid = UUID(plan_file_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid plan file ID") from None
+
+    plan_file = get_plan_file(session, plan_file_uuid)
+    if not plan_file:
+        raise HTTPException(status_code=404, detail="Plan file not found")
+    version_obj = get_version(session, plan_file_uuid, version)
+    if not version_obj:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    path = Path(version_obj.file_path)
+    if not path.is_file():
+        # The row can outlive the file: someone moved or deleted it on disk.
+        raise HTTPException(status_code=404, detail="That version is no longer on disk")
+
+    return FileResponse(
+        path,
+        media_type="text/markdown",
+        filename=f"{plan_file.name}_v{version_obj.version}.md",
+    )
 
 
 @app.get("/plans/{plan_file_id}", response_class=HTMLResponse)
@@ -605,6 +1005,7 @@ async def plan_view(
         request,
         "plan_view.html",
         {
+            **_nav(session),
             "request": request,
             "project": project,
             "plan_file": plan_file,
@@ -616,6 +1017,11 @@ async def plan_view(
             "content_html": content_html,
             "render_capped": render_capped,
             "content_chars": len(body),
+            # Freshness for the version being shown, so the page can say why
+            # it is judged the way it is rather than only that it is.
+            "freshness": _freshness_for(project, body, version_obj),
+            "comments": _comments(session, plan_file, body),
+            "outside_notes": _external_notes(session, plan_file),
             "info": {
                 "no_changes": "No changes detected - the content matches the current version, "
                 "so a new version was not created."
@@ -657,6 +1063,7 @@ async def plan_edit(request: Request, plan_file_id: str) -> HTMLResponse:
         request,
         "plan_edit.html",
         {
+            **_nav(session),
             "request": request,
             "project": project,
             "plan_file": plan_file,
@@ -741,13 +1148,151 @@ async def plan_history(request: Request, plan_file_id: str) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "plan_history.html",
-        {"request": request, "project": project, "plan_file": plan_file, "versions": versions},
+        {
+            **_nav(session),
+            "request": request,
+            "project": project,
+            "plan_file": plan_file,
+            "versions": versions,
+        },
     )
 
 
 # =============================================================================
 # API ENDPOINTS (JSON responses for AJAX)
 # =============================================================================
+
+
+@app.get("/freshness", response_class=HTMLResponse)
+async def freshness_page(request: Request) -> HTMLResponse:
+    """Which plans have stopped being true, and the evidence for saying so."""
+    ensure_db()
+    session = get_session()
+    attention = await run_in_threadpool(_needs_attention, session)
+
+    tally = {"fresh": 0, "aging": 0, "suspect": 0, "stale": 0}
+    for project in db_list_projects(session):
+        for plan_file in db_list_plan_files(session, project.id):
+            record = _plan_freshness(session, plan_file)
+            if record:
+                tally[record["status"]] = tally.get(record["status"], 0) + 1
+
+    return templates.TemplateResponse(
+        request,
+        "freshness.html",
+        {
+            # `_nav` rather than three hand-picked counts: this page was
+            # supplying its own subset, so the peer count and the signed-in
+            # flag fell back to their defaults and the sidebar quietly lost
+            # entries whenever somebody opened it.
+            **_nav(session),
+            "request": request,
+            "attention": attention,
+            "tally": tally,
+        },
+    )
+
+
+@app.get("/mesh", response_class=HTMLResponse)
+async def mesh_page(request: Request) -> HTMLResponse:
+    """This device's place in the mesh, and who it can sync with.
+
+    The same facts `flanner whoami` and `flanner peer status` print, read
+    from the same cached session. No network call, so it renders offline and
+    tells the truth about a machine that has been disconnected for a week.
+    """
+    ensure_db()
+    session = get_session()
+    return templates.TemplateResponse(
+        request,
+        "mesh.html",
+        {**_nav(session), "request": request, "mesh": _mesh_state(session)},
+    )
+
+
+@app.get("/review", response_class=HTMLResponse)
+async def review_page(request: Request) -> HTMLResponse:
+    """Plans with a proposal waiting on somebody."""
+    ensure_db()
+    session = get_session()
+    rows = await run_in_threadpool(_review_rows, session)
+    return templates.TemplateResponse(
+        request,
+        "review.html",
+        {**_nav(session), "request": request, "rows": rows},
+    )
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request) -> HTMLResponse:
+    """What this install is configured to do. Read-mostly by design.
+
+    Anything that would change a project belongs to that project's page;
+    this is the machine-wide view.
+    """
+    ensure_db()
+    session = get_session()
+    # The same source `flanner claude-info` reads, so the CLI and the UI
+    # can never disagree about what is installed.
+    from .claude_integration import get_claude_config_info
+    from .database import get_db_path
+
+    try:
+        info = get_claude_config_info()
+    except Exception:  # noqa: BLE001 - a settings page must still render
+        info = {}
+    claude = {
+        "registered": bool(info.get("server_registered")),
+        "state": "registered" if info.get("server_registered") else "not registered",
+        "config_path": info.get("config_path"),
+        "servers": info.get("total_servers"),
+    }
+    return templates.TemplateResponse(
+        request,
+        "settings.html",
+        {
+            "db_path": get_db_path(),
+            "port": request.url.port or 8080,
+            "version": __version__,
+            "claude": claude,
+            **_nav(session),
+        },
+    )
+
+
+@app.get("/integrations", response_class=HTMLResponse)
+async def integrations_page(request: Request) -> HTMLResponse:
+    """Issue trackers a plan can be linked to."""
+    ensure_db()
+    session = get_session()
+
+    # Links are held per project, so gather them across all of them.
+    links: list[dict[str, Any]] = []
+    config = None
+    for project in db_list_projects(session):
+        links.extend(list_all_linear_links(session, project.id))
+        config = config or get_linear_config(session, project.id)
+
+    return templates.TemplateResponse(
+        request,
+        "integrations.html",
+        {
+            "linear_links": links,
+            "linear_config": config,
+            **_nav(session),
+        },
+    )
+
+
+@app.get("/plans", response_class=HTMLResponse)
+async def plans_page(request: Request) -> HTMLResponse:
+    """Every plan across every project, newest first."""
+    ensure_db()
+    session = get_session()
+    rows = []
+    for plan_file in recent_plan_files(session, limit=200):
+        rows.append({"plan_file": plan_file, "project": plan_file.project})
+    return templates.TemplateResponse(request, "plans.html", {"rows": rows, **_nav(session)})
 
 
 @app.get("/api/projects")

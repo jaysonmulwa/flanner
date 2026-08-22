@@ -1,146 +1,245 @@
 {% extends "base.html" %}
+{% block title %}{{ plan_file.name }} — {{ project.name }}{% endblock %}
 
-{% block title %}{{ plan_file.name }} - {{ project.name }} - flanner{% endblock %}
+{% block topbar_back %}
+<a class="btn back" href="/projects/{{ project.id }}" aria-label="Back to {{ project.name }}" title="Back to {{ project.name }}"><span aria-hidden="true">←</span></a>
+{% endblock %}
+
+{% block topbar_main %}
+<nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/projects">Projects</a><span class="sep">/</span>
+    <a href="/projects/{{ project.id }}">{{ project.name }}</a><span class="sep">/</span>
+    <span class="here">{{ plan_file.name }}.md</span>
+  </nav>
+{% endblock %}
+
+{% block topbar_actions %}
+<div class="reading">
+      <button type="button" class="btn" id="reading-toggle"
+              aria-expanded="false" aria-controls="reading-panel"
+              title="Reading settings">Aa</button>
+      <div class="reading-panel" id="reading-panel" hidden role="group" aria-label="Reading settings">
+        <h3>Reading</h3>
+        <div class="reading-group"><span id="rl-preset">Preset</span>
+          <div class="reading-segs" data-reading="preset" role="group" aria-labelledby="rl-preset">
+            <button type="button" class="reading-seg" data-value="default">Default</button>
+            <button type="button" class="reading-seg" data-value="book">Book</button>
+            <button type="button" class="reading-seg" data-value="night">Night</button>
+            <button type="button" class="reading-seg" data-value="plain">Plain</button>
+          </div>
+        </div>
+        <div class="reading-group"><span id="rl-font">Font</span>
+          <div class="reading-segs" data-reading="font" role="group" aria-labelledby="rl-font">
+            <button type="button" class="reading-seg" data-value="serif">Serif</button>
+            <button type="button" class="reading-seg" data-value="sans">Sans</button>
+            <button type="button" class="reading-seg" data-value="mono">Mono</button>
+            <button type="button" class="reading-seg" data-value="system">System</button>
+          </div>
+        </div>
+        <div class="reading-group"><span id="rl-size">Size</span>
+          <div class="reading-segs" data-reading="size" role="group" aria-labelledby="rl-size">
+            <button type="button" class="reading-seg" data-value="s">S</button>
+            <button type="button" class="reading-seg" data-value="m">M</button>
+            <button type="button" class="reading-seg" data-value="l">L</button>
+            <button type="button" class="reading-seg" data-value="xl">XL</button>
+          </div>
+        </div>
+        <div class="reading-group"><span id="rl-measure">Width</span>
+          <div class="reading-segs" data-reading="measure" role="group" aria-labelledby="rl-measure">
+            <button type="button" class="reading-seg" data-value="narrow">Narrow</button>
+            <button type="button" class="reading-seg" data-value="comfortable">Normal</button>
+            <button type="button" class="reading-seg" data-value="wide">Wide</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <a class="btn" href="/plans/{{ plan_file.id }}/history">History</a>
+    <a class="btn" href="/plans/{{ plan_file.id }}/download?version={{ version.version }}"
+       data-no-boost download>Download</a>
+    <a class="btn btn-primary" href="/plans/{{ plan_file.id }}/edit" data-no-boost>Edit</a>
+{% endblock %}
 
 {% block content %}
-<div class="plan-view">
-    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">~</a><span class="crumb-sep"> / </span><a href="/projects">projects</a><span class="crumb-sep"> / </span><a href="/projects/{{ project.id }}">{{ project.name }}</a><span class="crumb-sep"> / </span><span class="crumb-here">{{ plan_file.name }}_v{{ version.version }}.md</span></nav>
-    <header class="page-header">
-        <div>
-            <h1>{{ plan_file.name }}</h1>
-            <p class="page-subtitle">
-                in <a href="/projects/{{ project.id }}">{{ project.name }}</a>
-            </p>
-        </div>
-        <div class="header-actions">
-            <div class="reading-settings">
-                <button type="button" class="btn btn-secondary" id="reading-toggle"
-                        aria-expanded="false" aria-controls="reading-panel" title="Reading settings">
-                    Aa
-                </button>
-                <div class="reading-panel" id="reading-panel" hidden role="group" aria-label="Reading settings">
-                    <div class="reading-row"><span id="rl-preset">Preset</span>
-                        <div class="reading-seg" data-reading="preset" role="group" aria-labelledby="rl-preset">
-                            <button type="button" data-value="default">Default</button>
-                            <button type="button" data-value="book">Book</button>
-                            <button type="button" data-value="night">Night</button>
-                            <button type="button" data-value="plain">Plain</button>
-                        </div>
-                    </div>
-                    <div class="reading-row"><span id="rl-font">Font</span>
-                        <div class="reading-seg" data-reading="font" role="group" aria-labelledby="rl-font">
-                            <button type="button" data-value="serif">Serif</button>
-                            <button type="button" data-value="sans">Sans</button>
-                            <button type="button" data-value="mono">Mono</button>
-                            <button type="button" data-value="system">System</button>
-                        </div>
-                    </div>
-                    <div class="reading-row"><span id="rl-size">Size</span>
-                        <div class="reading-seg" data-reading="size" role="group" aria-labelledby="rl-size">
-                            <button type="button" data-value="s">S</button>
-                            <button type="button" data-value="m">M</button>
-                            <button type="button" data-value="l">L</button>
-                            <button type="button" data-value="xl">XL</button>
-                        </div>
-                    </div>
-                    <div class="reading-row"><span id="rl-measure">Width</span>
-                        <div class="reading-seg" data-reading="measure" role="group" aria-labelledby="rl-measure">
-                            <button type="button" data-value="narrow">Narrow</button>
-                            <button type="button" data-value="comfortable">Normal</button>
-                            <button type="button" data-value="wide">Wide</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <a href="/plans/{{ plan_file.id }}/edit" class="btn btn-primary">
-                Edit
-            </a>
-            <a href="/plans/{{ plan_file.id }}/history" class="btn btn-secondary">
-                History
-            </a>
-        </div>
-    </header>
+<div class="plan-layout">
 
-    <!-- Version Info -->
-    <div class="version-bar">
-        <div class="version-info">
-            <label class="version-label" for="version-selector">Version:</label>
-            <select id="version-selector" class="version-select" onchange="changeVersion(this.value)">
-                {% for v in all_versions %}
-                <option value="{{ v.version }}" {% if v.version == version.version %}selected{% endif %}>
-                    v{{ v.version }}
-                    {% if v.version == plan_file.current_version %}(latest){% endif %}
-                </option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="version-meta">
-            <span class="meta-item">
-                {{ version.created_by }}
-            </span>
-            <span class="meta-item">
-                {{ version.created_at|relative_time if version.created_at }}
-            </span>
-            {% if version.notes %}
-            <span class="meta-item" title="{{ version.notes }}">
-                {{ version.notes[:50] }}{% if version.notes|length > 50 %}...{% endif %}
-            </span>
-            {% endif %}
-        </div>
+  <div class="plan-main">
+    <div class="plan-head">
+      <h2 class="title">{{ plan_file.name }}.md</h2>
+      {% if freshness %}
+      <span class="drift" data-level="{{ freshness.status }}" aria-hidden="true">
+        <i></i><i></i><i></i><i></i></span>
+      <span class="pill pill-{{ freshness.status }}">{{ freshness.status }}</span>
+      {% endif %}
+
+      <form class="vpicker" method="get" action="/plans/{{ plan_file.id }}">
+        <label class="field-label" for="version-selector">Version</label>
+        <select class="btn" name="version" id="version-selector" onchange="this.form.requestSubmit()">
+          {% for v in all_versions %}
+          <option value="{{ v.version }}" {% if v.version == version.version %}selected{% endif %}>
+            v{{ v.version }}{% if v.version == plan_file.current_version %} · latest{% endif %}</option>
+          {% endfor %}
+        </select>
+        <noscript><button class="btn btn-sm" type="submit">Go</button></noscript>
+      </form>
     </div>
 
-    <!-- Frontmatter (collapsible) -->
-    <details class="frontmatter-details">
-        <summary>frontmatter</summary>
-        <pre class="frontmatter-code"><code>---
+    {% if render_capped %}
+    <div class="alert alert-info" style="margin-top:14px">
+      This plan is {{ "{:,}".format(content_chars) }} characters, past the
+      1,000,000-character rendering limit, so it is shown as plain text.
+    </div>
+    <pre class="raw-content">{{ content }}</pre>
+    {% else %}
+    <article class="doc markdown-content">
+      {% if frontmatter %}
+      {#
+        Collapsed on arrival. The header is bookkeeping - ids, hashes, parent
+        artifacts - and at a dozen lines it pushed the actual writing below
+        the fold on every screen. It is still one click away, and still the
+        real text rather than a summary of it.
+      #}
+      <div class="meta" data-meta>
+        <button type="button" class="btn btn-sm meta-toggle"
+                aria-expanded="false" aria-controls="plan-meta">
+          <span class="meta-caret" aria-hidden="true">›</span>
+          <span data-meta-label>Show metadata</span>
+          <span class="meta-count tnum">{{ frontmatter | length }}</span>
+        </button>
+        <div class="meta-body" id="plan-meta">
+          <div>
+            <div class="frontmatter">---
 {% for key, value in frontmatter.items() %}{{ key }}: {{ value }}
-{% endfor %}---</code></pre>
-    </details>
+{% endfor %}---</div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+      {{ content_html|safe }}
+    </article>
+    {% endif %}
 
-    <!-- Linked Linear issues -->
+    <div class="filebar">
+      <span>File location:</span>
+      <span class="p">{{ version.file_path }}</span>
+      {% if project.auto_gitignore %}<span class="ok">git-ignored ✓</span>{% endif %}
+    </div>
+  </div>
+
+  <aside class="plan-rail" aria-label="About this plan">
+    <section>
+      <h2>Details</h2>
+      <div class="kv"><span>Version</span><span class="m">v{{ version.version }}</span></div>
+      <div class="kv"><span>Updated by</span><b>{{ version.created_by or 'user' }}</b></div>
+      {% if version.created_at %}
+      <div class="kv"><span>Authored</span><b>{{ version.created_at | relative_time }}</b></div>
+      {% endif %}
+      {% if freshness and freshness.anchor %}
+      <div class="kv"><span>Anchor commit</span><span class="m">{{ freshness.anchor[:7] }}</span></div>
+      {% endif %}
+      {% if version.notes %}
+      <div class="kv"><span>Notes</span><b>{{ version.notes }}</b></div>
+      {% endif %}
+    </section>
+
     {% if linear_links %}
     <section class="linear-panel">
-        <h2>Linked Linear issues</h2>
-        {% for link in linear_links %}
-        <div class="linear-item">
-            {% if link.url %}
-            <a href="{{ link.url }}" class="badge" target="_blank" rel="noopener">{{ link.issue_id }}</a>
-            {% else %}
-            <span class="badge">{{ link.issue_id }}</span>
-            {% endif %}
-            <span class="meta-item">{{ link.state or 'not synced' }}</span>
-            {% if link.title %}<span class="linear-title">{{ link.title }}</span>{% endif %}
-            {% if link.notes %}<span class="linear-notes">{{ link.notes }}</span>{% endif %}
-        </div>
-        {% endfor %}
+      <h2>Linked issues</h2>
+      {% for link in linear_links %}
+      <div class="kv">
+        <span>
+          {% if link.url %}<a href="{{ link.url }}" target="_blank" rel="noopener">{{ link.issue_id }}</a>
+          {% else %}{{ link.issue_id }}{% endif %}
+        </span>
+        <b>{{ link.state or 'not synced' }}</b>
+      </div>
+      {% if link.title %}<div class="hint">{{ link.title }}</div>{% endif %}
+      {% if link.notes %}<div class="hint">{{ link.notes }}</div>{% endif %}
+      {% endfor %}
     </section>
     {% endif %}
 
-    <!-- Main Content -->
-    <div class="content-section">
-        {% if render_capped %}
-        <div class="alert alert-info">
-            This plan is {{ "{:,}".format(content_chars) }} characters, past the
-            1,000,000-character rendering limit, so it is shown as plain text.
+    {#
+      Comments from the mesh. Each one is resolved against the version on
+      screen rather than the one it was written on, because that is the
+      question a reader has: does this still apply to what is in front of
+      me? A comment that has lost its text keeps its words and says so,
+      rather than sliding quietly onto a sentence nobody commented on.
+    #}
+    {% if comments %}
+    <section>
+      <h2>Comments</h2>
+      {% for note in comments %}
+      <div class="comment{% if not note.anchored %} adrift{% endif %}">
+        <div class="quote">{{ note.quote }}</div>
+        <div class="body">{{ note.body }}</div>
+        <div class="by">
+          <span>{{ note.by }}{% if note.version %} · on v{{ note.version }}{% endif %}</span>
+          {% if note.state != 'exact' %}
+          <span class="pill pill-{{ note.tone }}">{{ note.label }}</span>
+          {% endif %}
         </div>
-        <pre class="raw-content">{{ content }}</pre>
-        {% else %}
-        <div class="markdown-content">
-            {{ content_html|safe }}
-        </div>
-        {% endif %}
-    </div>
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
 
-    <!-- File Path Info -->
-    <div class="file-info">
-        <span class="info-label">File Location:</span>
-        <code>{{ version.file_path }}</code>
-    </div>
+    {#
+      Review from outside the mesh. Kept visually distinct from anything a
+      teammate wrote, because the reviewer had no device key: the only
+      signature involved says which device received these, not who wrote
+      them. Presenting them as equivalent would be the one unforgivable bug
+      in this feature.
+    #}
+    {% if outside_notes %}
+    <section class="outside">
+      <h2>From outside
+        <span class="pill pill-aging">unverified</span></h2>
+      {% for note in outside_notes %}
+      <div class="outside-note">
+        <div class="quote">{{ note.quote }}</div>
+        <div class="body">{{ note.body }}</div>
+        <div class="by">{{ note.reviewer }}{% if note.version %} · on v{{ note.version }}{% endif %}</div>
+      </div>
+      {% endfor %}
+      <p class="hint">Sent back in a review packet. Nobody outside the team
+         can sign, so these are recorded as received rather than authored.</p>
+    </section>
+    {% endif %}
+
+    {% if freshness %}
+    <section>
+      <h2>Freshness evidence</h2>
+      {% if freshness.reasons %}
+        {% for reason in freshness.reasons %}
+        <div class="check">
+          <span class="{% if freshness.status == 'fresh' %}ok{% else %}no{% endif %}"
+                aria-hidden="true">{% if freshness.status == 'fresh' %}✓{% else %}!{% endif %}</span>
+          <span>{{ reason }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="check"><span class="ok" aria-hidden="true">✓</span>
+          <span>Nothing has drifted since this was written.</span></div>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    <section>
+      <h2>Version history</h2>
+      {% for v in all_versions %}
+      <div style="display:flex; align-items:center; gap:9px; padding:4px 0">
+        <span class="vtag {% if v.version == plan_file.current_version %}vtag-current{% endif %}">
+          v{{ v.version }}</span>
+        <a href="/plans/{{ plan_file.id }}?version={{ v.version }}"
+           style="font-size:12px; color:var(--text-2)">{{ v.notes or 'no note' }}</a>
+        <span style="margin-left:auto; font-size:11px; color:var(--text-4)">
+          {{ v.created_at | relative_time if v.created_at }}</span>
+      </div>
+      {% endfor %}
+      <a class="btn btn-sm" style="margin-top:10px"
+         href="/plans/{{ plan_file.id }}/history">Full history</a>
+    </section>
+  </aside>
+
 </div>
-
-<script>
-function changeVersion(versionNum) {
-    window.location.href = '/plans/{{ plan_file.id }}?version=' + versionNum;
-}
-</script>
 {% endblock %}

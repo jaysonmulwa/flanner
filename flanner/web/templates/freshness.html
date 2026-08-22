@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Freshness{% endblock %}
+
+{% block topbar_main %}
+<h1>Freshness</h1>
+  <span class="sub">Measured from git, on every page load</span>
+{% endblock %}
+
+{% block topbar_actions %}
+<div class="listctl" id="listctl">
+<label class="sr-only" for="drift-filter">Filter</label>
+<input class="input input-sm" type="search" id="drift-filter" data-list-filter
+       placeholder="Filter plans…" autocomplete="off" spellcheck="false">
+<label class="sr-only" for="drift-sort">Sort</label>
+<select class="btn btn-sm" id="drift-sort" data-list-sort>
+  <option value="drift:desc">Sort: Most drifted</option>
+  <option value="name:asc">Sort: Name</option>
+  <option value="project:asc">Sort: Project</option>
+</select>
+</div>
+<a class="btn btn-primary" href="/freshness">Re-scan now</a>
+{% endblock %}
+
+{% block content %}
+<div class="pane">
+
+  <div class="stat-grid">
+    <div class="stat"><div class="v tnum"><span class="dot d-fresh"></span>{{ tally.fresh }}</div>
+      <div class="k">Fresh</div></div>
+    <div class="stat"><div class="v tnum"><span class="dot d-aging"></span>{{ tally.aging }}</div>
+      <div class="k">Aging</div></div>
+    <div class="stat"><div class="v tnum"><span class="dot d-suspect"></span>{{ tally.suspect }}</div>
+      <div class="k">Suspect</div></div>
+    <div class="stat"><div class="v tnum"><span class="dot d-stale"></span>{{ tally.stale }}</div>
+      <div class="k">Stale</div></div>
+  </div>
+
+  {% if attention %}
+  <div class="card" data-listgroup>
+    <div class="card-head">
+      Needs attention
+      <span class="pill pill-suspect tnum">{{ attention | length }}</span>
+      <span class="note">ordered by evidence, not by date</span>
+    </div>
+    <div class="tablewrap">
+      <div class="grid-head cols-freshness">
+        <span>Plan</span><span>Drift</span><span>Evidence</span><span>Project</span><span></span>
+      </div>
+      <div data-list>
+      {% for row in attention %}
+      <div class="grid-row cols-freshness" data-list-item
+           data-name="{{ row.plan_file.name }}"
+           data-project="{{ row.project.name if row.project else '' }}"
+           data-drift="{{ row.drift_rank }}">
+        <span>
+          <a class="name" href="/plans/{{ row.plan_file.id }}">{{ row.plan_file.name }}.md</a>
+          <span class="path">v{{ row.version.version }}</span>
+        </span>
+        <span style="display:inline-flex; align-items:center; gap:8px; justify-self:start">
+          <span class="drift" data-level="{{ row.status }}" aria-hidden="true">
+            <i></i><i></i><i></i><i></i></span>
+          <span class="pill pill-{{ row.status }}">{{ row.status }}</span>
+        </span>
+        <span class="evidence">
+          {% for reason in row.reasons %}{{ reason }}{% if not loop.last %} · {% endif %}{% endfor %}
+        </span>
+        <span class="when">{{ row.project.name if row.project else '—' }}</span>
+        <span style="display:flex; gap:6px; justify-self:end">
+          <a class="btn btn-sm btn-accent" href="/plans/{{ row.plan_file.id }}/edit" data-no-boost>Revise</a>
+          <a class="btn btn-sm" href="/plans/{{ row.plan_file.id }}">Review</a>
+        </span>
+      </div>
+      {% endfor %}
+      </div>
+      <div class="empty-filter" data-list-empty hidden>Nothing matches that filter.</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="card empty">
+    <h2>Nothing has drifted</h2>
+    <p>Every plan still lines up with the code it describes. This page fills itself
+       in as commits land.</p>
+  </div>
+  {% endif %}
+
+  <div class="footnote">
+    <span class="i" aria-hidden="true">i</span>
+    The decay is measured, not guessed: dead references, commits since the anchor,
+    and age — the same evidence <code class="mono">flanner freshness</code> prints.
+  </div>
+
+</div>
+{% endblock %}

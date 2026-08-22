@@ -1,86 +1,48 @@
 {% extends "base.html" %}
+{% block title %}Editing {{ plan_file.name }}{% endblock %}
 
-{% block title %}Edit {{ plan_file.name }} - {{ project.name }} - flanner{% endblock %}
+{% block topbar_back %}
+<a class="btn back" href="/plans/{{ plan_file.id }}" aria-label="Back to the plan" title="Back to the plan"><span aria-hidden="true">←</span></a>
+{% endblock %}
+
+{% block topbar_main %}
+<nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/projects">Projects</a><span class="sep">/</span>
+    <a href="/projects/{{ project.id }}">{{ project.name }}</a><span class="sep">/</span>
+    <a href="/plans/{{ plan_file.id }}">{{ plan_file.name }}.md</a><span class="sep">/</span>
+    <span class="here">Edit</span>
+  </nav>
+{% endblock %}
+
+{% block topbar_actions %}
+<span class="pill pill-quiet">v{{ version.version }} → v{{ version.version + 1 }}</span>
+    <a class="btn" href="/plans/{{ plan_file.id }}">Cancel</a>
+    <button class="btn btn-primary" type="submit" form="plan-edit-form">Save new version</button>
+{% endblock %}
 
 {% block content %}
-<div class="form-page">
-    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">~</a><span class="crumb-sep"> / </span><a href="/projects">projects</a><span class="crumb-sep"> / </span><a href="/projects/{{ project.id }}">{{ project.name }}</a><span class="crumb-sep"> / </span><a href="/plans/{{ plan_file.id }}">{{ plan_file.name }}</a><span class="crumb-sep"> / </span><span class="crumb-here">edit</span></nav>
-    <header class="page-header">
-        <div>
-            <h1>Edit Plan File</h1>
-            <p class="page-subtitle">
-                {{ plan_file.name }} v{{ plan_file.current_version }}
-                in <a href="/projects/{{ project.id }}">{{ project.name }}</a>
-            </p>
-        </div>
-        <a href="/plans/{{ plan_file.id }}" class="btn btn-secondary">
-            Back to View
-        </a>
-    </header>
+<div class="pane">
+  <form method="POST" action="/plans/{{ plan_file.id }}/edit" id="plan-edit-form"
+        class="editor-shell" data-full-load>
 
-    <div class="alert alert-info">
-        <strong>Note:</strong> Saving will create a new version (v{{ plan_file.current_version + 1 }}).
-        Previous versions are preserved and can be viewed in the history.
+    <div class="field">
+      <label class="field-label" for="content">Content</label>
+      <textarea class="textarea mono" id="content" name="content" rows="24"
+                spellcheck="false">{{ content }}</textarea>
     </div>
 
-    <div class="form-container">
-        <form method="POST" action="/plans/{{ plan_file.id }}/edit" class="form">
-            <div class="form-group">
-                <label for="content">Content <span class="required">*</span></label>
-                <textarea
-                    id="content"
-                    name="content"
-                    class="form-control markdown-editor"
-                    rows="25"
-                    required
-                >{{ content }}</textarea>
-                <small class="form-help">
-                    Edit in Markdown format. Frontmatter will be updated automatically.
-                </small>
-            </div>
-
-            <div class="form-group">
-                <label for="notes">Version Notes</label>
-                <textarea
-                    id="notes"
-                    name="notes"
-                    class="form-control"
-                    rows="3"
-                    placeholder="What changed in this version? (optional)"
-                ></textarea>
-                <small class="form-help">
-                    Add notes about what you changed in this version (changelog)
-                </small>
-            </div>
-
-            <div class="form-actions">
-                <button type="submit" class="btn btn-primary">
-                    Save (Create v{{ plan_file.current_version + 1 }})
-                </button>
-                <a href="/plans/{{ plan_file.id }}" class="btn btn-secondary">
-                    Cancel
-                </a>
-            </div>
-        </form>
+    <div class="field">
+      <label class="field-label" for="notes">What changed <span class="opt">(optional)</span></label>
+      <textarea class="textarea" id="notes" name="notes" rows="2"
+                placeholder="One line, so the history reads as a story."></textarea>
     </div>
 
-    <div class="info-box">
-        <h3>Version Information</h3>
-        <div class="version-info-grid">
-            <div>
-                <strong>Current Version:</strong> v{{ version.version }}
-            </div>
-            <div>
-                <strong>Created By:</strong> {{ version.created_by }}
-            </div>
-            <div>
-                <strong>Last Updated:</strong> {{ version.created_at|relative_time if version.created_at }}
-            </div>
-            <div>
-                <strong>New Version Will Be:</strong> v{{ plan_file.current_version + 1 }}
-            </div>
-        </div>
+    <div class="footnote">
+      <span class="i" aria-hidden="true">i</span>
+      Saving writes a new version rather than overwriting this one.
+      <kbd>Ctrl</kbd><kbd>S</kbd> saves from inside the editor.
     </div>
+  </form>
 </div>
 {% endblock %}
 

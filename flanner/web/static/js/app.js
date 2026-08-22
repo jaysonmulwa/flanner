@@ -1,8 +1,47 @@
 // MCP Plan File Manager - JavaScript
 
-// Auto-hide alerts after 5 seconds
-document.addEventListener('DOMContentLoaded', function() {
-    const alerts = document.querySelectorAll('.alert');
+// --- page lifecycle ---------------------------------------------------------
+//
+// Navigation swaps the page shell in place instead of reloading the document
+// (see "boosted navigation" at the foot of this file), so "the page is ready"
+// happens many times per visit, not once. Anything that wires up elements has
+// to run again each time; anything that listens on `document` must not.
+//
+//   onPage(fn)  - runs now-ish and after every swap. Use for element wiring.
+//   once(key, fn) - runs the first time only. Use for document-level listeners.
+//
+const _pageInits = [];
+const _done = new Set();
+
+function onPage(fn) {
+    _pageInits.push(fn);
+}
+
+function once(key, fn) {
+    if (_done.has(key)) return;
+    _done.add(key);
+    fn();
+}
+
+function runPageInits() {
+    _pageInits.forEach(function (fn) {
+        // One broken initialiser must not stop the rest of the page working.
+        try { fn(); } catch (e) { console.error('page init failed', e); }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', runPageInits);
+document.addEventListener('flanner:page', runPageInits);
+
+// Auto-hide flash messages after 5 seconds, and give each one a dismiss
+// button.
+//
+// Scoped to the flash region rather than to `.alert` anywhere on the page.
+// It used to match every `.alert`, which included the sidebar's attention
+// badge: the badge grew a stray close button and then faded itself away.
+// Marking the region is what makes that class of collision impossible.
+onPage(function () {
+    const alerts = document.querySelectorAll('[data-flash] .alert');
     alerts.forEach(alert => {
         setTimeout(() => {
             alert.style.transition = 'opacity 0.3s ease-out';
@@ -13,14 +52,20 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 5000);
     });
 
-    // Add close button to alerts
+    // Add close button to alerts. Guarded, because a navigation runs this
+    // again over markup that may already carry one.
     alerts.forEach(alert => {
+        if (alert.querySelector('[data-dismiss]')) return;
         const closeBtn = document.createElement('button');
+        closeBtn.setAttribute('data-dismiss', '');
+        closeBtn.setAttribute('aria-label', 'Dismiss');
+        closeBtn.type = 'button';
         closeBtn.innerHTML = '×';
         closeBtn.style.cssText = `
             margin-left: auto;
             background: none;
             border: none;
+            color: inherit;
             font-size: 1.5rem;
             cursor: pointer;
             padding: 0;
@@ -39,7 +84,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // Textarea auto-resize
-document.addEventListener('DOMContentLoaded', function() {
+onPage(function () {
     const textareas = document.querySelectorAll('textarea.form-control');
     textareas.forEach(textarea => {
         textarea.addEventListener('input', function() {
@@ -50,7 +95,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // Markdown editor tab support
-document.addEventListener('DOMContentLoaded', function() {
+onPage(function () {
     const editors = document.querySelectorAll('.markdown-editor');
     editors.forEach(editor => {
         editor.addEventListener('keydown', function(e) {
@@ -67,13 +112,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Reading settings popover (plan viewer). Presentation only: sets data-* on
 // <html>, which drives CSS variables, and persists to localStorage.
-document.addEventListener('DOMContentLoaded', function () {
+onPage(function () {
     const toggle = document.getElementById('reading-toggle');
     const panel = document.getElementById('reading-panel');
     if (!toggle || !panel) return;
 
     const KEY = 'flanner.reading';
-    const DEFAULTS = { preset: 'default', font: 'serif', size: 'm', measure: 'comfortable' };
+    const DEFAULTS = { preset: 'default', font: 'mono', size: 'm', measure: 'comfortable' };
+    // A preset is a shortcut for the other three, which is the only thing it
+    // could honestly be: it had no styles of its own and did nothing at all.
+    const PRESETS = {
+        book:    { font: 'serif',  size: 'l',  measure: 'narrow' },
+        plain:   { font: 'system', size: 'm',  measure: 'comfortable' },
+        default: { font: 'mono',   size: 'm',  measure: 'comfortable' },
+    };
 
     function load() {
         try {
@@ -89,7 +141,7 @@ document.addEventListener('DOMContentLoaded', function () {
         d.dataset.readingFont = state.font;
         d.dataset.readingSize = state.size;
         d.dataset.readingMeasure = state.measure;
-        panel.querySelectorAll('.reading-seg').forEach(function (seg) {
+        panel.querySelectorAll('[data-reading]').forEach(function (seg) {
             const key = seg.getAttribute('data-reading');
             seg.querySelectorAll('button').forEach(function (b) {
                 b.setAttribute('aria-pressed', String(b.getAttribute('data-value') === state[key]));
@@ -106,33 +158,49 @@ document.addEventListener('DOMContentLoaded', function () {
         toggle.setAttribute('aria-expanded', String(willOpen));
     });
 
-    panel.querySelectorAll('.reading-seg button').forEach(function (b) {
+    panel.querySelectorAll('[data-reading] button').forEach(function (b) {
         b.addEventListener('click', function () {
             const key = b.parentElement.getAttribute('data-reading');
-            state[key] = b.getAttribute('data-value');
+            const value = b.getAttribute('data-value');
+            state[key] = value;
+            if (key === 'preset' && PRESETS[value]) Object.assign(state, PRESETS[value]);
+            // Night is about the page, not the typeface, so it drives the
+            // theme the top bar also controls rather than inventing a second
+            // dark mode that only applies to one column.
+            if (key === 'preset' && value === 'night') applyTheme('dark');
+            // Choosing a face or a size by hand is no longer whichever preset
+            // was named, so the label stops claiming otherwise.
+            if (key !== 'preset' && state.preset !== 'custom') state.preset = 'custom';
             try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
             apply(state);
         });
     });
 
-    document.addEventListener('click', function (e) {
-        if (!panel.hasAttribute('hidden') && !e.target.closest('.reading-settings')) {
-            panel.setAttribute('hidden', '');
-            toggle.setAttribute('aria-expanded', 'false');
+    // Registered once and re-resolving the elements each time: a navigation
+    // replaces the panel, so a listener closing over today's node would be
+    // holding a detached element by the next page.
+    once('reading-dismiss', function () {
+        function close(refocus) {
+            const p = document.getElementById('reading-panel');
+            const t = document.getElementById('reading-toggle');
+            if (!p || !t || p.hasAttribute('hidden')) return false;
+            p.setAttribute('hidden', '');
+            t.setAttribute('aria-expanded', 'false');
+            if (refocus) t.focus();
+            return true;
         }
-    });
-
-    // Esc closes the popover and returns focus to its trigger.
-    document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && !panel.hasAttribute('hidden')) {
-            panel.setAttribute('hidden', '');
-            toggle.setAttribute('aria-expanded', 'false');
-            toggle.focus();
-        }
+        document.addEventListener('click', function (e) {
+            if (e.target.closest('#reading-panel') || e.target.closest('#reading-toggle')) return;
+            close(false);
+        });
+        // Esc closes the popover and returns focus to its trigger.
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') close(true);
+        });
     });
 
     // Arrow keys move focus within each segmented control.
-    panel.querySelectorAll('.reading-seg').forEach(function (seg) {
+    panel.querySelectorAll('[data-reading]').forEach(function (seg) {
         seg.addEventListener('keydown', function (e) {
             if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
             const btns = Array.from(seg.querySelectorAll('button'));
@@ -145,42 +213,107 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 
-// Theme toggle: cycles system -> light -> dark, persisted. The no-flash script
-// in base.html applies the saved theme before first paint.
-document.addEventListener('DOMContentLoaded', function () {
-    const btn = document.getElementById('theme-toggle');
-    if (!btn) return;
-    const GLYPH = { system: '◐', light: '○', dark: '●' };
-    const d = document.documentElement;
+// Theme. Light is the default, not the operating system: this is a document
+// tool people keep open beside an editor, and a light page is the one most
+// readers expect. The OS setting is still available, as an explicit choice.
+//
+// Two controls drive it - the cycling button in the top bar and the segmented
+// control on Settings - so both read the same value and both re-render when
+// either one changes.
+const THEME_KEY = 'flanner.theme';
+const THEME_ORDER = ['light', 'dark', 'system'];
+const THEME_GLYPH = { light: '○', dark: '●', system: '◐' };
 
-    function current() {
-        try {
-            const t = localStorage.getItem('flanner.theme');
-            return (t === 'light' || t === 'dark') ? t : 'system';
-        } catch (e) { return 'system'; }
-    }
-    function render(mode) {
-        btn.firstElementChild.textContent = GLYPH[mode];
-        btn.setAttribute('aria-label', 'Theme: ' + mode);
-        btn.title = 'Theme: ' + mode + ' (click to change)';
-    }
-    function apply(mode) {
-        if (mode === 'system') { delete d.dataset.theme; } else { d.dataset.theme = mode; }
-        try {
-            if (mode === 'system') localStorage.removeItem('flanner.theme');
-            else localStorage.setItem('flanner.theme', mode);
-        } catch (e) {}
-        render(mode);
-    }
-    render(current());
-    btn.addEventListener('click', function () {
-        const order = ['system', 'light', 'dark'];
-        apply(order[(order.indexOf(current()) + 1) % 3]);
+function themeChoice() {
+    try {
+        const t = localStorage.getItem(THEME_KEY);
+        return THEME_ORDER.indexOf(t) !== -1 ? t : 'light';
+    } catch (e) { return 'light'; }
+}
+
+function applyTheme(mode) {
+    const d = document.documentElement;
+    // "system" is the only mode that leaves the attribute off, which is what
+    // lets the prefers-color-scheme rules in tokens.css take over.
+    if (mode === 'system') { delete d.dataset.theme; } else { d.dataset.theme = mode; }
+    try { localStorage.setItem(THEME_KEY, mode); } catch (e) {}
+    document.dispatchEvent(new CustomEvent('flanner:theme', { detail: mode }));
+}
+
+function renderThemeControls(mode) {
+    // There are two buttons: one in the top bar for wide screens, one in the
+    // header row for narrow ones. Only one is ever visible; both stay in step.
+    document.querySelectorAll('[data-theme-toggle]').forEach(function (btn) {
+        const glyph = btn.querySelector('[data-theme-glyph]') || btn.firstElementChild;
+        if (glyph) glyph.textContent = THEME_GLYPH[mode];
+        btn.setAttribute('aria-label', 'Theme: ' + mode + '. Click to change.');
+        btn.title = 'Theme: ' + mode;
+    });
+    document.querySelectorAll('[data-theme-choice]').forEach(function (b) {
+        b.setAttribute('aria-pressed', String(b.dataset.themeChoice === mode));
+    });
+}
+
+once('theme-sync', function () {
+    document.addEventListener('flanner:theme', function (e) { renderThemeControls(e.detail); });
+});
+
+onPage(function () {
+    renderThemeControls(themeChoice());
+
+    document.querySelectorAll('[data-theme-toggle]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            const at = THEME_ORDER.indexOf(themeChoice());
+            applyTheme(THEME_ORDER[(at + 1) % THEME_ORDER.length]);
+        });
+    });
+    document.querySelectorAll('[data-theme-choice]').forEach(function (b) {
+        b.addEventListener('click', function () { applyTheme(b.dataset.themeChoice); });
+    });
+});
+
+// --- copy a command ---------------------------------------------------------
+//
+// Delegated on `document`, so it survives a page swap and needs no rewiring.
+// The button is an icon, so success is shown by swapping the icon rather than
+// the label; `aria-label` changes with it, because a screen reader gets
+// nothing from an <svg> that turned into a tick.
+
+once('copy-command', function () {
+    document.addEventListener('click', function (event) {
+        const button = event.target.closest('[data-copy]');
+        if (!button) return;
+        const source = document.querySelector(button.dataset.copy);
+        if (!source) return;
+
+        const said = button.getAttribute('aria-label') || 'Copy command';
+        const settle = function (label, ok) {
+            button.classList.toggle('is-copied', ok);
+            button.setAttribute('aria-label', label);
+            button.setAttribute('title', label);
+            clearTimeout(button._copyTimer);
+            button._copyTimer = setTimeout(function () {
+                button.classList.remove('is-copied');
+                button.setAttribute('aria-label', said);
+                button.setAttribute('title', said);
+            }, 1600);
+        };
+
+        // Absent on a page served over plain http from anything but
+        // localhost, so the failure is reported rather than thrown.
+        if (!navigator.clipboard) {
+            settle('Press Ctrl+C to copy', false);
+            return;
+        }
+        navigator.clipboard.writeText(source.textContent.trim()).then(
+            function () { settle('Copied', true); },
+            function () { settle('Press Ctrl+C to copy', false); }
+        );
     });
 });
 
 // Command palette (Cmd/Ctrl+K): jump to any project or plan.
-document.addEventListener('DOMContentLoaded', function () {
+onPage(function () {
     const dlg = document.getElementById('cmdk');
     const input = document.getElementById('cmdk-input');
     const list = document.getElementById('cmdk-list');
@@ -256,11 +389,15 @@ document.addEventListener('DOMContentLoaded', function () {
         input.focus();
     }
 
-    document.addEventListener('keydown', function (e) {
-        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-            e.preventDefault();
-            open();
-        }
+    // The dialog lives outside the swapped shell, so one registration holds
+    // for the life of the tab.
+    once('cmdk-hotkey', function () {
+        document.addEventListener('keydown', function (e) {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                open();
+            }
+        });
     });
     const trigger = document.getElementById('cmdk-open');
     if (trigger) trigger.addEventListener('click', open);
@@ -277,12 +414,18 @@ document.addEventListener('DOMContentLoaded', function () {
 // with a [data-list-filter] input and/or [data-list-sort] select reorders and
 // hides its [data-list-item] children by their data-* attributes.
 // ponytail: operates on the current page (50 items); global search is Cmd+K.
-document.addEventListener('DOMContentLoaded', function () {
+onPage(function () {
     document.querySelectorAll('[data-listgroup]').forEach(function (group) {
         const list = group.querySelector('[data-list]');
         if (!list) return;
-        const filter = group.querySelector('[data-list-filter]');
-        const sort = group.querySelector('[data-list-sort]');
+        // The controls usually sit in the top bar, which is outside the card
+        // they act on, so fall back to the page. Safe because a page carries
+        // at most one list group; if that stops being true, give the controls
+        // a group id to point at.
+        const filter = group.querySelector('[data-list-filter]')
+            || document.querySelector('[data-list-filter]');
+        const sort = group.querySelector('[data-list-sort]')
+            || document.querySelector('[data-list-sort]');
         const empty = group.querySelector('[data-list-empty]');
         const items = function () { return Array.from(list.querySelectorAll('[data-list-item]')); };
 
@@ -320,7 +463,7 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 
 // Prefetch internal pages on hover, so a click feels instant.
-document.addEventListener('DOMContentLoaded', function () {
+once('prefetch', function () {
     const seen = new Set();
     document.body.addEventListener('mouseover', function (e) {
         const a = e.target.closest('a[href^="/"]');
@@ -337,7 +480,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 // Inline uniqueness check: warn before submit if a project/plan name is taken,
 // instead of only learning it from the server round-trip. Reuses /api/search.
-document.addEventListener('DOMContentLoaded', function () {
+onPage(function () {
     const inputs = document.querySelectorAll('[data-check-unique]');
     if (!inputs.length) return;
     let index = null;
@@ -419,7 +562,7 @@ function showNotification(message, type = 'info') {
 }
 
 // Handle URL query parameters
-document.addEventListener('DOMContentLoaded', function() {
+onPage(function () {
     const params = new URLSearchParams(window.location.search);
     if (params.has('message')) {
         const messageType = params.get('message');
@@ -455,3 +598,423 @@ document.addEventListener('keydown', function(e) {
 });
 
 console.log('🚀 MCP Plan File Manager loaded successfully!');
+
+// The shortcuts dialog is reachable from the sidebar and the footer as well
+// as by pressing ?. Selected by attribute rather than id, because there is
+// now more than one of them and an id may only be used once.
+onPage(function () {
+    const dlg = document.getElementById('help');
+    if (!dlg) return;
+    document.querySelectorAll('[data-help-open]').forEach(function (link) {
+        link.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (typeof dlg.showModal === 'function') dlg.showModal();
+        });
+    });
+});
+
+// --- boosted navigation -----------------------------------------------------
+//
+// Clicking a link fetches the next page and swaps the shell, instead of
+// letting the browser tear the document down and build it again. The visible
+// difference is that the stylesheet, the fonts and the scroll position stop
+// flashing on every click through the sidebar.
+//
+// This is not a single-page app and deliberately so. The server still renders
+// every page; there is no client router, no state store, and no JSON API
+// behind the screens. If the fetch fails, or the response is not a page we
+// recognise, the browser does the navigation itself and nothing is lost.
+//
+// ponytail: ~70 lines instead of a framework. The one rule it imposes on the
+// rest of this file is the onPage/once split at the top.
+(function () {
+    const SHELL = '.shell';
+    if (!window.history || !window.history.pushState || !window.DOMParser) return;
+    if (!document.querySelector(SHELL)) return;
+
+    function boostable(a, event) {
+        if (!a || event.defaultPrevented) return false;
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+        if (event.button !== 0) return false;
+        if (a.target && a.target !== '_self') return false;
+        if (a.hasAttribute('download') || a.dataset.noBoost !== undefined) return false;
+        if (a.origin !== location.origin) return false;
+        const href = a.getAttribute('href') || '';
+        if (href.charAt(0) === '#' || href.indexOf('/static/') === 0) return false;
+        // Same page, different anchor: let the browser scroll.
+        if (a.pathname === location.pathname && a.search === location.search && a.hash) return false;
+        return true;
+    }
+
+    let token = 0;
+    let slowTimer = null;
+
+    // The indicator waits before showing itself. Most swaps land inside that
+    // window, and a bar that flashes for 80ms reads as a glitch; the ones that
+    // do not land are the pages that scan git, which take a second or more.
+    function busy(on) {
+        clearTimeout(slowTimer);
+        if (on) {
+            slowTimer = setTimeout(function () {
+                document.documentElement.classList.add('is-navigating');
+            }, 120);
+        } else {
+            document.documentElement.classList.remove('is-navigating');
+        }
+    }
+
+    async function visit(url, push) {
+        const mine = ++token;
+        busy(true);
+        let markup;
+        try {
+            const res = await fetch(url, {
+                headers: { 'X-Requested-With': 'flanner-nav' },
+                credentials: 'same-origin',
+                redirect: 'follow',
+            });
+            // Anything but a rendered page - a download, an error, a redirect
+            // off-site - is the browser's job, not ours.
+            if (!res.ok || (res.headers.get('content-type') || '').indexOf('text/html') === -1) {
+                location.href = url;
+                return;
+            }
+            url = res.url || url;
+            markup = await res.text();
+        } catch (e) {
+            location.href = url;
+            return;
+        }
+        if (mine !== token) return;  // a later click won
+
+        const next = new DOMParser().parseFromString(markup, 'text/html');
+        const incoming = next.querySelector(SHELL);
+        const current = document.querySelector(SHELL);
+        if (!incoming || !current) { location.href = url; return; }
+        // Some pages load their own scripts, which sit outside the shell and
+        // would not come with the swap. Those get a real navigation, so
+        // arriving by Back works the same as arriving by click.
+        if (incoming.querySelector('[data-full-load]')) { location.href = url; return; }
+
+        current.replaceWith(incoming);
+        document.title = next.title;
+        if (push) history.pushState({ boosted: true }, '', url);
+        window.scrollTo(0, 0);
+        busy(false);
+
+        // Re-wire the new markup, then put focus where a real navigation
+        // would have left it, so keyboard and screen-reader users are not
+        // stranded at the top of a document that never reloaded.
+        document.dispatchEvent(new CustomEvent('flanner:page'));
+        const main = document.getElementById('main');
+        if (main) main.focus({ preventScroll: true });
+    }
+
+    document.addEventListener('click', function (e) {
+        const a = e.target.closest('a[href]');
+        if (!boostable(a, e)) return;
+        e.preventDefault();
+        visit(a.href, true);
+    });
+
+    // A GET form is a navigation with a query string on it - the sort menus
+    // are exactly this - so it gets swapped like any other link. POSTs are
+    // left alone: they change something, and the redirect afterwards is the
+    // browser's business.
+    document.addEventListener('submit', function (e) {
+        const form = e.target;
+        if (e.defaultPrevented || !form || form.tagName !== 'FORM') return;
+        if ((form.method || 'get').toLowerCase() !== 'get') return;
+        if (form.dataset.noBoost !== undefined) return;
+        const action = new URL(form.action || location.href, location.href);
+        if (action.origin !== location.origin) return;
+        action.search = new URLSearchParams(new FormData(form)).toString();
+        e.preventDefault();
+        visit(action.href, true);
+    });
+
+    window.addEventListener('popstate', function () {
+        visit(location.href, false);
+    });
+})();
+
+// --- custom select ------------------------------------------------------------
+//
+// The popup list of a native <select> cannot be styled: every browser draws
+// its own, and next to the rest of the page it looks borrowed. This replaces
+// the *presentation* only. The real <select> stays in the DOM and stays the
+// source of truth, so forms still submit it, the change event still fires,
+// and with JS off you get the browser's own control rather than nothing.
+onPage(function () {
+    document.querySelectorAll('select.btn, select.input').forEach(function (select) {
+        if (select.dataset.customised) return;
+        select.dataset.customised = '1';
+
+        const wrap = document.createElement('div');
+        wrap.className = 'sel';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'sel-button ' + select.className;
+        button.setAttribute('aria-haspopup', 'listbox');
+        button.setAttribute('aria-expanded', 'false');
+        if (select.id) button.setAttribute('aria-labelledby', select.id + '-label ' + select.id);
+        const label = document.createElement('span');
+        label.className = 'sel-label';
+        const caret = document.createElement('span');
+        caret.className = 'sel-caret';
+        caret.setAttribute('aria-hidden', 'true');
+        caret.textContent = '⌄';
+        button.append(label, caret);
+
+        const list = document.createElement('div');
+        list.className = 'sel-list';
+        list.setAttribute('role', 'listbox');
+        list.hidden = true;
+
+        Array.from(select.options).forEach(function (option, index) {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'sel-option';
+            item.setAttribute('role', 'option');
+            item.dataset.index = String(index);
+            item.textContent = option.textContent.trim();
+            list.appendChild(item);
+        });
+
+        select.parentNode.insertBefore(wrap, select);
+        wrap.append(select, button, list);
+        // The native control keeps working for assistive tech and for form
+        // submission; it is only taken out of the visual flow.
+        select.classList.add('sel-native');
+
+        function sync() {
+            const chosen = select.options[select.selectedIndex];
+            label.textContent = chosen ? chosen.textContent.trim() : '';
+            list.querySelectorAll('.sel-option').forEach(function (item) {
+                const on = Number(item.dataset.index) === select.selectedIndex;
+                item.setAttribute('aria-selected', String(on));
+            });
+        }
+
+        function open(yes) {
+            list.hidden = !yes;
+            button.setAttribute('aria-expanded', String(yes));
+            if (yes) {
+                const current = list.querySelector('[aria-selected="true"]');
+                (current || list.firstElementChild).focus();
+            }
+        }
+
+        function choose(index) {
+            if (select.selectedIndex !== index) {
+                select.selectedIndex = index;
+                // Dispatched so every existing listener - the list sort, the
+                // version picker, the auto-submitting forms - sees a change
+                // exactly as if a person had used the native control.
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            sync();
+            open(false);
+            button.focus();
+        }
+
+        button.addEventListener('click', function () { open(list.hidden); });
+        list.addEventListener('click', function (e) {
+            const item = e.target.closest('.sel-option');
+            if (item) choose(Number(item.dataset.index));
+        });
+        list.addEventListener('keydown', function (e) {
+            const items = Array.from(list.querySelectorAll('.sel-option'));
+            const at = items.indexOf(document.activeElement);
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                const next = e.key === 'ArrowDown' ? at + 1 : at - 1;
+                items[(next + items.length) % items.length].focus();
+            } else if (e.key === 'Escape') {
+                e.preventDefault(); open(false); button.focus();
+            } else if (e.key === 'Tab') {
+                open(false);
+            }
+        });
+        select.addEventListener('change', sync);
+        sync();
+    });
+});
+
+once('select-dismiss', function () {
+    document.addEventListener('click', function (e) {
+        document.querySelectorAll('.sel-list:not([hidden])').forEach(function (list) {
+            if (!list.parentElement.contains(e.target)) {
+                list.hidden = true;
+                list.parentElement.querySelector('.sel-button').setAttribute('aria-expanded', 'false');
+            }
+        });
+    });
+});
+
+// --- mobile shell -------------------------------------------------------------
+//
+// The navigation is a drawer that covers the page rather than pushing it down,
+// so opening the menu never moves what you were reading. The filter and sort
+// controls fold behind an icon and open as a sheet from the bottom.
+//
+// Both are plain class toggles; the media query decides whether any of it is
+// visible, so nothing here needs to know the viewport width.
+once('mobile-shell', function () {
+    const scrim = document.createElement('div');
+    scrim.className = 'scrim';
+    document.body.appendChild(scrim);
+
+    function rail() { return document.querySelector('.rail'); }
+    function menuButton() { return document.getElementById('menu-toggle'); }
+    function sheet() { return document.getElementById('listctl'); }
+    function sheetButton() { return document.getElementById('filter-toggle'); }
+
+    function showScrim(on) {
+        // One class. When closed the CSS leaves it transparent and
+        // pointer-events: none, so it cannot swallow a click.
+        scrim.classList.toggle('is-open', on);
+    }
+
+    // While the drawer or the sheet is open, everything behind it is made
+    // inert: not clickable, not focusable, not reachable by tab or by a
+    // screen reader. A scrim that only dims is a suggestion; `inert` is the
+    // thing that actually stops a stray tap landing on the page underneath.
+    //
+    // The menu button itself is deliberately left out, so the drawer can
+    // always be closed by the control that opened it.
+    // Where the sheet came from, so it can be put back exactly there.
+    let parkedFrom = null;
+
+    function park(panel) {
+        parkedFrom = { parent: panel.parentNode, next: panel.nextSibling };
+        document.body.appendChild(panel);
+    }
+
+    function unpark() {
+        const panel = document.getElementById('listctl');
+        if (!panel || !parkedFrom) return;
+        // A navigation may have replaced the page it belonged to; then there
+        // is nowhere to put it back and the new page has its own.
+        if (parkedFrom.parent && parkedFrom.parent.isConnected) {
+            parkedFrom.parent.insertBefore(panel, parkedFrom.next);
+        } else if (panel.parentNode === document.body) {
+            panel.remove();
+        }
+        parkedFrom = null;
+    }
+
+    function behind() {
+        return [document.querySelector('.main'),
+                document.querySelector('.rail-brand'),
+                document.querySelector('.rail-search'),
+                document.querySelector('.rail-theme')].filter(Boolean);
+    }
+
+    function freeze(on) {
+        behind().forEach(function (el) {
+            if (on) { el.setAttribute('inert', ''); } else { el.removeAttribute('inert'); }
+        });
+        // Belt and braces for browsers without inert, and it stops the page
+        // scrolling under an open drawer.
+        document.documentElement.classList.toggle('is-locked', on);
+    }
+
+    function closeAll(refocus) {
+        const r = rail(), s = sheet();
+        if (r) r.classList.remove('is-open');
+        if (s) s.classList.remove('is-open');
+        unpark();
+        const mb = menuButton(), sb = sheetButton();
+        if (mb) mb.setAttribute('aria-expanded', 'false');
+        if (sb) sb.setAttribute('aria-expanded', 'false');
+        showScrim(false);
+        freeze(false);
+        if (refocus && refocus.isConnected) refocus.focus();
+    }
+
+    document.addEventListener('click', function (e) {
+        const menu = e.target.closest('#menu-toggle');
+        if (menu) {
+            const open = !rail().classList.contains('is-open');
+            closeAll();
+            rail().classList.toggle('is-open', open);
+            menu.setAttribute('aria-expanded', String(open));
+            showScrim(open);
+            freeze(open);
+            if (open) { const first = rail().querySelector('.rail-nav a'); if (first) first.focus(); }
+            return;
+        }
+        const filter = e.target.closest('#filter-toggle');
+        if (filter) {
+            const panel = sheet();
+            if (!panel) return;
+            const open = !panel.classList.contains('is-open');
+            closeAll();
+            // The controls live in the top bar, which is inside the part of
+            // the page being frozen. Parked on <body> while open, so the
+            // sheet stays usable and everything behind it does not.
+            if (open) park(panel);
+            panel.classList.toggle('is-open', open);
+            filter.setAttribute('aria-expanded', String(open));
+            showScrim(open);
+            freeze(open);
+            if (open) { const input = panel.querySelector('[data-list-filter]'); if (input) input.focus(); }
+            return;
+        }
+        if (e.target === scrim) closeAll();
+        // A link inside the drawer navigates; the drawer should not follow.
+        if (e.target.closest('.rail-nav a')) closeAll();
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeAll();
+    });
+
+    // A navigation replaces the shell, so anything still open belongs to a
+    // page that no longer exists.
+    document.addEventListener('flanner:page', function () { closeAll(); });
+});
+
+// The filter icon only earns its place on pages that have something to filter.
+onPage(function () {
+    const button = document.getElementById('filter-toggle');
+    if (button) button.hidden = !document.getElementById('listctl');
+});
+
+// The frontmatter block, collapsed on arrival so the writing starts near the
+// top of the page. Presentation only: the markup is always in the document,
+// so find-in-page and copy still reach it once it is open.
+onPage(function () {
+    document.querySelectorAll('[data-meta]').forEach(function (meta) {
+        const button = meta.querySelector('.meta-toggle');
+        const body = meta.querySelector('.meta-body');
+        const label = meta.querySelector('[data-meta-label]');
+        if (!button || !body) return;
+
+        // Left at auto once open, so the block still reflows when the window
+        // changes width. Pinned back to its measured height first, because a
+        // transition cannot start from auto.
+        body.addEventListener('transitionend', function (e) {
+            if (e.propertyName === 'height' && meta.classList.contains('is-open')) {
+                body.style.height = 'auto';
+            }
+        });
+
+        button.addEventListener('click', function () {
+            const open = !meta.classList.contains('is-open');
+            const measured = body.scrollHeight;
+            if (open) {
+                meta.classList.add('is-open');
+                body.style.height = measured + 'px';
+            } else {
+                body.style.height = measured + 'px';
+                void body.offsetHeight;  // force a frame at the real height
+                meta.classList.remove('is-open');
+                body.style.height = '0px';
+            }
+            button.setAttribute('aria-expanded', String(open));
+            if (label) label.textContent = open ? 'Hide metadata' : 'Show metadata';
+        });
+    });
+});

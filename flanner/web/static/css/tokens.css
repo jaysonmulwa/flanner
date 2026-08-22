@@ -1,0 +1,177 @@
+/* Design tokens for the local web UI.
+ *
+ * Values are lifted from section 1c of the Flanner mockups rather than
+ * re-derived, so a colour that looks slightly off here is a mismatch with
+ * the design and not a taste question.
+ *
+ * Both themes are defined at token level. Components must never reach for
+ * a literal colour: a value that only exists inside a [data-theme] block
+ * renders one theme's text on the other theme's ground the moment the
+ * viewer is following their OS instead of an explicit choice.
+ */
+
+@font-face {
+  font-family: "Geist";
+  src: url("../fonts/Geist-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../fonts/GeistMono-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  /* Type. Self-hosted rather than fetched: the sidebar claims nothing
+     leaves your disk, and a webfont request would make that untrue. */
+  --font-sans: "Geist", -apple-system, "Segoe UI", Roboto, Helvetica, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Consolas, monospace;
+
+  /* Surfaces */
+  --app-bg:      #f7f7f8;
+  --rail-bg:     #fbfbfc;
+  --card:        #ffffff;
+  --card-sunken: #fbfbfc;
+  --chrome:      #f2f2f4;
+
+  /* Lines */
+  --border:      #e7e7ea;
+  --divider:     #ececef;
+  --border-firm: #e2e2e6;
+
+  /* Text */
+  --text:        #17181c;
+  --text-2:      #4b4c53;
+  --text-3:      #6b6c72;
+  --text-4:      #6f7078;
+
+  /* Accent */
+  --accent:      #17805a;
+  --accent-hi:   #0e5c3f;
+  --accent-ink:  #157e58;   /* accent as text: 4.9:1 on white */
+  --accent-ink-hi: #0e5c3f;
+  --accent-soft: #e9f7f0;
+  --accent-line: #cdeadd;
+  --accent-grad: linear-gradient(135deg, #17805a, #35c98e);
+  --nav-active:  #eef0f0;
+  --chip:        #eef0f0;
+
+  /* Freshness. Four steps, the same vocabulary the CLI prints. */
+  --fresh:        #22c07d;
+  --fresh-text:   #157e58;
+  --fresh-bg:     #e9f7f0;
+  --aging:        #e9a23b;
+  --aging-text:   #b45309;
+  --aging-bg:     #fdf3e1;
+  --suspect:      #ee7c3c;
+  --suspect-text: #c2410c;
+  --suspect-bg:   #fef0e6;
+  --stale:        #e5484d;
+  --stale-text:   #d31d1d;
+  --stale-bg:     #fdeaea;
+  --drift-empty:  #e2e2e6;
+
+  /* Terminal block inside a plan */
+  --term-bg:      #17181c;
+  --term-text:    #d1d9e0;
+  --term-dim:     #8b949e;
+  --term-ok:      #3fb950;
+
+  --shadow-card: 0 1px 2px rgba(10, 12, 16, .05);
+  --shadow-pop:  0 12px 32px -10px rgba(10, 12, 16, .18), 0 2px 6px rgba(10, 12, 16, .06);
+  --focus:       0 0 0 3px rgba(23, 128, 90, .18);
+
+  --r-lg: 12px;
+  --r-md: 8px;
+  --r-sm: 6px;
+  --r-xs: 4px;
+}
+
+/* Viewers following their OS resolve here. Guarded so an explicit light
+   choice still beats a dark system setting. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --app-bg:      #141519;
+    --rail-bg:     #17181c;
+    --card:        #1c1d22;
+    --card-sunken: #1a1b20;
+    --chrome:      #1a1b20;
+
+    --border:      #2a2b31;
+    --divider:     #26272c;
+    --border-firm: #2a2b31;
+
+    --text:        #ececee;
+    --text-2:      #b6b7bd;
+    --text-3:      #9a9ba3;
+    --text-4:      #85868c;
+
+    --accent-ink:  #39a27c;   /* 4.6:1 on the dark card */
+    --accent-ink-hi: #45b489;
+    --accent-soft: rgba(23, 128, 90, .16);
+    --accent-line: rgba(45, 212, 143, .28);
+    --nav-active:  #26272c;
+    --chip:        #26272c;
+
+    --fresh:        #2dd48f;
+    --fresh-text:   #2dd48f;
+    --fresh-bg:     rgba(45, 212, 143, .12);
+    --aging-text:   #e9a23b;
+    --aging-bg:     rgba(233, 162, 59, .14);
+    --suspect-text: #f0883e;
+    --suspect-bg:   rgba(238, 124, 60, .14);
+    --stale-text:   #f2726a;
+    --stale-bg:     rgba(229, 72, 77, .14);
+    --drift-empty:  #2a2b31;
+
+    --term-bg:      #0f1014;
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-pop:  0 16px 40px -12px rgba(0, 0, 0, .6), 0 2px 6px rgba(0, 0, 0, .35);
+    --focus:       0 0 0 3px rgba(45, 212, 143, .22);
+  }
+}
+
+/* An explicit dark choice wins over a light system setting. */
+:root[data-theme="dark"] {
+  --app-bg:      #141519;
+  --rail-bg:     #17181c;
+  --card:        #1c1d22;
+  --card-sunken: #1a1b20;
+  --chrome:      #1a1b20;
+
+  --border:      #2a2b31;
+  --divider:     #26272c;
+  --border-firm: #2a2b31;
+
+  --text:        #ececee;
+  --text-2:      #b6b7bd;
+  --text-3:      #9a9ba3;
+  --text-4:      #85868c;
+
+  --accent-ink:  #39a27c;   /* 4.6:1 on the dark card */
+  --accent-ink-hi: #45b489;
+  --accent-soft: rgba(23, 128, 90, .16);
+  --accent-line: rgba(45, 212, 143, .28);
+  --nav-active:  #26272c;
+  --chip:        #26272c;
+
+  --fresh:        #2dd48f;
+  --fresh-text:   #2dd48f;
+  --fresh-bg:     rgba(45, 212, 143, .12);
+  --aging-text:   #e9a23b;
+  --aging-bg:     rgba(233, 162, 59, .14);
+  --suspect-text: #f0883e;
+  --suspect-bg:   rgba(238, 124, 60, .14);
+  --stale-text:   #f2726a;
+  --stale-bg:     rgba(229, 72, 77, .14);
+  --drift-empty:  #2a2b31;
+
+  --term-bg:      #0f1014;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-pop:  0 16px 40px -12px rgba(0, 0, 0, .6), 0 2px 6px rgba(0, 0, 0, .35);
+  --focus:       0 0 0 3px rgba(45, 212, 143, .22);
+}
