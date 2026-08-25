@@ -2338,6 +2338,7 @@ def whoami(do_refresh: bool) -> None:
     from . import session as cache
 
     console.print(f"Device  {device.device_id()}")
+    _print_store()
 
     current: cache.Session | None
     if do_refresh:
@@ -2359,6 +2360,34 @@ def whoami(do_refresh: bool) -> None:
     console.print(f"Account {current.user_id} in {current.organization_id}")
     console.print(f"Server  {current.endpoint}")
     _print_entitlement(current)
+
+
+def _print_store() -> None:
+    """What this device holds, and the fact that it never sheds it.
+
+    The Settings page in the web UI has said this since retirement landed.
+    The CLI had not, and a CLI-only user is the common case, so the decision
+    to keep everything was invisible to the people living with it.
+
+    Skipped rather than reported as zero when there is no database. A fresh
+    install holding nothing is a different claim from a store that has been
+    measured, and "0 B" would read as the second.
+    """
+    from .database import list_artifacts
+
+    db_path = get_mcp_dir() / "data.db"
+    if not db_path.exists():
+        return
+
+    init_database(str(db_path))
+    rows = list_artifacts(get_session())
+    held = sum(len(row.payload or "") for row in rows)
+
+    console.print(f"Holds   {len(rows)} artifacts, {tui.size(held)}")
+    console.print(
+        "        never pruned; retiring a plan hides it and erases nothing",
+        style="dim",
+    )
 
 
 def _print_entitlement(current: Any) -> None:
@@ -2646,6 +2675,10 @@ def retire_plan(
         tui.ok(f"{plan_name} is visible again")
     else:
         tui.ok(f"{plan_name} retired")
+        # Said on the way out as well as at the prompt, because --yes skips
+        # the prompt entirely and a script is exactly where somebody would
+        # assume this deleted something.
+        tui.note("Nothing was erased. Anyone already holding it keeps the bytes.")
         tui.hint(f"Undo with {tui.command(f'flanner retire {plan_name} --restore')}")
 
 

@@ -338,6 +338,18 @@ def assess(
     if roles is None and authorization.enforced and not authorization.roles:
         warnings.append(f"review authorization is unavailable: {authorization.reason}")
 
+    # The mirror of the case above, and the one that misleads by looking
+    # settled. A solo project projects review against a role map anyone
+    # holding the machine can edit, so `reviewed` is true and authorizes
+    # nobody. An agent reading only `reviewed` would cite it as sign-off.
+    # Exclusive with the "no approval recorded" warning by construction:
+    # that one fires when `reviewed` is false, this one when it is true.
+    if roles is None and reviewed and not authorization.enforced:
+        warnings.append(
+            "this approval was recorded under local roles, which anyone holding "
+            "this machine can edit, so it authorizes nothing"
+        )
+
     return Assurance(
         plan_name=plan_file.name,
         artifact_id=artifact_id,
