@@ -16,8 +16,10 @@ foundation the artifact layer signs with.
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 from pathlib import Path
+from typing import Any
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -27,6 +29,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 KEY_FILENAME = "device_key"
+KEYCHAIN_SERVICE = "flanner"
 DEVICE_ID_PREFIX = "dev_"
 _DEVICE_ID_HEX_CHARS = 16
 
@@ -40,33 +43,120 @@ def device_key_path() -> Path:
     return flanner_home() / KEY_FILENAME
 
 
-def _write_private_key(path: Path, key: Ed25519PrivateKey) -> None:
-    """Write the key owner-readable only, without a world-readable window."""
-    pem = key.private_bytes(
+def _pem(key: Ed25519PrivateKey) -> bytes:
+    """The one serialisation, so the keychain and the file agree byte for byte."""
+    return key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     )
+
+
+def _write_private_key(path: Path, key: Ed25519PrivateKey) -> None:
+    """Write the key owner-readable only, without a world-readable window."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # Create with 0600 from the outset; opening then chmod-ing would leave the
-    # key briefly readable by others. ponytail: a file with tight permissions,
-    # not the OS keychain the PRD ultimately wants. Move to `keyring` when
-    # there is a reason to add the dependency; the callers here do not change.
+    # key briefly readable by others.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as f:
-        f.write(pem)
+        f.write(_pem(key))
+
+
+def _keychain() -> Any | None:
+    """The OS keychain, or None when this machine has no usable one.
+
+    Headless Linux with no Secret Service, containers, and CI all land here,
+    as does anyone who sets ``FLANNER_NO_KEYCHAIN``. None is not a degraded
+    mode: it selects the 0600 file this module has always used, which stays
+    a supported configuration rather than becoming a consolation prize.
+
+    Every failure is swallowed on purpose. A keychain that cannot be reached
+    must cost a fallback, never the ability to sign, because signing is how
+    this device exists at all.
+    """
+    if os.environ.get("FLANNER_NO_KEYCHAIN"):
+        return None
+    try:
+        import keyring
+        from keyring.backends.fail import Keyring as Unusable
+
+        backend = keyring.get_keyring()
+    except Exception:  # noqa: BLE001 - any import or platform failure means "no keychain"
+        return None
+    return None if isinstance(backend, Unusable) else keyring
+
+
+def _keychain_account() -> str:
+    """One keychain entry per flanner home, so two homes stay two devices.
+
+    A single shared entry would make every FLANNER_HOME on a machine the
+    same device. Tests rely on that isolation, and so does anyone running a
+    second account beside their own.
+    """
+    home = os.path.normcase(os.path.abspath(str(flanner_home())))
+    return hashlib.sha256(home.encode("utf-8")).hexdigest()[:16]
+
+
+def _read_keychain(store: Any) -> Ed25519PrivateKey | None:
+    """The stored key, or None for absent, unreadable, or the wrong type."""
+    try:
+        pem = store.get_password(KEYCHAIN_SERVICE, _keychain_account())
+    except Exception:  # noqa: BLE001 - a locked or broken keychain reads as absent
+        return None
+    if not pem:
+        return None
+    try:
+        loaded = serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
+    except Exception:  # noqa: BLE001 - a corrupt entry must not be fatal
+        return None
+    return loaded if isinstance(loaded, Ed25519PrivateKey) else None
+
+
+def _store_keychain(store: Any, key: Ed25519PrivateKey) -> bool:
+    """Write the key to the keychain and prove it reads back identical.
+
+    The read-back is the point. A backend that accepts a write and returns
+    nothing afterwards would cost this device its identity, and the caller
+    only deletes the file once this has returned True.
+    """
+    pem = _pem(key)
+    try:
+        store.set_password(KEYCHAIN_SERVICE, _keychain_account(), pem.decode("ascii"))
+    except Exception:  # noqa: BLE001 - a refused write means keep the file
+        return False
+    written = _read_keychain(store)
+    return written is not None and _pem(written) == pem
 
 
 def load_or_create_device_key() -> Ed25519PrivateKey:
-    """This device's signing key, generating it on first use."""
+    """This device's signing key, generating it on first use.
+
+    Keychain, then file, then generate. The file is still read when it is
+    there, because an install predating the keychain must not wake up as a
+    different device: the id is derived from the key, so a new key is a new
+    machine as far as every peer and the control plane are concerned.
+    """
+    store = _keychain()
+    if store is not None:
+        held = _read_keychain(store)
+        if held is not None:
+            return held
+
     path = device_key_path()
     if path.exists():
         loaded = serialization.load_pem_private_key(path.read_bytes(), password=None)
         if not isinstance(loaded, Ed25519PrivateKey):
             raise TypeError(f"{path} does not hold an Ed25519 private key")
+        if store is not None and _store_keychain(store, loaded):
+            # Only now, with the key proven readable from the keychain, is
+            # removing the file safe. Leaving it would mean the move bought
+            # nothing, so this is the step the whole change exists for.
+            path.unlink(missing_ok=True)
         return loaded
+
     key = Ed25519PrivateKey.generate()
-    _write_private_key(path, key)
+    if store is None or not _store_keychain(store, key):
+        _write_private_key(path, key)
     return key
 
 

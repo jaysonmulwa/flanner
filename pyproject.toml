@@ -41,6 +41,11 @@ dependencies = [
     "pydantic>=2.5,<3",
     "mcp>=1.0,<2",
     "cryptography>=42,<50",
+    # The device key lives in the OS keychain. Unconditional: every desktop
+    # platform has a backend, and where one is missing (headless Linux with
+    # no Secret Service, containers, CI) `identity` falls back to the 0600
+    # file it always used, so the import failing softly is already handled.
+    "keyring>=25,<26",
     # Direct peer transport. Required only where the project publishes a
     # wheel, because it publishes no sdist: without a marker, pip on an
     # unsupported platform fails with "could not find a version", which

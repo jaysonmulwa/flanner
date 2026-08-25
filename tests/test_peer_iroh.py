@@ -8,6 +8,11 @@ claim about reachability, and a fake cannot disagree with that claim.
 
 That test skips when there is no route out, rather than failing. An
 offline laptop is not a broken build.
+
+The same courtesy is owed to a machine with no transport at all. `iroh`
+publishes no wheel for some platforms and may simply be missing from an
+incomplete install, and a contributor there should see three skips with a
+reason, not three failures that read as their change having broken sync.
 """
 
 import asyncio
@@ -23,6 +28,13 @@ from tests.test_peer import WORKSPACE, Device, a_stored_artifact, link
 # Defined here rather than imported. Importing a fixture by name binds it as
 # a module global and every test that takes it as an argument then reads as
 # a redefinition, which buries real warnings under noise.
+
+
+#: Anything that builds a real transport needs the library present.
+needs_iroh = pytest.mark.skipif(
+    not peer_iroh.available(),
+    reason="iroh is not installed here; peer sync falls back to an http address",
+)
 
 
 @pytest.fixture
@@ -220,6 +232,7 @@ def test_a_plan_crosses_between_two_devices_over_iroh(alice, bob, endpoints):
 # ----------------------------------------------------------------- relaying
 
 
+@needs_iroh
 def test_an_organizations_relay_is_added_to_the_defaults_not_swapped_for_them():
     """Replacing four regional relays with one machine is a worse fallback."""
     defaults = set(peer_iroh.relay_mode().relay_map().urls())
@@ -230,6 +243,7 @@ def test_an_organizations_relay_is_added_to_the_defaults_not_swapped_for_them():
     assert any("relay.example.com" in url for url in with_ours)
 
 
+@needs_iroh
 def test_no_configured_relay_means_the_transport_defaults():
     assert peer_iroh.relay_mode().relay_map().urls() == (
         peer_iroh.relay_mode("").relay_map().urls()
@@ -363,6 +377,7 @@ def test_no_selected_path_is_unknown_rather_than_a_guess():
     assert route.relayed is False
 
 
+@needs_iroh
 def test_a_fresh_transport_has_not_taken_a_route_yet(alice, bob):
     link(alice, bob)
     with alice.active():

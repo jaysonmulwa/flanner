@@ -281,7 +281,9 @@ def test_the_session_file_never_holds_the_device_private_key(home):
     identity.load_or_create_device_key()
     cache.save(a_session())
     assert "PRIVATE KEY" not in cache.session_path().read_text(encoding="utf-8")
-    assert os.path.exists(identity.device_key_path())
+    # The key lives in the OS keychain now, so its absence from the home is
+    # expected. What matters here is that it is still there to be loaded.
+    assert identity.device_id().startswith(identity.DEVICE_ID_PREFIX)
 
 
 def test_whoami_refresh_asks_even_when_the_entitlement_is_still_valid(home, monkeypatch):

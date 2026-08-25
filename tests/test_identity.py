@@ -8,6 +8,23 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from flanner import identity
 
 
+def _keyring_installed() -> bool:
+    try:
+        import keyring  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+#: The library, not a working backend: conftest supplies an in-memory one.
+#: Testing for a usable backend instead would skip these on headless CI,
+#: where the fake makes them perfectly runnable.
+needs_keychain = pytest.mark.skipif(
+    not _keyring_installed(),
+    reason="keyring is not installed here; identity falls back to its key file",
+)
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("FLANNER_HOME", str(tmp_path / "home"))
@@ -16,7 +33,6 @@ def home(tmp_path, monkeypatch):
 
 def test_key_is_created_once_and_reused(home):
     first = identity.load_or_create_device_key()
-    assert identity.device_key_path().exists()
     second = identity.load_or_create_device_key()
     assert identity.public_key_b64(first.public_key()) == identity.public_key_b64(
         second.public_key()
@@ -91,3 +107,55 @@ def test_corrupt_key_file_is_reported(home):
     identity.device_key_path().write_text("not a key", encoding="utf-8")
     with pytest.raises(ValueError):
         identity.load_or_create_device_key()
+
+
+@needs_keychain
+def test_a_new_key_goes_to_the_keychain_and_not_to_disk(home):
+    """The whole point of the move: no key material at rest in the home."""
+    identity.load_or_create_device_key()
+
+    assert not identity.device_key_path().exists()
+
+
+@needs_keychain
+def test_an_existing_key_file_is_adopted_and_then_removed(home):
+    """An install predating the keychain must not wake up as a new device.
+
+    The id is derived from the key, so generating a fresh one would make
+    this machine unrecognisable to every peer and to the control plane.
+    """
+    identity.device_key_path().parent.mkdir(parents=True, exist_ok=True)
+    original = Ed25519PrivateKey.generate()
+    identity._write_private_key(identity.device_key_path(), original)
+    before = identity.device_id()
+
+    adopted = identity.load_or_create_device_key()
+
+    assert identity.public_key_b64(adopted.public_key()) == identity.public_key_b64(
+        original.public_key()
+    )
+    assert identity.device_id() == before
+    assert not identity.device_key_path().exists()
+
+
+def test_a_keychain_that_cannot_hold_the_key_keeps_the_file(home, monkeypatch):
+    """A backend that accepts a write and loses it would cost this device
+    its identity, so the file is only removed once a read-back proves the
+    keychain really has it."""
+    monkeypatch.setattr(identity, "_store_keychain", lambda store, key: False)
+
+    identity.load_or_create_device_key()
+
+    assert identity.device_key_path().exists()
+
+
+def test_no_keychain_falls_back_to_the_file(home, monkeypatch):
+    """Headless Linux, containers and CI. Not a degraded mode."""
+    monkeypatch.setenv("FLANNER_NO_KEYCHAIN", "1")
+
+    first = identity.load_or_create_device_key()
+
+    assert identity.device_key_path().exists()
+    assert identity.public_key_b64(first.public_key()) == identity.public_key_b64(
+        identity.load_or_create_device_key().public_key()
+    )
