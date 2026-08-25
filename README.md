@@ -196,6 +196,8 @@ Decisions are recorded in [docs/adr/](docs/adr/), with more guides in [docs/](do
 
 An agent calls `get_plan_config` to learn where plans go, then `create_plan_file_tool` or `update_plan_file_tool` to write them. Flanner places the file in the project's plan directory, adds the header, and bumps the version. Files stay in `.plans/` (git-ignored), so they never land in a commit by accident.
 
+**Nothing is pruned, and nothing is erased.** Every version, comment and review decision is kept. The store is append-only, there is no cleanup command, and the Settings page shows what that costs in bytes so the choice is visible rather than assumed. Deletion follows from the same design: `flanner retire <plan>` asks every peer to stop showing and serving a plan, and `--restore` undoes it, but it is a claim other devices honour rather than an erasure. A teammate who was offline when you ran it keeps the content until they next sync, and anyone already holding the bytes keeps them. That is the strongest promise an append-only store spread across machines you do not control can honestly make, so it is the one made here.
+
 **Keeping the agent on the rails.** The MCP tools are the *how*; `flanner init` also installs two layers that make the agent actually use them. It writes a managed block into `CLAUDE.md` and `AGENTS.md` (guidance Claude Code and Codex read every session) plus a `flanner-plan` skill, so the agent knows to route plan docs through flanner. On top of that, a `guard-write` PreToolUse hook denies any raw write into the plan directory and points the agent back to `create_plan_file_tool`, so even if it ignores the guidance a plan cannot land as unmanaged markdown. The hook fails open and never blocks writes elsewhere.
 
 ## Roadmap

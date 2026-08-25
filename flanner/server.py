@@ -531,6 +531,13 @@ def get_plan_assurance_tool(plan_file_id: str) -> dict[str, Any]:
     the plan must not be implemented without resolving them; warnings are
     concerns to surface to the user rather than reasons to stop.
 
+    Read authorization alongside reviewed. "entitlement" means a signed
+    capability decided the review, so an approval is one. "local" means the
+    project has not joined a workspace and roles came from a map anyone
+    holding the machine can edit, so reviewed and accepted_artifact_id
+    record what somebody chose rather than what anyone was authorized to
+    choose. Do not cite a local approval as sign-off.
+
     Args:
         plan_file_id: UUID of the plan file (as string)
 

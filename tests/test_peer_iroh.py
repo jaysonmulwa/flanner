@@ -495,3 +495,39 @@ def test_every_declared_iroh_marker_matches_a_published_wheel():
     assert not required("darwin", "x86_64")
     assert not required("win32", "ARM64")
     assert not required("linux", "armv7l")
+
+    # `_missing_transport` branches on this set to tell a broken install
+    # apart from an unsupported machine. A platform added to the markers and
+    # not here would go back to being told its machine has no build.
+    for declared in peer_iroh._DECLARED_BUILDS:
+        assert required(*declared), f"{declared} is declared in code but has no marker"
+    for unsupported in (("darwin", "x86_64"), ("win32", "ARM64"), ("linux", "armv7l")):
+        assert unsupported not in peer_iroh._DECLARED_BUILDS
+
+
+def test_a_platform_we_ship_a_wheel_for_is_told_to_install_it(monkeypatch):
+    """An ImportError here means the install is incomplete, not the platform.
+
+    This is the failure the message used to get wrong, and getting it wrong
+    is expensive: it tells somebody their machine cannot do direct sync, so
+    they adopt the address fallback for good rather than running one
+    command.
+    """
+    monkeypatch.setattr(peer_iroh.sys, "platform", "win32")
+    monkeypatch.setattr(peer_iroh.platform, "machine", lambda: "AMD64")
+
+    message = peer_iroh._missing_transport()
+
+    assert "pip install iroh" in message
+    assert "publishes no build for" not in message
+
+
+def test_a_platform_with_no_wheel_is_still_told_to_use_an_address(monkeypatch):
+    """The other half. Here the fallback really is the answer, forever."""
+    monkeypatch.setattr(peer_iroh.sys, "platform", "linux")
+    monkeypatch.setattr(peer_iroh.platform, "machine", lambda: "armv7l")
+
+    message = peer_iroh._missing_transport()
+
+    assert "publishes no build for" in message
+    assert "pip install iroh" not in message

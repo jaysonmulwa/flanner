@@ -507,14 +507,26 @@ def _review_rows(session: Any) -> list[dict[str, Any]]:
     Plans nobody has proposed a change to are left out: a list of everything
     would bury the handful that need a decision.
     """
+    from . import authz
     from . import review as review_module
     from .assurance import load_comments
 
     rows: list[dict[str, Any]] = []
     for project in db_list_projects(session):
+        # Resolved once per project and passed down, so the badge and the
+        # state it labels come from the same answer. Letting `status`
+        # resolve it again would put two calls behind one row, and a page
+        # that disagreed with itself about who may decide is worse than a
+        # page that does not say.
+        authorization = authz.resolve(project)
         for plan_file in _visible_plans(session, project.id):
             try:
-                state = review_module.status(session, plan_file=plan_file, project=project)
+                state = review_module.status(
+                    session,
+                    plan_file=plan_file,
+                    project=project,
+                    roles=authorization.roles,
+                )
             except Exception:  # noqa: BLE001 - one bad plan must not blank the page
                 logger.warning("could not project review state for %s", plan_file.id)
                 continue
@@ -542,6 +554,13 @@ def _review_rows(session: Any) -> list[dict[str, Any]]:
                     # would mean rendering every plan in the database to
                     # draw one list.
                     "comments": len(comments),
+                    # Solo projects run the workflow against a local role
+                    # map anyone can edit, so a decision here is a rehearsal
+                    # rather than an authorization. The page has to say
+                    # which one it is showing; a reader cannot tell from an
+                    # accepted baseline alone.
+                    "enforced": authorization.enforced,
+                    "advisory_reason": authorization.reason,
                 }
             )
     rows.sort(key=lambda r: (not r["conflicted"], -len(r["pending"]), -r["comments"]))

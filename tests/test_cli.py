@@ -1143,6 +1143,24 @@ def test_pack_refuses_a_version_that_does_not_exist(runner, written_plan, git_re
     assert "does not exist" in result.output
 
 
+def test_deciding_in_a_solo_project_says_the_decision_binds_nobody(runner, written_plan):
+    """`review status` said this already; the moment of deciding did not.
+
+    Somebody can approve a plan without ever running status, and "Recorded
+    approve" on its own reads exactly like an authorization.
+    """
+    runner.invoke(cli, ["review", "propose", "written", "--project", "proj"])
+
+    result = runner.invoke(cli, ["review", "decide", "written", "approve", "--project", "proj"])
+
+    assert result.exit_code == 0, result.output
+    assert "Recorded approve" in result.output
+    assert "advisory" in result.output
+    # The why, not just the word. Taken from the resolution, so this also
+    # fails if the two call sites ever start wording it differently.
+    assert "has not joined a workspace" in result.output
+
+
 def _review_file(tmp_path, plan="written", version=1, notes=None):
     body = {
         "packet": {"plan": plan, "version": version, "project": "proj"},

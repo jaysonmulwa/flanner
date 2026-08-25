@@ -1053,6 +1053,22 @@ _REVIEW_STYLES = {
 }
 
 
+def _note_authorization(authorization: Any) -> None:
+    """Say which regime a review answer came from, wherever one is given.
+
+    Both the status view and the moment of deciding need this, and they must
+    not word it differently: somebody who saw one and then the other would
+    reasonably read the difference as meaning something.
+
+    The reason comes from the resolution rather than being restated here, so
+    there is one sentence to keep true instead of two.
+    """
+    if not authorization.enforced:
+        console.print(f"review here is advisory: {authorization.reason}", style="dim")
+    elif not authorization.roles:
+        console.print(f"WARN cannot authorize review: {authorization.reason}", style="yellow")
+
+
 @cli.group()
 def review() -> None:
     """Propose plans for review and record decisions"""
@@ -1106,6 +1122,7 @@ def review_decide(
     plan_name: str, decision: str, proposal: str | None, project: str | None, actor: str | None
 ) -> None:
     """Approve, reject, request changes on, or withdraw a proposal"""
+    from . import authz
     from .review import decide, status
 
     session = _require_session()
@@ -1143,6 +1160,12 @@ def review_decide(
         console.print("  the accepted baseline now points at this version", style="green")
     else:
         console.print(f"  baseline unchanged: {result.reason}", style="yellow")
+
+    # Said here and not only in `review status`, because this is the moment
+    # that reads as an authorization. Somebody can approve without ever
+    # having run status, and "Recorded approve" on its own does not
+    # distinguish a decision that binds from one that is a rehearsal.
+    _note_authorization(authz.resolve(proj))
 
 
 def _print_comments(session: Session, plan_file: Any) -> None:
@@ -1239,13 +1262,7 @@ def review_status(plan_name: str, project: str | None) -> None:
     proj, plan_file = _resolve_plan(session, project, plan_name)
     state = status(session, plan_file=plan_file, project=proj)
 
-    authorization = authz.resolve(proj)
-    if not authorization.enforced:
-        console.print(
-            "review here is advisory: this project has not joined a workspace", style="dim"
-        )
-    elif not authorization.roles:
-        console.print(f"WARN cannot authorize review: {authorization.reason}", style="yellow")
+    _note_authorization(authz.resolve(proj))
 
     if state.conflicted:
         console.print(

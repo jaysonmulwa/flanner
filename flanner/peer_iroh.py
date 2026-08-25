@@ -35,6 +35,7 @@ import json
 import os
 import platform
 import struct
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -128,6 +129,47 @@ class _Loop:
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
 
+#: The platforms ``pyproject.toml`` declares an iroh wheel for, as
+#: ``(sys.platform, platform.machine())``. It has to stay in step with the
+#: markers there, and with the platform list in the README.
+_DECLARED_BUILDS = frozenset(
+    {
+        ("darwin", "arm64"),
+        ("linux", "x86_64"),
+        ("linux", "aarch64"),
+        ("win32", "AMD64"),
+    }
+)
+
+
+def _missing_transport() -> str:
+    """Why the transport is not here, and what will actually fix it.
+
+    Two refusals, because there are two causes with two different fixes. On
+    a platform with no wheel the answer is an address, and it always will
+    be. On one of the four we declare, an ImportError means the install is
+    incomplete instead, and the answer is to finish it.
+
+    Reporting the first for the second is the expensive mistake: it tells
+    somebody their machine cannot do this, so they adopt the workaround
+    permanently and never discover that one command would have fixed it.
+    """
+    fallback = (
+        "Sync over an address instead: 'flanner peer serve --http' on the "
+        "far side, then 'flanner peer pull <http-address>'."
+    )
+    if (sys.platform, platform.machine()) in _DECLARED_BUILDS:
+        return (
+            f"the iroh transport publishes a build for {platform.system()} "
+            f"{platform.machine()} but it is not installed here, so direct "
+            "peer sync is unavailable. Install it with 'pip install iroh'. " + fallback
+        )
+    return (
+        f"direct peer sync is unavailable on {platform.system()} "
+        f"{platform.machine()}, which the transport publishes no build for. " + fallback
+    )
+
+
 def _iroh() -> Any:
     """The transport library, or a refusal that says what to do instead.
 
@@ -139,13 +181,7 @@ def _iroh() -> Any:
     try:
         import iroh
     except ImportError:  # pragma: no cover - depends on the platform
-        raise peer.PeerError(
-            f"direct peer sync is unavailable on {platform.system()} "
-            f"{platform.machine()}, which the transport publishes no build for. "
-            "Sync over an address instead: 'flanner peer serve --http' on the "
-            "far side, then 'flanner peer pull <http-address>'.",
-            status=503,
-        ) from None
+        raise peer.PeerError(_missing_transport(), status=503) from None
     return iroh
 
 

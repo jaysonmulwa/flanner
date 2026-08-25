@@ -506,6 +506,24 @@ def test_the_review_page_counts_outside_notes(client, plan_id):
     _import_outside_review(plan_id)
     body = client.get("/review").text
     assert "outside review" in body
+
+
+def test_the_review_page_says_when_a_decision_would_bind_nobody(client, plan_id):
+    """A solo project projects review against a role map anyone can edit.
+
+    The page draws the same states either way, so without this a reader
+    cannot tell a rehearsal from an authorization. The reason travels too:
+    "advisory" without a why is just a word.
+    """
+    _import_outside_review(plan_id)
+
+    body = client.get("/review").text
+
+    # The pill, not the word: the footnote below the table explains what
+    # "advisory" means and would satisfy a bare substring check even with an
+    # empty table.
+    assert ">advisory</span>" in body
+    assert "has not joined a workspace" in body
     assert "+1" in body
 
 

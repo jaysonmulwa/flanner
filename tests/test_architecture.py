@@ -128,6 +128,11 @@ ALLOWED = {
         # Reads the key file this machine generated, so the Mesh page can
         # name the device even before it has ever joined a team.
         "identity",
+        # The Review page has to say whether a decision would be enforced or
+        # is only a rehearsal. That is one question with one answer, and it
+        # is answered here, so the page asks rather than guessing from the
+        # role map it was handed.
+        "authz",
     },
     "agent_hooks": FOUNDATION | {"database"},
     "plan_ops": FOUNDATION | {"database", "storage", "artifacts"},
