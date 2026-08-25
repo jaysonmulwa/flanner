@@ -261,8 +261,9 @@ MAX_RENDER_CHARS = 1_000_000
 PAGE_SIZE = 50
 
 # Rendered-HTML cache keyed by content hash; versions are immutable so a
-# hash hit can never be stale. ponytail: in-process OrderedDict LRU is
-# plenty for a single-user local tool.
+# hash hit can never be stale. The in-process OrderedDict LRU is the decided
+# size rather than a placeholder for a bigger one: a shared or persistent
+# cache only pays across processes, and a local single-user UI has none.
 _RENDER_CACHE_MAX = 64
 _render_cache: OrderedDict[str, str] = OrderedDict()
 

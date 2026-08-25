@@ -45,7 +45,13 @@ from .storage import save_plan_file_with_frontmatter
 from .utils import generate_file_name, hash_content, utcnow
 
 # ponytail: one coarse lock per plan directory, file-based so it works across
-# unrelated processes on every OS. Per-plan locks if contention ever matters.
+# unrelated processes on every OS.
+#
+# Per-plan locks if contention ever matters, and the split is mechanical
+# rather than a design question: all three holders below act on one named
+# plan, so the key already exists. What it costs is a lock file per plan in
+# a guarded directory, each with its own staleness window. Nothing is
+# waiting on this lock today, so that trade has no upside yet.
 _LOCK_NAME = ".flanner.lock"
 _LOCK_TIMEOUT_S = 10.0
 _LOCK_STALE_S = 30.0
