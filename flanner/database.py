@@ -440,7 +440,10 @@ def init_database(db_path: str | None = None) -> None:
     # NullPool: server tools create short-lived sessions without closing them;
     # a bounded QueuePool exhausts after ~15 rapid calls. Local SQLite connections
     # are cheap, so open/close per session is the safer default.
-    # ponytail: revisit with a session_scope() contextmanager if perf matters
+    # ponytail: revisit with a session_scope() contextmanager if perf matters.
+    # In that order. This is a workaround for sessions that are never closed,
+    # not a tuning choice, so swapping the pool without fixing the leak first
+    # reintroduces exhaustion after ~15 rapid calls.
     _engine = create_engine(f"sqlite:///{db_path}", echo=False, poolclass=NullPool)
 
     # Create tables (fresh) or run pending migrations (existing), then stamp.
