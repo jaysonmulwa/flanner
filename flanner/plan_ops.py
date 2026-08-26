@@ -44,15 +44,11 @@ from .frontmatter import create_plan_file_content, generate_frontmatter, read_ma
 from .storage import save_plan_file_with_frontmatter
 from .utils import generate_file_name, hash_content, utcnow
 
-# ponytail: one coarse lock per plan directory, file-based so it works across
-# unrelated processes on every OS.
-#
-# Per-plan locks if contention ever matters, and the split is mechanical
-# rather than a design question: all three holders below act on one named
-# plan, so the key already exists. What it costs is a lock file per plan in
-# a guarded directory, each with its own staleness window. Nothing is
-# waiting on this lock today, so that trade has no upside yet.
-_LOCK_NAME = ".flanner.lock"
+# One file-based lock per plan, so it works across unrelated processes on
+# every OS. Was one lock per directory, which made two writers on different
+# plans in the same project wait for each other for no reason.
+_LOCK_PREFIX = ".flanner-"
+_LOCK_SUFFIX = ".lock"
 _LOCK_TIMEOUT_S = 10.0
 _LOCK_STALE_S = 30.0
 _LOCK_RETRY_S = 0.05
@@ -84,16 +80,28 @@ def _parent_artifact_ids(session: Session, plan_file: PlanFileModel) -> tuple[st
 
 
 @contextlib.contextmanager
-def plan_write_lock(project_root: str, plan_directory: str) -> Iterator[None]:
-    """Cross-process write lock for a project's plan directory.
+def plan_write_lock(project_root: str, plan_directory: str, plan_id: Any) -> Iterator[None]:
+    """Cross-process write lock for one plan.
+
+    Every holder acts on a single named plan, so the directory was never the
+    thing needing protection. Name assignment is not covered here and does
+    not need to be: uniqueness is a database constraint, and the plan row
+    exists before any of these locks is taken.
+
+    Keyed by id rather than name. Names are user-supplied and would need
+    sanitising to be a filename, and a rename would move a plan's lock out
+    from under a live holder.
 
     Lock file creation with O_EXCL is atomic on all supported platforms. A
     lock file older than ``_LOCK_STALE_S`` is treated as abandoned (crashed
-    holder) and taken over.
+    holder) and taken over. The cost of the split is that a crash now
+    strands one small file per plan rather than one per project, each
+    cleared by the next writer of that plan. Nothing scans for them:
+    `reconcile` globs `*.md` and the write guard only inspects `.md`.
     """
     lock_dir = Path(project_root) / plan_directory
     lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = lock_dir / _LOCK_NAME
+    lock_path = lock_dir / f"{_LOCK_PREFIX}{plan_id}{_LOCK_SUFFIX}"
     deadline = time.monotonic() + _LOCK_TIMEOUT_S
     while True:
         try:
@@ -172,7 +180,7 @@ def record_new_version(
     if root is None:
         raise DatabaseError(f"Project '{project.name}' has no project_root configured")
 
-    with plan_write_lock(root, project.plan_directory):
+    with plan_write_lock(root, project.plan_directory, plan_file.id):
         session.refresh(plan_file)
         next_version = plan_file.current_version + 1
         plan_dir = Path(root) / project.plan_directory
@@ -218,7 +226,7 @@ def write_version(
     if root is None:
         # Callers guard this and return a friendly message; belt-and-suspenders.
         raise DatabaseError(f"Project '{project.name}' has no project_root configured")
-    with plan_write_lock(root, project.plan_directory):
+    with plan_write_lock(root, project.plan_directory, plan_file.id):
         return _write_version_unlocked(
             session,
             project=project,
@@ -378,7 +386,7 @@ def materialize_version(
     except (ValueError, TypeError):
         return MaterializeResult(reason="plan file has no usable plan_file_id")
 
-    with plan_write_lock(root, project.plan_directory):
+    with plan_write_lock(root, project.plan_directory, plan_uuid):
         existing = (
             session.query(VersionModel).filter_by(artifact_id=artifact_id).first()
             if artifact_id
