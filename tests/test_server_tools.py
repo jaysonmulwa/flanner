@@ -53,6 +53,36 @@ def plan(project):
     return result
 
 
+def _live_sessions():
+    import gc
+
+    from sqlalchemy.orm import Session as SASession
+
+    gc.collect()
+    return sum(1 for obj in gc.get_objects() if isinstance(obj, SASession))
+
+
+def test_sessions_do_not_accumulate_across_tool_calls(project):
+    """The property the pool choice rests on.
+
+    Tools call `get_session()` and never close it, which is safe only
+    because the session is dropped when the tool returns and refcounting
+    closes it there. That is an assumption about the interpreter, so it is
+    checked here against the real tool path rather than trusted.
+
+    What this would catch is a session stored somewhere that outlives the
+    call — a cache, a module global, a closure. That is the change that
+    would make NullPool a workaround again instead of a decision.
+    """
+    list_plan_files_tool(project["id"])  # warm any lazily built state
+    before = _live_sessions()
+
+    for _ in range(20):
+        list_plan_files_tool(project["id"])
+
+    assert _live_sessions() <= before
+
+
 def test_create_plan_in_subdirectory(project):
     import os
 

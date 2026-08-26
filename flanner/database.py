@@ -440,23 +440,22 @@ def init_database(db_path: str | None = None) -> None:
     # NullPool: server tools create short-lived sessions without closing them;
     # a bounded QueuePool exhausts after ~15 rapid calls. Local SQLite connections
     # are cheap, so open/close per session is the safer default.
-    # ponytail: a session_scope() contextmanager, then the pool. In that
-    # order, because this is a workaround for sessions that are never closed
-    # rather than a tuning choice: swapping the pool first brings the
-    # exhaustion straight back.
+    # NullPool because callers do not close sessions explicitly, and a
+    # bounded QueuePool would exhaust after ~15 rapid calls. Local SQLite
+    # connections are cheap, so open/close per session is the safer default.
     #
-    # Two things worth knowing before anyone starts. It is ~70 call sites,
-    # and they are not one refactor: cli and services take a contextmanager,
-    # while the 24 in web are async route handlers that want FastAPI's
-    # Depends instead.
+    # This was carried as debt on the belief that sessions leak. They do
+    # not: a session is dropped when the call that made it returns, and
+    # refcounting closes it there. Measured, not assumed — 0 of 30 survive
+    # a create-use-drop cycle, and `test_sessions_do_not_accumulate_across_
+    # tool_calls` pins it against the real tool path. The one place a
+    # session outlives a call is `peer.serve_request`, which already holds
+    # it in a `with` block; `Session` is its own context manager.
     #
-    # And exhaustion is not the live risk — NullPool is exactly what stops
-    # it. The one that would justify the work is a session holding a read
-    # transaction open until garbage collection, which under SQLite can
-    # block a writer. That is a mechanism, not an observation: no such
-    # failure has been seen here. If one appears it will read as an
-    # intermittent "database is locked", most likely where the daemon's
-    # catch-up pull overlaps a web request.
+    # So the pool is a decision rather than a deferral. What would reopen
+    # it is an interpreter without refcounting — none is supported, the
+    # classifiers are CPython 3.10 to 3.13 — or a session stored somewhere
+    # that outlives a call, which is what the test above would catch.
     _engine = create_engine(f"sqlite:///{db_path}", echo=False, poolclass=NullPool)
 
     # Create tables (fresh) or run pending migrations (existing), then stamp.
