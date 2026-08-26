@@ -6,6 +6,18 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-22
+
+### Fixed
+
+- `flanner.__version__` reported `0.7.1`, two releases behind. It was a
+  literal that had to be remembered on release, and it had not been. It
+  reaches the web UI footer and the settings page, so it was wrong on
+  screen rather than merely wrong in principle. It is now read from
+  installed package metadata, leaving one source of truth, and two tests
+  fail if anybody types it out again.
+
+
 ## [0.9.0] - 2026-08-22
 
 Team sync. Everything below the local plan manager is unchanged: flanner

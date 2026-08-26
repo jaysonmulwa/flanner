@@ -246,3 +246,31 @@ def test_no_read_path_can_reach_the_network():
             f"{module} can reach the network through account; "
             "a read command would make an HTTP call"
         )
+
+
+def test_the_version_attribute_matches_the_installed_metadata():
+    """`flanner.__version__` was hardcoded and drifted two releases behind
+    `pyproject.toml`. It reaches the web UI footer and the settings page, so
+    it was wrong on screen, not merely wrong in principle.
+
+    Reading it from installed metadata leaves one source of truth. This
+    test fails if anybody hardcodes it again.
+    """
+    import importlib.metadata
+
+    import flanner
+
+    assert flanner.__version__ == importlib.metadata.version("flanner")
+
+
+def test_the_version_is_derived_rather_than_typed():
+    """The specific mistake: a literal somebody has to remember on release.
+
+    Stated positively. Forbidding the literal outright would also forbid the
+    fallback sentinel, which is the one assignment that should stay — and a
+    guard that fires on correct code gets deleted rather than heeded.
+    """
+    source = (PACKAGE / "__init__.py").read_text(encoding="utf-8")
+    assert (
+        "_installed_version(" in source
+    ), "__version__ is no longer read from package metadata; it will drift again"
