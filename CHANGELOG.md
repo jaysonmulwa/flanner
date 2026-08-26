@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-22
+
 Team sync. Everything below the local plan manager is unchanged: flanner
 still runs with no account, no network and no daemon, and everything new
 here is opt-in. Plan content is never uploaded — the hosted control plane
@@ -51,6 +53,22 @@ holds accounts, devices and access, and nothing else.
 - **A local daemon** with authenticated IPC, atomic writes and
   cross-process locking, so two MCP clients cannot corrupt shared state.
 - **Provider-neutral mesh seam** and a portability conformance suite.
+
+- **The device key moves into the OS keychain.** It falls back to the file
+  for an existing install, and generates one only when neither has it.
+  Machines with no keychain skip rather than fail.
+- **Locks are per plan, not per project.** Two people editing different
+  plans in the same project no longer wait for each other. Keyed by plan id
+  rather than name, so a rename cannot move a lock out from under whoever
+  is holding it.
+- **A citation that drifted is told apart from one that was never there.**
+  The first is a plan going stale; the second is a reference to something
+  outside the repository, and it is not evidence of anything.
+- **A solo project now says when an approval binds nobody.** It already
+  warned when a joined project could not authorise at all; this is the
+  mirror of that check.
+- Refusals say which failures belong to the platform and which are
+  decisions, instead of wording the same fact two different ways.
 
 ### Changed
 
