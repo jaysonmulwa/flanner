@@ -182,6 +182,18 @@ def tally(counts: dict[str, int], *, noun: str = "plan") -> Text:
     return text
 
 
+def size(count: int) -> str:
+    """Bytes as something a person reads, at one decimal place."""
+    if count < 1024:
+        return f"{count} B"
+    value = float(count)
+    for unit in ("KB", "MB", "GB"):
+        value /= 1024
+        if value < 1024 or unit == "GB":
+            return f"{value:.1f} {unit}"
+    return f"{count} B"
+
+
 def hint(message: str) -> None:
     """The next command worth running, offered rather than insisted on."""
     console.print(Text.from_markup(f"[muted]{message}[/muted]"))

@@ -63,6 +63,23 @@
 <div class="plan-layout">
 
   <div class="plan-main">
+    {#
+      A retired plan still renders: a saved link should explain itself
+      rather than 404, and pretending the page is gone would be a stronger
+      claim than the one actually made. The wording avoids "deleted" for
+      the same reason the command does.
+    #}
+    {% if retirement %}
+    <div class="notice bad" style="margin-bottom:14px">
+      <b>This plan is retired.</b>
+      It is hidden from every listing and no longer sent to peers.
+      {% if retirement.reason %} Reason given: {{ retirement.reason }}.{% endif %}
+      {% if retirement.by %} Claimed by {{ retirement.by }}.{% endif %}
+      Nothing was erased — every version is still here, and a teammate who
+      has not synced since still sees it. Bring it back with
+      <code class="mono">flanner retire {{ plan_file.name }} --restore</code>.
+    </div>
+    {% endif %}
     <div class="plan-head">
       <h2 class="title">{{ plan_file.name }}.md</h2>
       {% if freshness %}

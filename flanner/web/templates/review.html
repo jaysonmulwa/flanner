@@ -42,6 +42,15 @@
           {% elif row.outside %}<span class="pill pill-quiet">outside review</span>
           {% elif row.comments %}<span class="pill pill-quiet">commented</span>
           {% else %}<span class="pill pill-fresh">settled</span>{% endif %}
+          {#
+            Whether a decision here would bind anybody. Shown next to the
+            state rather than instead of it, because the two are different
+            facts: what the review says, and whether it is an authorization.
+          #}
+          {% if not row.enforced %}
+          <span class="pill pill-quiet"
+                title="{{ row.advisory_reason or 'roles here are local to this machine' }}">advisory</span>
+          {% endif %}
         </span>
       </div>
       {% endfor %}
@@ -91,6 +100,15 @@
     outside the team; those are unsigned, so they are recorded as received
     rather than authored. Neither kind moves a plan's accepted baseline —
     pointing at a paragraph is not the same as deciding about it.
+  </div>
+
+  <div class="footnote">
+    <span class="i" aria-hidden="true">i</span>
+    <b>advisory</b> marks a project whose roles are local to this machine.
+    Review still runs and every decision is still signed, but the role map is
+    editable by whoever holds this device, so accepting a plan <i>records</i> a
+    decision rather than authorizing one. Roles become enforced once the
+    project joins a workspace and this device holds a valid entitlement.
   </div>
 
   <div class="footnote">

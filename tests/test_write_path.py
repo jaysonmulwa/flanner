@@ -100,22 +100,42 @@ def test_never_reuses_version_number_taken_on_disk(plan):
     assert stray.read_text(encoding="utf-8") == "do not overwrite\n"
 
 
+def _lock_path(project, plan_id):
+    return _plan_dir(project) / f"{plan_ops._LOCK_PREFIX}{plan_id}{plan_ops._LOCK_SUFFIX}"
+
+
 def test_lock_contention_times_out(plan, monkeypatch):
+    """Two writers on the same plan still exclude each other."""
     session, project, plan_file = plan
     monkeypatch.setattr(plan_ops, "_LOCK_TIMEOUT_S", 0.3)
-    with plan_write_lock(project.project_root, project.plan_directory):
+    with plan_write_lock(project.project_root, project.plan_directory, plan_file.id):
         with pytest.raises(DatabaseError, match="write lock"):
-            with plan_write_lock(project.project_root, project.plan_directory):
+            with plan_write_lock(project.project_root, project.plan_directory, plan_file.id):
                 pass
+
+
+def test_two_plans_in_one_project_do_not_wait_for_each_other(plan, monkeypatch):
+    """The reason the lock is per plan rather than per directory.
+
+    Under the old directory-wide lock this raised: the second writer waited
+    on the first and timed out, despite touching a different plan.
+    """
+    session, project, plan_file = plan
+    monkeypatch.setattr(plan_ops, "_LOCK_TIMEOUT_S", 0.3)
+    other = create_plan_file(session, project_id=project.id, name="other")
+
+    with plan_write_lock(project.project_root, project.plan_directory, plan_file.id):
+        with plan_write_lock(project.project_root, project.plan_directory, other.id):
+            pass  # no timeout
 
 
 def test_stale_lock_is_taken_over(plan):
     session, project, plan_file = plan
-    lock_path = _plan_dir(project) / ".flanner.lock"
+    lock_path = _lock_path(project, plan_file.id)
     lock_path.write_text("999999", encoding="utf-8")
     old = time.time() - 120
     os.utime(lock_path, (old, old))
     # Acquires despite the existing (stale) lock file
-    with plan_write_lock(project.project_root, project.plan_directory):
+    with plan_write_lock(project.project_root, project.plan_directory, plan_file.id):
         assert lock_path.exists()
     assert not lock_path.exists()

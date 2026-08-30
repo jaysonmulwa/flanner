@@ -142,6 +142,23 @@ a:hover { color: var(--accent-hi); }
 .pane.narrow { max-width: 700px; }
 .pane.centred { align-items: center; }
 
+/* A standing statement about the page, as opposed to `.alert`, which is
+   feedback about something you just did and can be dismissed. The rule was
+   missing from this stylesheet while two templates already used the class,
+   so those blocks rendered as unstyled text. */
+.notice {
+  border: 1px solid var(--border); border-left-width: 3px;
+  border-radius: 10px; padding: 12px 14px; font-size: 13px; line-height: 1.55;
+  background: var(--card); color: var(--text-2);
+}
+.notice p { margin: 0 0 8px; }
+.notice p:last-child { margin-bottom: 0; }
+.notice b, .notice strong { color: var(--text); }
+.notice code { overflow-wrap: anywhere; }
+.notice.good { border-left-color: var(--fresh); background: var(--fresh-bg); }
+.notice.bad  { border-left-color: var(--stale); background: var(--stale-bg); }
+.notice.info { border-left-color: var(--suspect); background: var(--suspect-bg); }
+
 /* ------------------------------------------------------------ site footer */
 
 /* Sits below the content rather than pinned: on a short page it follows the

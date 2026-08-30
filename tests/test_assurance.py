@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -33,6 +34,34 @@ def project(db, tmp_path, monkeypatch):
     )
     proj = create_project(session, name="p", project_root=str(root), auto_gitignore=False)
     return session, proj
+
+
+_LEGACY = "def gone_function():\n    pass\n"
+
+
+def drift(project):
+    """Add a symbol, then remove it, so citing it is real drift.
+
+    `gone_function` used to be enough on its own, until freshness learned
+    to tell a deleted citation from one that was never here. A name that
+    never existed is an env var or another repo's file, not evidence of a
+    plan falling behind.
+    """
+    _session, proj = project
+    root = Path(proj.project_root)
+    (root / "legacy.py").write_text(_LEGACY, encoding="utf-8")
+    _git_commit(root, "add legacy")
+    (root / "legacy.py").unlink()
+    _git_commit(root, "drop legacy")
+
+
+def _git_commit(root, message):
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message],
+        cwd=root,
+        check=True,
+    )
 
 
 def make_plan(project, content="Uses `src.py` and `rotate_tokens`.\n"):
@@ -104,6 +133,7 @@ def test_evidence_names_the_device_that_produced_it(project):
 
 def test_a_stale_plan_warns_by_default(project):
     session, proj = project
+    drift(project)
     plan_file, _ = make_plan(project, content="Uses `gone_function` which no longer exists.\n")
 
     result = assurance.assess(session, project=proj, plan_file=plan_file)
@@ -114,6 +144,7 @@ def test_a_stale_plan_warns_by_default(project):
 
 def test_a_workspace_can_choose_to_block_stale_plans(project):
     session, proj = project
+    drift(project)
     plan_file, _ = make_plan(project, content="Uses `gone_function` which no longer exists.\n")
 
     strict = Policy(policy_id="strict-v1", stale_plans=BLOCK)
@@ -135,12 +166,10 @@ def test_a_workspace_can_require_review(project):
 # --- review history read back from stored artifacts ---
 
 
-def test_an_approved_plan_reports_its_accepted_baseline(project):
-    session, proj = project
-    plan_file, version = make_plan(project)
+def approve(session, proj, plan_file, version):
+    """Record a full approval: proposal, decision, accepted head."""
     ws = workspace_id_for(proj)
     pid = str(plan_file.id)
-
     proposal = workflow.make_proposal(
         workspace_id=ws,
         plan_file_id=pid,
@@ -166,11 +195,41 @@ def test_an_approved_plan_reports_its_accepted_baseline(project):
     for event in (proposal, decision, accepted):
         store(session, event, pid)
 
+
+def test_an_approved_plan_reports_its_accepted_baseline(project):
+    session, proj = project
+    plan_file, version = make_plan(project)
+
+    approve(session, proj, plan_file, version)
+
     result = assurance.assess(session, project=proj, plan_file=plan_file, roles=ROLES)
     assert result.reviewed is True
     assert result.accepted_artifact_id == version.artifact_id
     assert result.safe_to_implement is True
     assert not any("no approval" in w for w in result.warnings)
+
+
+def test_an_approval_under_local_roles_says_it_authorizes_nothing(project):
+    """The verdict that misleads by looking settled.
+
+    A solo project projects review against a role map anyone holding the
+    machine can edit, so `reviewed` is true and binds nobody. An agent
+    reading that field alone would cite it as sign-off, which is the one
+    thing it is not.
+    """
+    session, proj = project
+    plan_file, version = make_plan(project)
+
+    approve(session, proj, plan_file, version)
+
+    result = assurance.assess(session, project=proj, plan_file=plan_file)
+
+    assert result.reviewed is True
+    assert result.authorization == "local"
+    assert any("authorizes nothing" in w for w in result.warnings)
+    # Exclusive with its opposite by construction: that one fires when
+    # nothing was approved, this one when something was.
+    assert not any("no approval recorded" in w for w in result.warnings)
 
 
 def test_a_contested_baseline_always_blocks(project):

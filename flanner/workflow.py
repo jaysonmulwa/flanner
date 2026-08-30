@@ -119,6 +119,9 @@ DEFAULT_POLICY = Policy()
 MAY_COMMENT = frozenset({COMMENTER, EDITOR, MAINTAINER})
 MAY_PROPOSE = frozenset({EDITOR, MAINTAINER})
 MAY_REVIEW = frozenset({MAINTAINER})
+#: Retiring a plan hides it for everyone who honours the claim, so it sits
+#: with the decision-makers rather than with the editors.
+MAY_RETIRE = frozenset({MAINTAINER})
 _MAY_AUTHOR = MAY_PROPOSE
 _MAY_DECIDE = MAY_REVIEW
 
@@ -191,6 +194,38 @@ def make_comment(
     }
     return _sign_event(
         artifacts.COMMENT,
+        workspace_id,
+        payload,
+        plan_file_id=plan_file_id,
+        actor_user_id=actor_user_id,
+        **kw,
+    )
+
+
+def make_tombstone(
+    *,
+    workspace_id: str,
+    plan_file_id: str,
+    reason: str = "",
+    restored: bool = False,
+    actor_user_id: str | None = None,
+    **kw: Any,
+) -> Event:
+    """Ask peers to stop showing a plan, or to start showing it again.
+
+    Deliberately not called a deletion. Nothing is erased: the artifacts
+    remain, their signatures still verify, and a device that was offline
+    when this was signed holds the content either way. What this carries is
+    a claim, and every honest thing the UI says about it has to be phrased
+    that way.
+
+    Reversal is another tombstone with ``restored`` set, rather than a
+    second artifact type or a mutation of the first. Append-only stores do
+    not take things back; they record what happened next.
+    """
+    payload = {"reason": reason.strip(), "restored": restored}
+    return _sign_event(
+        artifacts.PLAN_TOMBSTONE,
         workspace_id,
         payload,
         plan_file_id=plan_file_id,

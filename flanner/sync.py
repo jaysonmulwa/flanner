@@ -32,6 +32,18 @@ from .frontmatter import read_managed
 
 PROTOCOL_VERSION = 1
 
+#: How a refusal for an author we hold no key for begins. A constant because
+#: the push path has to tell this failure apart from every other one — it is
+#: the only kind a keyring refresh could fix — and matching on a sentence
+#: someone might later reword is not a way to decide that.
+UNKNOWN_AUTHOR = "no known key for device"
+
+
+def is_unknown_author(verdict: Any) -> bool:
+    """Whether this refusal might be fixed by learning a new device key."""
+    return not verdict and str(verdict.reason or "").startswith(UNKNOWN_AUTHOR)
+
+
 # A single artifact payload is bounded before anything is allocated for it,
 # so an oversized or decompression-bomb response is refused rather than
 # absorbed (PRD §14.4).
@@ -59,6 +71,14 @@ MAX_PUSH_BYTES = 16 * 1024 * 1024
 # cannot lock out the rest of the team.
 PUSH_WINDOW = 60.0
 MAX_PUSHES_PER_WINDOW = 30
+
+# How long to wait between keyring refreshes, across all peers. A push from
+# an author we do not know is the one refusal a refresh could fix, but the
+# party asking is remote: without a floor, fifty artifacts signed by fifty
+# invented device ids would be fifty calls to the control plane. One refresh
+# serves every unknown author at once, because the keyring is per
+# organisation and not per device.
+KEYRING_COOLDOWN = 300.0
 
 
 @dataclass(frozen=True)
@@ -96,9 +116,32 @@ class Manifest:
             raise ValueError(f"Malformed manifest: {e}") from None
 
 
-def build_manifest(session: Session, workspace_id: str) -> Manifest:
-    """Describe what this device holds for a workspace."""
-    held = [a for a in list_artifacts(session) if a.workspace_id == workspace_id]
+def build_manifest(
+    session: Session, workspace_id: str, *, hidden: frozenset[str] | set[str] = frozenset()
+) -> Manifest:
+    """Describe what this device holds for a workspace.
+
+    ``hidden`` names plans claimed as retired. Their artifacts are left out
+    of a manifest *sent to a peer*, so the peer never asks for something it
+    would only be refused — and refusing after offering would make every
+    sync re-request the same ids forever.
+
+    The tombstones themselves are never hidden. They are how a peer learns
+    the claim exists at all, and withholding them would mean the retirement
+    stopped at this device.
+
+    Never pass ``hidden`` when describing our own catalog to ourselves: the
+    result feeds "what am I missing", and hiding our own artifacts there
+    would have us fetch them back from a peer.
+    """
+    held = [
+        a
+        for a in list_artifacts(session)
+        if a.workspace_id == workspace_id
+        and not (
+            hidden and a.plan_file_id in hidden and a.artifact_type != artifacts.PLAN_TOMBSTONE
+        )
+    ]
     graph: dict[str, tuple[str, ...]] = {}
     for artifact in held:
         graph[artifact.artifact_id] = _parents_of(artifact)
@@ -198,7 +241,7 @@ def ingest_artifact(
         # knows there is something to try.
         return artifacts.Verdict(
             False,
-            f"no known key for device {artifact.actor_device_id}"
+            f"{UNKNOWN_AUTHOR} {artifact.actor_device_id}"
             " (sign in again if this is a new teammate)",
         )
 

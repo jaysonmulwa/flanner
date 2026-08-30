@@ -1053,6 +1053,22 @@ _REVIEW_STYLES = {
 }
 
 
+def _note_authorization(authorization: Any) -> None:
+    """Say which regime a review answer came from, wherever one is given.
+
+    Both the status view and the moment of deciding need this, and they must
+    not word it differently: somebody who saw one and then the other would
+    reasonably read the difference as meaning something.
+
+    The reason comes from the resolution rather than being restated here, so
+    there is one sentence to keep true instead of two.
+    """
+    if not authorization.enforced:
+        console.print(f"review here is advisory: {authorization.reason}", style="dim")
+    elif not authorization.roles:
+        console.print(f"WARN cannot authorize review: {authorization.reason}", style="yellow")
+
+
 @cli.group()
 def review() -> None:
     """Propose plans for review and record decisions"""
@@ -1106,6 +1122,7 @@ def review_decide(
     plan_name: str, decision: str, proposal: str | None, project: str | None, actor: str | None
 ) -> None:
     """Approve, reject, request changes on, or withdraw a proposal"""
+    from . import authz
     from .review import decide, status
 
     session = _require_session()
@@ -1143,6 +1160,12 @@ def review_decide(
         console.print("  the accepted baseline now points at this version", style="green")
     else:
         console.print(f"  baseline unchanged: {result.reason}", style="yellow")
+
+    # Said here and not only in `review status`, because this is the moment
+    # that reads as an authorization. Somebody can approve without ever
+    # having run status, and "Recorded approve" on its own does not
+    # distinguish a decision that binds from one that is a rehearsal.
+    _note_authorization(authz.resolve(proj))
 
 
 def _print_comments(session: Session, plan_file: Any) -> None:
@@ -1239,13 +1262,7 @@ def review_status(plan_name: str, project: str | None) -> None:
     proj, plan_file = _resolve_plan(session, project, plan_name)
     state = status(session, plan_file=plan_file, project=proj)
 
-    authorization = authz.resolve(proj)
-    if not authorization.enforced:
-        console.print(
-            "review here is advisory: this project has not joined a workspace", style="dim"
-        )
-    elif not authorization.roles:
-        console.print(f"WARN cannot authorize review: {authorization.reason}", style="yellow")
+    _note_authorization(authz.resolve(proj))
 
     if state.conflicted:
         console.print(
@@ -2321,6 +2338,7 @@ def whoami(do_refresh: bool) -> None:
     from . import session as cache
 
     console.print(f"Device  {device.device_id()}")
+    _print_store()
 
     current: cache.Session | None
     if do_refresh:
@@ -2342,6 +2360,34 @@ def whoami(do_refresh: bool) -> None:
     console.print(f"Account {current.user_id} in {current.organization_id}")
     console.print(f"Server  {current.endpoint}")
     _print_entitlement(current)
+
+
+def _print_store() -> None:
+    """What this device holds, and the fact that it never sheds it.
+
+    The Settings page in the web UI has said this since retirement landed.
+    The CLI had not, and a CLI-only user is the common case, so the decision
+    to keep everything was invisible to the people living with it.
+
+    Skipped rather than reported as zero when there is no database. A fresh
+    install holding nothing is a different claim from a store that has been
+    measured, and "0 B" would read as the second.
+    """
+    from .database import list_artifacts
+
+    db_path = get_mcp_dir() / "data.db"
+    if not db_path.exists():
+        return
+
+    init_database(str(db_path))
+    rows = list_artifacts(get_session())
+    held = sum(len(row.payload or "") for row in rows)
+
+    console.print(f"Holds   {len(rows)} artifacts, {tui.size(held)}")
+    console.print(
+        "        never pruned; retiring a plan hides it and erases nothing",
+        style="dim",
+    )
 
 
 def _print_entitlement(current: Any) -> None:
@@ -2579,9 +2625,88 @@ def _console_call(action: Any, *args: Any, **kwargs: Any) -> Any:
         raise SystemExit(1) from None
 
 
+@cli.command("retire")
+@click.argument("plan_name")
+@click.option("--project", default=None, help="Project name (uses current directory if omitted)")
+@click.option("--reason", default="", help="Why, recorded with the claim")
+@click.option("--restore", is_flag=True, help="Undo a retirement instead")
+@click.option("--yes", is_flag=True, help="Skip the confirmation")
+def retire_plan(
+    plan_name: str, project: str | None, reason: str, restore: bool, yes: bool
+) -> None:
+    """Ask peers to stop showing a plan, or show it again with --restore
+
+    Not a deletion, and the command is not named one. Nothing is erased:
+    every version stays in the history, every signature still verifies, and
+    a teammate who was offline when you ran this keeps the content until
+    they next sync. What travels is a claim that other devices honour.
+    """
+    from . import review as review_module
+    from .assurance import retirement
+
+    session = _require_session()
+    proj, plan_file = _resolve_plan(session, project, plan_name)
+
+    standing = retirement(session, str(plan_file.id))
+    if not restore and standing.retired:
+        tui.note(f"{plan_name} is already retired.")
+        return
+    if restore and not standing.retired:
+        tui.note(f"{plan_name} is not retired.")
+        return
+
+    if not yes and not restore:
+        tui.warn(f"This asks every peer to hide {tui.code(plan_name)}.")
+        tui.note("Nothing is erased. Anyone already holding it keeps the bytes,")
+        tui.note("and a device that never receives this claim keeps showing it.")
+        if not click.confirm("Record the claim?", default=False):
+            tui.note("Nothing recorded.")
+            return
+
+    try:
+        review_module.retire(
+            session, project=proj, plan_file=plan_file, reason=reason, restore=restore
+        )
+    except PermissionError as e:
+        tui.bad(str(e))
+        raise SystemExit(1) from None
+
+    if restore:
+        tui.ok(f"{plan_name} is visible again")
+    else:
+        tui.ok(f"{plan_name} retired")
+        # Said on the way out as well as at the prompt, because --yes skips
+        # the prompt entirely and a script is exactly where somebody would
+        # assume this deleted something.
+        tui.note("Nothing was erased. Anyone already holding it keeps the bytes.")
+        tui.hint(f"Undo with {tui.command(f'flanner retire {plan_name} --restore')}")
+
+
 @cli.group()
 def peer() -> None:
     """Sync plans directly with another device"""
+
+
+def _keyring_refresher() -> Any:
+    """Fetch this organisation's device keys and hand back a fresh resolver.
+
+    The composition root is the only place allowed to join these two: a
+    reachability test asserts that `peer` cannot reach `account`, so the
+    network call is passed in from here rather than imported down there.
+
+    A resolver is returned rather than nothing, because the one the serving
+    path already holds is bound to the session as it was before the fetch
+    and would still not know the key we just learned.
+    """
+    from . import account
+    from . import session as cache
+
+    def refresh() -> Any:
+        account.fetch_device_keys()
+        renewed = cache.load()
+        return renewed.resolve_device_key if renewed is not None else None
+
+    return refresh
 
 
 def _catch_up_in_background(dial: Any) -> None:
@@ -2659,7 +2784,7 @@ def peer_serve(host: str, port: int | None, http: bool) -> None:
             lambda device_id, workspace_id: peer_iroh.peer_for(device_id, workspace_id, cache.load)
         )
         try:
-            endpoint.serve(get_session, cache.load)
+            endpoint.serve(get_session, cache.load, _keyring_refresher())
         except KeyboardInterrupt:
             endpoint.close()
         return
@@ -2675,7 +2800,7 @@ def peer_serve(host: str, port: int | None, http: bool) -> None:
     uvicorn.run(
         # get_session is already a factory returning a context-managed
         # Session, which is exactly the shape the app wants.
-        peer_transport.create_peer_app(get_session, cache.load),
+        peer_transport.create_peer_app(get_session, cache.load, _keyring_refresher()),
         host=host,
         port=listen_on,
         log_level="warning",

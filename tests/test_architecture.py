@@ -59,7 +59,20 @@ ALLOWED = {
     "authz": {"workflow", "session", "entitlements", "database", "plan_ops"},
     # Peer transport. Talks to other devices, never to the control plane,
     # so it may not import account any more than a read command may.
-    "peer": {"entitlements", "identity", "sync", "device_auth", "push"},
+    # `assurance` is here because the serving path has to know which plans
+    # have been claimed as retired, and duplicating that projection would
+    # give two places to disagree about whether a plan is visible. It is a
+    # local read over rows already in this database; the reachability test
+    # below still proves peer cannot get to `account` through it.
+    "peer": {
+        "entitlements",
+        "identity",
+        "sync",
+        "device_auth",
+        "push",
+        "assurance",
+        "artifacts",
+    },
     # The transport carries what peer decides; it never decides anything
     # itself, so it reaches for peer and the device key and nothing else.
     "peer_iroh": {"identity", "peer", "session"},
@@ -115,6 +128,11 @@ ALLOWED = {
         # Reads the key file this machine generated, so the Mesh page can
         # name the device even before it has ever joined a team.
         "identity",
+        # The Review page has to say whether a decision would be enforced or
+        # is only a rehearsal. That is one question with one answer, and it
+        # is answered here, so the page asks rather than guessing from the
+        # role map it was handed.
+        "authz",
     },
     "agent_hooks": FOUNDATION | {"database"},
     "plan_ops": FOUNDATION | {"database", "storage", "artifacts"},
@@ -228,3 +246,31 @@ def test_no_read_path_can_reach_the_network():
             f"{module} can reach the network through account; "
             "a read command would make an HTTP call"
         )
+
+
+def test_the_version_attribute_matches_the_installed_metadata():
+    """`flanner.__version__` was hardcoded and drifted two releases behind
+    `pyproject.toml`. It reaches the web UI footer and the settings page, so
+    it was wrong on screen, not merely wrong in principle.
+
+    Reading it from installed metadata leaves one source of truth. This
+    test fails if anybody hardcodes it again.
+    """
+    import importlib.metadata
+
+    import flanner
+
+    assert flanner.__version__ == importlib.metadata.version("flanner")
+
+
+def test_the_version_is_derived_rather_than_typed():
+    """The specific mistake: a literal somebody has to remember on release.
+
+    Stated positively. Forbidding the literal outright would also forbid the
+    fallback sentinel, which is the one assignment that should stay — and a
+    guard that fires on correct code gets deleted rather than heeded.
+    """
+    source = (PACKAGE / "__init__.py").read_text(encoding="utf-8")
+    assert (
+        "_installed_version(" in source
+    ), "__version__ is no longer read from package metadata; it will drift again"

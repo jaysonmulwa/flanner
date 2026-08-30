@@ -24,12 +24,19 @@ from typing import Any
 from .utils import utcnow
 
 # Thresholds behind each status. ponytail: opinionated starting values,
-# tune against dogfood data before exposing as configuration.
+# still untuned against real corpus data before exposing as configuration.
 SUSPECT_CHURN_PATHS = 20  # commits touching cited files
 SUSPECT_CHURN_REPO = 60  # commits anywhere (only when scope is unknown)
 AGING_CHURN = 5
 AGING_DAYS = 45
 MAX_REFS = 40  # cap per kind; keeps git grep loops bounded
+# A pickaxe search walks all history when the term was never present, which
+# is the common case here. Measured at ~0.6s over 133 commits, so the count
+# is bounded rather than the timeout relied on.
+# ponytail: a flat cap, and refs beyond it are simply not flagged. A cache
+# keyed on (repo head, term) is the upgrade if plans start citing more
+# unresolvable names than this.
+MAX_HISTORY_CHECKS = 12
 
 _CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 _FENCE_RE = re.compile(r"^(?:```|~~~)[^\n]*\n(.*?)^(?:```|~~~)\s*$", re.M | re.S)
@@ -103,6 +110,58 @@ def resolve_anchor(project_root: str, authored_at: datetime | None) -> str | Non
     return _git(project_root, "rev-list", "-1", f"--before={stamp.isoformat()}", "HEAD")
 
 
+class _HistoryBudget:
+    """Whether a missing citation was ever part of this repository.
+
+    This is the difference between drift and a reference to the outside
+    world, and without it the two are indistinguishable. A symbol that used
+    to be here and is gone is exactly the signal this module exists to
+    raise. One that was never here is an environment variable, an external
+    API constant, or a file in another repository, and reporting it as "no
+    longer exists" is a false alarm.
+
+    It matters because the verdict is unforgiving: a single invalid ref
+    returns `stale` before churn or age is consulted. Measured on this
+    project's own plans, every invalid ref was of the second kind — 21 of
+    21, none of which had ever appeared in history — so every stale verdict
+    in the corpus was wrong.
+
+    A budget rather than a bare function because the check is a pickaxe
+    search, which walks all of history precisely when the term was never
+    present. Past the cap, refs are left unflagged: the same fail-open
+    direction the rest of this module takes, and the direction that cannot
+    invent an alarm.
+    """
+
+    def __init__(self, project_root: str, limit: int = MAX_HISTORY_CHECKS) -> None:
+        self._root = project_root
+        self._left = limit
+
+    def ever_had_path(self, path: str) -> bool:
+        """A pathspec lookup: did any commit ever touch this file?"""
+        if not self._spend():
+            return False
+        return bool(_git(self._root, "log", "--all", "--oneline", "--max-count=1", "--", path))
+
+    def ever_had_symbol(self, symbol: str) -> bool:
+        """A pickaxe: did any commit ever add or remove this text?
+
+        Deliberately not the same call as ``ever_had_path``. ``-S`` searches
+        file *contents*, so it never finds a deleted file by its name, and a
+        pathspec never finds a deleted identifier. Using one for both silently
+        stops flagging half the drift this module exists to report.
+        """
+        if not self._spend():
+            return False
+        return bool(_git(self._root, "log", "--all", "--oneline", "--max-count=1", "-S", symbol))
+
+    def _spend(self) -> bool:
+        if self._left <= 0:
+            return False
+        self._left -= 1
+        return True
+
+
 def _check_symbol(project_root: str, symbol: str) -> list[str]:
     """Tracked files containing the symbol; None result folds to []."""
     out = _git(project_root, "grep", "-l", "-F", "-e", symbol, "--", ".")
@@ -119,14 +178,16 @@ def compute_freshness(
     invalid_refs: list[str] = []
     symbol_files: list[str] = []
     if git_available:
+        budget = _HistoryBudget(project_root)
         for path in paths:
             if not os.path.exists(os.path.join(project_root, path)):
-                invalid_refs.append(path)
+                if budget.ever_had_path(path):
+                    invalid_refs.append(path)
         for symbol in symbols:
             found_in = _check_symbol(project_root, symbol)
             if found_in:
                 symbol_files.extend(f for f in found_in if f not in symbol_files)
-            else:
+            elif budget.ever_had_symbol(symbol):
                 invalid_refs.append(symbol)
 
     anchor = resolve_anchor(project_root, authored_at) if git_available else None

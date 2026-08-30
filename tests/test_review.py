@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 from flanner import review, workflow
-from flanner.database import create_project, get_session
+from flanner.database import create_project, get_session, get_version
 from flanner.plan_ops import create_plan, record_new_version
 from flanner.workflow import (
     APPROVE,
@@ -697,3 +697,100 @@ def test_everyone_above_reader_can_comment(commentable, role):
         roles={"sam": role},
     )
     assert result.event.payload["body"] == "?"
+
+
+# --- retiring a plan --------------------------------------------------------
+#
+# Never "deleting". Append-only means the bytes stay and a peer that was
+# offline keeps them, so what is recorded is a claim other devices honour.
+# These tests pin both halves: that it is honoured, and that it is honest.
+
+
+def test_retiring_hides_a_plan_without_removing_anything(commentable):
+    from flanner import assurance
+
+    session, proj, plan_file, version = commentable
+    before = len(assurance.load_review_events(session, str(plan_file.id)))
+
+    review.retire(session, project=proj, plan_file=plan_file, reason="superseded")
+
+    standing = assurance.retirement(session, str(plan_file.id))
+    assert standing.retired is True
+    assert standing.reason == "superseded"
+    # Nothing was taken away: the version row, its file and every earlier
+    # event are all still here.
+    assert get_version(session, plan_file.id, version.version) is not None
+    assert len(assurance.load_review_events(session, str(plan_file.id))) >= before
+
+
+def test_a_plan_with_no_tombstone_is_not_retired(commentable):
+    from flanner import assurance
+
+    session, _, plan_file, _ = commentable
+    standing = assurance.retirement(session, str(plan_file.id))
+    assert standing.retired is False
+    assert standing.claimed is False
+
+
+def test_restoring_brings_it_back(commentable):
+    from flanner import assurance
+
+    session, proj, plan_file, _ = commentable
+    review.retire(session, project=proj, plan_file=plan_file)
+    review.retire(session, project=proj, plan_file=plan_file, restore=True)
+
+    standing = assurance.retirement(session, str(plan_file.id))
+    assert standing.retired is False
+    # Reversal is another record, not an erasure of the first.
+    assert standing.claimed is True
+
+
+def test_the_latest_claim_wins(commentable):
+    """Two maintainers disagreeing is not a merge conflict anybody could be
+    usefully shown, so the last word wins and the argument stays in the
+    history."""
+    from flanner import assurance
+
+    session, proj, plan_file, _ = commentable
+    review.retire(session, project=proj, plan_file=plan_file)
+    review.retire(session, project=proj, plan_file=plan_file, restore=True)
+    review.retire(session, project=proj, plan_file=plan_file, reason="really gone")
+
+    standing = assurance.retirement(session, str(plan_file.id))
+    assert standing.retired is True
+    assert standing.reason == "really gone"
+
+
+def test_only_a_maintainer_may_retire(commentable):
+    session, proj, plan_file, _ = commentable
+    for role in (workflow.READER, workflow.COMMENTER, EDITOR):
+        with pytest.raises(PermissionError, match="retire this plan"):
+            review.retire(
+                session,
+                project=proj,
+                plan_file=plan_file,
+                actor="sam",
+                roles={"sam": role},
+            )
+
+
+def test_a_maintainer_may_retire(commentable):
+    from flanner import assurance
+
+    session, proj, plan_file, _ = commentable
+    review.retire(session, project=proj, plan_file=plan_file, actor="mo", roles={"mo": MAINTAINER})
+    assert assurance.retirement(session, str(plan_file.id)).retired is True
+
+
+def test_the_listing_helper_reports_every_retired_plan(project):
+    from flanner import assurance
+
+    session, proj = project
+    kept, _ = create_plan(session, project=proj, name="kept", content="# a\n", created_by="u")
+    gone, _ = create_plan(session, project=proj, name="gone", content="# b\n", created_by="u")
+    session.commit()
+    review.retire(session, project=proj, plan_file=gone)
+
+    hidden = assurance.retired_plan_ids(session)
+    assert str(gone.id) in hidden
+    assert str(kept.id) not in hidden

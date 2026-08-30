@@ -128,3 +128,70 @@ def test_one_noisy_device_cannot_lock_out_the_team():
     limiter.allow("loud", now=1.0)
     assert limiter.allow("loud", now=2.0) is False
     assert limiter.allow("quiet", now=2.0) is True
+
+
+# --- learning a new teammate's key -----------------------------------------
+#
+# A new teammate's key is not in this device's keyring until it signs in
+# again, so their first push fails verification. The refresh that fixes it is
+# triggered by a remote party, which is why it is bounded.
+
+
+def test_a_refresh_is_offered_only_when_the_author_is_unknown():
+    assert sync.is_unknown_author(artifacts.Verdict(False, f"{sync.UNKNOWN_AUTHOR} dev_x (…)"))
+    assert not sync.is_unknown_author(artifacts.Verdict(False, "bad signature"))
+    assert not sync.is_unknown_author(artifacts.Verdict(True))
+
+
+def test_the_cooldown_allows_one_refresh_then_holds():
+    cool = push.Cooldown(window=300.0)
+    assert cool.allow(now=0.0) is True
+    assert cool.allow(now=1.0) is False
+    assert cool.allow(now=299.0) is False
+    assert cool.allow(now=301.0) is True
+
+
+def test_the_cooldown_is_not_per_device():
+    """Counting per device would let a peer reset the floor by inventing a
+    new id, which is the move the floor exists to stop."""
+    cool = push.Cooldown(window=300.0)
+    assert cool.allow(now=0.0) is True
+    # No device argument exists to vary, which is the point; a second call
+    # from anywhere at all is refused.
+    assert cool.allow(now=5.0) is False
+
+
+def test_a_refusal_that_is_not_about_keys_never_triggers_a_refresh():
+    calls = []
+    report = push.accept(
+        object(),
+        [{"envelope": {"artifact_id": "a", "workspace_id": "ws", "artifact_type": "comment"}}],
+        workspace_id="other-ws",
+        role=MAINTAINER,
+        resolve_key=lambda _: None,
+        refresh_keys=lambda: calls.append("refreshed"),
+    )
+    assert report.rejected and "different workspace" in report.rejected[0][1]
+    assert "refreshed" not in calls
+
+
+def test_a_control_plane_that_cannot_be_reached_leaves_the_refusal_alone():
+    """A push we merely could not verify must not become an error."""
+
+    def explode():
+        raise OSError("control plane unreachable")
+
+    assert push._relearn(explode, push.Cooldown()) is None
+
+
+def test_no_refresher_configured_means_no_retry():
+    assert push._relearn(None, push.Cooldown()) is None
+
+
+def test_the_cooldown_blocks_the_fetch_itself_not_just_the_retry():
+    """Otherwise the call still goes out and only its result is discarded."""
+    calls = []
+    spent = push.Cooldown(window=300.0)
+    spent.allow()  # real clock, because `_relearn` reads the real clock too
+    assert push._relearn(lambda: calls.append(1), spent) is None
+    assert calls == []

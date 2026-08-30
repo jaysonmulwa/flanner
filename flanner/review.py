@@ -208,6 +208,47 @@ def comment(
     return ReviewResult(event=event)
 
 
+def retire(
+    session: Session,
+    *,
+    project: ProjectModel,
+    plan_file: PlanFileModel,
+    reason: str = "",
+    restore: bool = False,
+    actor: str | None = None,
+    roles: dict[str, str] | None = None,
+) -> ReviewResult:
+    """Ask peers to stop showing this plan, or to show it again.
+
+    Never called a deletion in code or in prose. Every artifact survives,
+    every signature still verifies, and a peer that was offline when this
+    was signed holds the content regardless. What travels is a claim, and
+    a device only honours it once it has actually received it.
+
+    Maintainer only. Hiding a plan for a whole team is closer to deciding
+    than to editing.
+    """
+    authorization = authz.resolve(project, actor=actor)
+    effective_roles = roles if roles is not None else authorization.roles
+    _require(
+        effective_roles,
+        authorization,
+        workflow.MAY_RETIRE,
+        "restore this plan" if restore else "retire this plan",
+    )
+
+    event = workflow.make_tombstone(
+        workspace_id=workspace_id_for(project),
+        plan_file_id=str(plan_file.id),
+        reason=reason,
+        restored=restore,
+        actor_user_id=authorization.actor,
+    )
+    save_event(session, event, str(plan_file.id))
+    session.commit()
+    return ReviewResult(event=event)
+
+
 def import_external(
     session: Session,
     *,
