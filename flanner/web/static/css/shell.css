@@ -1,0 +1,1055 @@
+/* The application shell and its components.
+ *
+ * Layout follows section 1c of the mockups: a 224px rail beside a content
+ * column, content on --app-bg, cards on --card. Everything reads from
+ * tokens.css so the two themes stay in step.
+ */
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--app-bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent-ink); text-decoration: none; }
+a:hover { color: var(--accent-hi); }
+
+:where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+.skip-link {
+  position: absolute; left: -9999px; top: 8px; z-index: 100;
+  background: var(--card); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 8px 14px; font-weight: 600;
+}
+.skip-link:focus { left: 8px; }
+
+.mono { font-family: var(--font-mono); }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- shell */
+
+.shell { display: flex; min-height: 100vh; }
+
+.rail {
+  width: 224px; flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--rail-bg);
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 16px 12px;
+  position: sticky; top: 0; height: 100vh;
+}
+
+.rail-brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 14px; }
+.rail-brand a { color: var(--text); font-weight: 600; font-size: 14px; }
+.rail-mark {
+  width: 26px; height: 26px; border-radius: 7px; flex: none;
+  background: var(--accent-grad);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font: 700 13px var(--font-mono);
+}
+.rail-badge {
+  font: 500 10.5px var(--font-mono); color: var(--text-3);
+  background: var(--chip); border-radius: var(--r-xs);
+  padding: 1px 6px; vertical-align: middle;
+}
+
+.rail-search {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  border: 1px solid var(--border); background: var(--card);
+  border-radius: var(--r-md); padding: 7px 10px;
+  color: var(--text-4); font-size: 13px; font-family: inherit;
+  margin-bottom: 12px; cursor: pointer; text-align: left;
+}
+.rail-search:hover { border-color: var(--text-4); }
+.rail-search kbd {
+  margin-left: auto; font: 500 11px var(--font-mono);
+  border: 1px solid var(--border); border-radius: var(--r-xs); padding: 0 5px;
+}
+
+.rail-nav { display: flex; flex-direction: column; gap: 2px; }
+.rail-nav a {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-radius: var(--r-md);
+  color: var(--text-2); font-size: 13.5px;
+}
+.rail-nav a:hover { background: var(--nav-active); color: var(--text); }
+.rail-nav a.active { background: var(--nav-active); color: var(--text); font-weight: 600; }
+.rail-nav .glyph { width: 15px; text-align: center; flex: none; }
+/* Counts line up as a column. Every badge occupies the same box whether or
+   not it is a pill, so the digits sit at one x position down the sidebar —
+   right-aligning the boxes alone did not do it, because the pill's padding
+   pushed its digit inward while the plain ones sat flush. */
+.rail-nav .n {
+  margin-left: auto; flex: none;
+  min-width: 22px; padding: 1px 7px; border-radius: 10px;
+  font: 500 11px/1.45 var(--font-mono); color: var(--text-3);
+  text-align: center;
+}
+.rail-nav .n.n-warn {
+  font-weight: 600; color: var(--suspect-text); background: var(--suspect-bg);
+}
+/* "not joined" is a word, not a count, so it opts out of the number column
+   rather than stretching it to fit. */
+.rail-nav .n:not(.tnum) { min-width: 0; }
+
+.rail-foot {
+  margin-top: auto;
+  border: 1px solid var(--border); background: var(--card);
+  border-radius: 10px; padding: 12px; font-size: 12px; line-height: 1.5;
+}
+.rail-foot .hd {
+  display: flex; align-items: center; gap: 7px;
+  font-weight: 600; color: var(--text); margin-bottom: 4px;
+}
+.rail-foot .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fresh); }
+.rail-foot p { margin: 0; color: var(--text-3); }
+.rail-foot .credit { margin-top: 8px; font-size: 11px; color: var(--text-4); }
+
+/* ----------------------------------------------------------------- main */
+
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  position: sticky; top: 0; z-index: 20;
+}
+.topbar h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: -.005em; }
+.topbar .sub { font-size: 12px; color: var(--text-4); }
+.topbar .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+.crumbs { display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; }
+.crumbs a { color: var(--text-4); }
+.crumbs a:hover { color: var(--text-2); }
+.crumbs .sep { color: var(--text-4); }
+.crumbs .here { font-weight: 600; color: var(--text); }
+
+.pane { padding: 22px 28px; display: flex; flex-direction: column; gap: 20px; }
+.pane.narrow { max-width: 700px; }
+.pane.centred { align-items: center; }
+
+/* A standing statement about the page, as opposed to `.alert`, which is
+   feedback about something you just did and can be dismissed. The rule was
+   missing from this stylesheet while two templates already used the class,
+   so those blocks rendered as unstyled text. */
+.notice {
+  border: 1px solid var(--border); border-left-width: 3px;
+  border-radius: 10px; padding: 12px 14px; font-size: 13px; line-height: 1.55;
+  background: var(--card); color: var(--text-2);
+}
+.notice p { margin: 0 0 8px; }
+.notice p:last-child { margin-bottom: 0; }
+.notice b, .notice strong { color: var(--text); }
+.notice code { overflow-wrap: anywhere; }
+.notice.good { border-left-color: var(--fresh); background: var(--fresh-bg); }
+.notice.bad  { border-left-color: var(--stale); background: var(--stale-bg); }
+.notice.info { border-left-color: var(--suspect); background: var(--suspect-bg); }
+
+/* ------------------------------------------------------------ site footer */
+
+/* Sits below the content rather than pinned: on a short page it follows the
+   last card, on a long one you scroll to it. `margin-top: auto` needs the
+   column to be able to grow, which is why `.main` is a flex column. */
+.sitefoot {
+  margin-top: auto; border-top: 1px solid var(--border);
+  background: var(--rail-bg); padding: 18px 28px;
+}
+.sitefoot-in {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px;
+  font-size: 12px; color: var(--text-4);
+}
+.sitefoot .mark {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-weight: 600; color: var(--text-3);
+}
+.sitefoot .mark .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+}
+.sitefoot .ver { font-weight: 500; font-size: 11px; color: var(--text-4); }
+.sitefoot .links { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.sitefoot .links a { color: var(--text-3); }
+.sitefoot .links a:hover { color: var(--text); text-decoration: underline; }
+/* Pushed to the far end on a wide row, and simply the last line when the
+   row has wrapped. */
+.sitefoot .note { margin-left: auto; }
+
+/* -------------------------------------------------------------- buttons */
+
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  color: var(--text-2); background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 6px 12px; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { color: var(--text); border-color: var(--text-4); }
+.btn-primary {
+  font-size: 13px; color: #fff; background: var(--accent);
+  border-color: var(--accent); padding: 7px 14px;
+}
+.btn-primary:hover { background: var(--accent-hi); border-color: var(--accent-hi); color: #fff; }
+.btn-quiet { background: transparent; border-color: transparent; }
+.btn-danger { color: var(--stale-text); border-color: var(--border); }
+.btn-danger:hover { color: var(--stale-text); border-color: var(--stale-text); }
+.btn-accent { color: var(--accent-ink); border-color: var(--accent-line); }
+.btn-accent:hover { color: var(--accent-ink-hi); border-color: var(--accent); }
+.btn-sm { font-size: 11.5px; padding: 3px 9px; }
+
+/* ---------------------------------------------------------------- cards */
+
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-card);
+}
+.card-pad { padding: 16px 18px; }
+.card-title { font-size: 13px; font-weight: 700; margin: 0 0 12px; }
+
+/* A card that holds only prose hugs its text instead of stretching. Text
+   was capped at 66ch for readability while its card still filled the pane,
+   which left half the card empty and read as a layout fault rather than as
+   a deliberate reading measure. Capping the card puts the limit in one
+   place, so the paragraphs no longer each carry an inline max-width. */
+.card-prose { max-width: calc(66ch + 36px); }
+.card-prose p { margin: 0 0 12px; color: var(--text-2); }
+.card-prose p:last-child, .card-prose > :last-child { margin-bottom: 0; }
+.card-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 18px; font-size: 13px; font-weight: 700;
+  border-bottom: 1px solid var(--divider);
+}
+.card-head .note {
+  margin-left: auto; font: 400 11px var(--font-mono);
+  color: var(--text-4); white-space: nowrap;
+}
+
+.stat-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.stat { background: var(--card); border: 1px solid var(--border);
+        border-radius: var(--r-lg); padding: 16px 18px; }
+.stat .v { font-size: 24px; font-weight: 700; display: flex; align-items: center; gap: 8px;
+           font-variant-numeric: tabular-nums; }
+.stat .v .dot { width: 9px; height: 9px; border-radius: 50%; }
+.stat .k { font-size: 12.5px; color: var(--text-3); margin-top: 2px; }
+
+/* --------------------------------------------------------------- tables */
+
+.tablewrap { overflow-x: auto; }
+.grid-head, .grid-row, .plan-file-card { display: grid; gap: 0 14px; padding: 10px 18px; align-items: center; }
+.grid-head {
+  font-size: 11.5px; color: var(--text-4);
+  border-bottom: 1px solid var(--divider);
+}
+.grid-row, .plan-file-card { padding: 14px 18px; border-bottom: 1px solid var(--divider); font-size: 13px; }
+.grid-row:last-child, .plan-file-card:last-child { border-bottom: 0; }
+.grid-row:hover, .plan-file-card:hover { background: var(--card-sunken); }
+.grid-row .name, .plan-file-card .name { font-weight: 600; color: var(--text); }
+.grid-row .sub, .plan-file-card .sub { font-weight: 400; font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.grid-row .path, .plan-file-card .path { font: 500 12px var(--font-mono); color: var(--text-3);
+                  overflow: hidden; text-overflow: ellipsis; }
+.grid-row .when, .plan-file-card .when { font-size: 12px; color: var(--text-3); }
+
+.cols-projects { grid-template-columns: 1.3fr 70px 1fr 160px 90px; }
+.cols-freshness { grid-template-columns: 190px 132px 1.45fr 110px 150px; }
+.cols-plans, .plan-file-card { grid-template-columns: 1.4fr 90px 150px 110px 120px; }
+.cols-history { grid-template-columns: 90px 1fr 130px 130px 110px; }
+.cols-recent { grid-template-columns: 1.4fr 80px 1fr 110px; }
+.cols-links { grid-template-columns: 1fr 120px 1fr; }
+.cols-peers { grid-template-columns: 1fr 150px; }
+.cols-wsaccess { grid-template-columns: 1fr 120px; }
+.cols-review { grid-template-columns: 1.4fr 1fr 110px 130px; }
+
+/* ------------------------------------------------------------ freshness */
+
+.dots { display: inline-flex; gap: 5px; align-items: center; font-size: 11.5px;
+        color: var(--text-2); }
+.dots .d { width: 8px; height: 8px; border-radius: 50%; }
+.d-fresh { background: var(--fresh); }
+.d-aging { background: var(--aging); }
+.d-suspect { background: var(--suspect); }
+.d-stale { background: var(--stale); }
+
+/* Four steps: how far along the decay a plan sits. Drawn as well as named,
+   because the word alone does not sort at a glance. */
+.drift { display: inline-flex; gap: 2px; }
+.drift i { width: 4px; height: 13px; border-radius: 1.5px; background: var(--drift-empty);
+           display: block; }
+.drift[data-level="fresh"] i:nth-child(-n+1)   { background: var(--fresh); }
+.drift[data-level="aging"] i:nth-child(-n+2)   { background: var(--aging); }
+.drift[data-level="suspect"] i:nth-child(-n+3) { background: var(--suspect); }
+.drift[data-level="stale"] i                   { background: var(--stale); }
+
+.pill {
+  display: inline-flex; align-items: center;
+  font-size: 11.5px; font-weight: 600;
+  border-radius: 20px; padding: 3px 9px; white-space: nowrap;
+}
+.pill-fresh   { color: var(--fresh-text);   background: var(--fresh-bg); }
+.pill-aging   { color: var(--aging-text);   background: var(--aging-bg); }
+.pill-suspect { color: var(--suspect-text); background: var(--suspect-bg); }
+.pill-stale   { color: var(--stale-text);   background: var(--stale-bg); }
+.pill-quiet   { color: var(--text-3);       background: var(--chip); }
+
+.evidence { color: var(--text-3); line-height: 1.45; font-size: 12.5px; }
+.evidence .dead { font: 500 11px var(--font-mono); color: var(--stale-text); }
+.evidence .ref  { font: 500 11px var(--font-mono); color: var(--text-2); }
+
+.vtag {
+  font: 600 11px var(--font-mono); color: var(--text-3);
+  background: var(--chip); border-radius: 5px; padding: 1px 6px;
+}
+.vtag-current { color: var(--accent-ink); background: var(--accent-soft); }
+
+/* Not flex. A flex container makes every child a column, so a footnote
+   containing a link, a <code> or a <b> broke into shrink-wrapped columns
+   with gaps in the middle of a sentence. The chip floats instead, which
+   lets the text flow as one paragraph however it is marked up, and is
+   immune to the inline padding some of these carry. */
+.footnote {
+  font-size: 12px; line-height: 1.55; color: var(--text-4);
+}
+.footnote .i {
+  float: left; margin: 1px 10px 0 0;
+  font: 600 11px var(--font-mono); color: var(--text-3);
+  background: var(--chip); border-radius: var(--r-xs); padding: 2px 7px;
+}
+/* The float is confined to its own footnote, so two in a row cannot have
+   the second's text ride up beside the first's chip. */
+.footnote::after { content: ""; display: block; clear: both; }
+
+/* ----------------------------------------------------------- plan pages */
+
+.plan-layout { flex: 1; display: flex; min-height: 0; align-items: flex-start; }
+.plan-main { flex: 1; min-width: 0; padding: 22px 28px; }
+.plan-rail {
+  width: 300px; flex-shrink: 0; align-self: stretch;
+  border-left: 1px solid var(--border); background: var(--card);
+  padding: 20px 22px; display: flex; flex-direction: column; gap: 20px;
+  font-size: 12.5px;
+}
+@media (max-width: 1100px) {
+  .plan-layout { flex-direction: column; }
+  .plan-rail { width: auto; border-left: 0; border-top: 1px solid var(--border); }
+}
+.plan-rail section + section { border-top: 1px solid var(--divider); padding-top: 16px; }
+.plan-rail h2 { font-size: 12px; font-weight: 700; margin: 0 0 10px; }
+.kv { display: flex; justify-content: space-between; gap: 12px; color: var(--text-3); padding: 3px 0; }
+.kv b { color: var(--text); font-weight: 600; }
+.kv .m { font: 500 11.5px var(--font-mono); color: var(--text); font-weight: 600; }
+.check { display: flex; gap: 8px; color: var(--text-3); line-height: 1.5; padding: 3px 0; }
+.check .ok { color: var(--fresh-text); }
+.check .no { color: var(--stale-text); }
+
+.plan-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.plan-head .title { font: 600 19px var(--font-mono); letter-spacing: -.01em; margin: 0; }
+.vpicker { margin-left: auto; display: flex; gap: 7px; align-items: center; }
+.vpicker .field-label { margin: 0; }
+.vpicker select {
+  font: 500 11.5px var(--font-mono); color: var(--text-2);
+  padding: 4px 8px; border-radius: 6px;
+}
+
+/* Oversized plans skip markdown entirely and are served as plain text. */
+.raw-content {
+  margin-top: 14px; background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: 26px 32px;
+  font: 400 12.5px/1.7 var(--font-mono); color: var(--text-2);
+  white-space: pre-wrap; overflow-x: auto;
+}
+.doc {
+  margin-top: 14px; background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: 26px 32px; line-height: 1.65;
+}
+.doc .frontmatter {
+  font: 500 11px/1.7 var(--font-mono); color: var(--text-4);
+  background: var(--app-bg); border: 1px solid var(--divider);
+  border-radius: var(--r-md); padding: 10px 12px; margin-bottom: 18px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.doc h1 { font-size: 20px; font-weight: 700; letter-spacing: -.01em; margin: 0 0 10px;
+          padding-bottom: 10px; border-bottom: 1px solid var(--divider); }
+.doc h2 { font-size: 15px; font-weight: 700; margin: 20px 0 8px; }
+.doc h3 { font-size: 14px; font-weight: 600; margin: 16px 0 6px; }
+.doc p, .doc li { font-size: 13.5px; }
+.doc p { margin: 12px 0 0; }
+.doc ul, .doc ol { margin: 8px 0 0; padding-left: 20px; display: flex;
+                   flex-direction: column; gap: 5px; }
+.doc code {
+  font: 500 11.5px var(--font-mono); background: var(--chip);
+  border-radius: var(--r-xs); padding: 1px 5px;
+}
+.doc pre {
+  margin-top: 14px; background: var(--term-bg); border-radius: var(--r-md);
+  padding: 13px 16px; overflow-x: auto;
+  font: 400 12px/1.7 var(--font-mono); color: var(--term-text);
+}
+.doc pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+.doc blockquote {
+  margin: 12px 0 0; padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--accent-line); color: var(--text-3);
+}
+.doc table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+.doc th, .doc td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--divider); }
+.doc th { font-size: 11.5px; color: var(--text-4); font-weight: 500; }
+.doc img { max-width: 100%; height: auto; }
+
+.filebar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 12px; font-size: 12px; color: var(--text-3);
+}
+.filebar .p {
+  font: 500 11.5px var(--font-mono); color: var(--text);
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 3px 9px;
+}
+.filebar .ok { margin-left: auto; font-weight: 600; color: var(--accent-ink); white-space: nowrap; }
+
+/* ---------------------------------------------------------------- forms */
+
+.field { display: flex; flex-direction: column; }
+.field > label, .field-label {
+  font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--text);
+}
+.field-label .opt { font-weight: 400; color: var(--text-4); }
+.input, .textarea, .select {
+  width: 100%; font-family: inherit; font-size: 13px;
+  color: var(--text); background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 9px 12px;
+}
+.input.mono, .textarea.mono { font: 500 12.5px var(--font-mono); background: var(--card-sunken); }
+.input:focus, .textarea:focus, .select:focus {
+  outline: none; border-color: var(--accent); box-shadow: var(--focus);
+}
+.input::placeholder, .textarea::placeholder { color: var(--text-4); }
+.hint { font-size: 11.5px; color: var(--text-4); margin-top: 5px; }
+.hint.good { color: var(--accent-ink); }
+.hint.bad { color: var(--stale-text); }
+
+.switch-row { display: flex; align-items: center; gap: 12px; padding: 11px 0; flex-wrap: wrap; }
+.switch-row .body { min-width: 0; }
+.switch-row + .switch-row { border-top: 1px solid var(--divider); }
+.switch-row .body { font-size: 13px; font-weight: 600; }
+.switch-row .body span { display: block; font-weight: 400; font-size: 12px; color: var(--text-3);
+                         overflow-wrap: anywhere; }
+.switch { position: relative; width: 34px; height: 20px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch .track {
+  display: block; width: 34px; height: 20px; border-radius: 10px;
+  background: var(--border-firm); transition: background .15s;
+}
+.switch .knob {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; transition: transform .15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,.25);
+}
+.switch input:checked ~ .track { background: var(--accent); }
+.switch input:checked ~ .knob { transform: translateX(14px); }
+.switch input:focus-visible ~ .track { box-shadow: var(--focus); }
+
+.segmented {
+  display: inline-flex; background: var(--chip); border-radius: 9px; padding: 3px;
+  font-size: 12px; font-weight: 500; color: var(--text-3);
+}
+.segmented button {
+  font: inherit; color: inherit; background: none; border: 0;
+  padding: 4px 14px; border-radius: 7px; cursor: pointer;
+}
+.segmented button[aria-pressed="true"] {
+  background: var(--card); color: var(--text); font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+
+.form-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.form-note { font-size: 12px; color: var(--text-4); text-align: center; }
+.form-note code {
+  font: 500 11.5px var(--font-mono); background: var(--chip);
+  border-radius: var(--r-xs); padding: 1px 6px; color: var(--text-2);
+}
+
+/* --------------------------------------------------------------- alerts */
+
+.alert {
+  border: 1px solid var(--border); border-left-width: 3px;
+  border-radius: var(--r-md); padding: 10px 14px; font-size: 13px;
+}
+.alert-error   { border-left-color: var(--stale);   background: var(--stale-bg);   color: var(--stale-text); }
+.alert-success { border-left-color: var(--fresh);   background: var(--fresh-bg);   color: var(--fresh-text); }
+.alert-info    { border-left-color: var(--suspect); background: var(--suspect-bg); color: var(--suspect-text); }
+
+.empty { text-align: center; padding: 44px 20px; color: var(--text-3); }
+.empty h2 { font-size: 15px; color: var(--text); margin: 0 0 6px; }
+.empty p { margin: 0 auto 16px; max-width: 46ch; }
+
+/* -------------------------------------------------------------- dialogs */
+
+dialog { color: var(--text); }
+dialog::backdrop { background: rgba(10, 12, 16, .45); }
+
+.cmdk {
+  width: min(560px, 92vw); padding: 0; border: 1px solid var(--border);
+  border-radius: var(--r-lg); background: var(--card);
+  box-shadow: var(--shadow-pop); margin-top: 12vh;
+}
+.cmdk-input {
+  width: 100%; font-family: inherit; font-size: 14px; color: var(--text);
+  background: none; border: 0; border-bottom: 1px solid var(--divider);
+  padding: 14px 16px;
+}
+.cmdk-input:focus { outline: none; }
+.cmdk-list { list-style: none; margin: 0; padding: 6px; max-height: 46vh; overflow-y: auto; }
+.cmdk-list li { padding: 8px 10px; border-radius: var(--r-sm); font-size: 13px; cursor: pointer; }
+.cmdk-list li[aria-selected="true"], .cmdk-list li:hover { background: var(--nav-active); }
+.cmdk-list .kind { font: 500 11px var(--font-mono); color: var(--text-4); margin-right: 8px; }
+.cmdk-hint {
+  margin: 0; padding: 9px 14px; border-top: 1px solid var(--divider);
+  font-size: 11.5px; color: var(--text-4);
+}
+/* A command somebody is meant to type, on its own terminal-coloured ground
+   so it reads as a thing to run rather than as more prose. This rule was
+   missing entirely from this stylesheet — only the mobile override below
+   existed — so the block rendered as a bare line of text with a default
+   grey button beside it. */
+.cmd {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--term-bg); border-radius: 9px; padding: 11px 13px;
+  font: 500 12.5px var(--font-mono); color: var(--term-text);
+}
+.cmd .p { color: var(--term-ok); flex: none; user-select: none; }
+.cmd .t { flex: 1; overflow-x: auto; white-space: nowrap; }
+
+/* An icon, not the word "Copy": the label was as wide as the command on a
+   narrow card, and the button is the least interesting thing in the row. */
+.cmd-copy {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; cursor: pointer;
+  color: var(--term-dim); background: none;
+  border: 1px solid var(--term-dim); border-radius: 6px;
+}
+.cmd-copy:hover { color: var(--term-text); border-color: var(--term-text); }
+.cmd-copy:focus-visible { outline: 2px solid var(--term-ok); outline-offset: 2px; }
+.cmd-copy .ic-done { display: none; }
+.cmd-copy.is-copied { color: var(--term-ok); border-color: var(--term-ok); }
+.cmd-copy.is-copied .ic-copy { display: none; }
+.cmd-copy.is-copied .ic-done { display: block; }
+
+kbd {
+  font: 500 11px var(--font-mono); border: 1px solid var(--border);
+  border-radius: var(--r-xs); padding: 0 5px; color: var(--text-3);
+}
+
+.help-dialog {
+  width: min(420px, 92vw); border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--card); box-shadow: var(--shadow-pop); padding: 20px 22px;
+}
+.help-title { font-size: 15px; margin: 0 0 14px; }
+.help-list { margin: 0 0 16px; display: flex; flex-direction: column; gap: 8px; }
+.help-list > div { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+.help-list dt { display: flex; gap: 4px; min-width: 110px; }
+.help-list dd { margin: 0; color: var(--text-3); }
+
+/* ------------------------------------------------------------- editor  */
+
+.editor-shell { display: flex; flex-direction: column; gap: 12px; }
+.editor-shell .CodeMirror {
+  height: auto; min-height: 460px;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--card); color: var(--text);
+  font: 400 13px/1.7 var(--font-mono); padding: 6px 4px;
+}
+.editor-shell .CodeMirror-gutters { background: var(--card); border-right: 1px solid var(--divider); }
+.editor-shell .CodeMirror-linenumber { color: var(--text-4); }
+.editor-shell .CodeMirror-cursor { border-left-color: var(--text); }
+.editor-shell .CodeMirror-selected { background: var(--nav-active); }
+.editor-shell .cm-header { color: var(--text); font-weight: 700; }
+.editor-shell .cm-comment { color: var(--text-3); }
+.editor-shell .cm-link, .editor-shell .cm-url { color: var(--accent-ink); }
+.editor-shell .CodeMirror-activeline-background { background: var(--card-sunken); }
+
+/* ------------------------------------------------------- reading prefs */
+
+.reading { position: relative; }
+.reading-panel {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 30;
+  width: 260px; background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-pop); padding: 14px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.reading-panel[hidden] { display: none; }
+.reading-panel h3 { font-size: 12px; font-weight: 700; margin: 0; }
+.reading-group { display: flex; flex-direction: column; gap: 6px; }
+.reading-group > span { font-size: 11.5px; color: var(--text-3); }
+.reading-segs { display: flex; background: var(--chip); border-radius: 9px; padding: 3px; }
+.reading-seg {
+  flex: 1; font: inherit; font-size: 11.5px; color: var(--text-3);
+  background: none; border: 0; padding: 4px 8px; border-radius: 7px; cursor: pointer;
+}
+.reading-seg[aria-pressed="true"] {
+  background: var(--card); color: var(--text); font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+
+/* Reading preferences act on the rendered document only.
+ *
+ * The values here have to match what the buttons emit exactly. They did not:
+ * the size control sent s/m/l/xl while these rules listened for large and
+ * xlarge, so changing the size did nothing at all. Two of the four font
+ * choices had no rule either.
+ *
+ * Mono is the default. A plan is read beside the code it describes, and it
+ * is full of paths, identifiers and command lines that only line up in a
+ * monospaced face. */
+.doc { font-family: var(--font-mono); }
+[data-reading-font="mono"]   .doc { font-family: var(--font-mono); }
+[data-reading-font="sans"]   .doc { font-family: var(--font-sans); }
+[data-reading-font="serif"]  .doc { font-family: Georgia, "Times New Roman", serif; }
+[data-reading-font="system"] .doc { font-family: ui-sans-serif, system-ui, sans-serif; }
+
+[data-reading-size="s"]  .doc { font-size: 12.5px; }
+[data-reading-size="m"]  .doc { font-size: 13.5px; }
+[data-reading-size="l"]  .doc { font-size: 15px; }
+[data-reading-size="xl"] .doc { font-size: 17px; }
+
+/* The measure caps the whole reading column, not just the article, and the
+   column is centred. Capping only `.doc` left it hugging the left edge with
+   the rest of a wide screen empty, and would have put the heading and the
+   file bar on a different left margin from the text they belong to. */
+.plan-main {
+  --measure: 78ch;
+  /* The cap sits on the column, not on each child. Capping the children
+     individually centred each one separately and left their edges ragged,
+     because `ch` resolves against each element's own font: 78ch of the UI
+     face and 78ch of the mono face are not the same width. One cap, one
+     font context, one set of edges. */
+  max-width: calc(var(--measure) + 56px);
+  margin-inline: auto;
+}
+[data-reading-measure="narrow"]      .plan-main { --measure: 62ch; }
+[data-reading-measure="comfortable"] .plan-main { --measure: 78ch; }
+/* Set directly rather than through the variable: `calc(none + 56px)` is
+   not a length, and the whole declaration would be dropped. */
+[data-reading-measure="wide"]        .plan-main { max-width: none; }
+
+/* ------------------------------------------------------------ responsive */
+
+/* The shell rules for a small screen live in the mobile block at the foot of
+   this file. What is left here is the content: tables collapse to one column
+   per row, and long values wrap instead of widening the page. */
+@media (max-width: 900px) {
+  .pane, .plan-main { padding-left: 16px; padding-right: 16px; }
+  .cols-projects, .cols-freshness, .cols-plans, .cols-history,
+  .cols-recent, .cols-links, .cols-peers, .cols-wsaccess, .cols-review,
+  .plan-file-card { grid-template-columns: 1fr; gap: 6px; }
+  .grid-head { display: none; }
+  .input, .doc, .raw-content { max-width: 100%; }
+  .input[role="text"] { overflow-wrap: anywhere; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* Theme cycler, in the top bar where it is the same click on every page. */
+.btn-icon {
+  width: 30px; height: 30px; padding: 0; flex: none;
+  justify-content: center; font-size: 12px;
+}
+
+/* Inline duplicate-name warning under the new-project / new-plan name field. */
+.field-error { margin: 5px 0 0; font-size: 12px; color: var(--stale-text); }
+.input[aria-invalid="true"] { border-color: var(--stale); }
+
+/* Labels that only a screen reader needs. The filter and sort controls are
+   obvious by placement and placeholder, but they still need real labels. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* Filter and sort, in the top bar beside the page's own actions. */
+.input-sm { font-size: 12.5px; padding: 5px 9px; width: auto; min-width: 170px; }
+select.btn-sm { padding-right: 8px; }
+.empty-filter { padding: 26px 18px; text-align: center; font-size: 13px; color: var(--text-3); }
+
+/* Boosted navigation. Pages that scan git take a second or more, and a swap
+   with no browser spinner behind it needs to say so itself. */
+.is-navigating { cursor: progress; }
+.is-navigating .rail-nav a { pointer-events: none; }
+.is-navigating::after {
+  content: ""; position: fixed; inset: 0 auto auto 0; z-index: 90;
+  height: 2px; width: 100%; transform-origin: 0 50%;
+  background: var(--accent-grad);
+  animation: nav-progress 1.4s ease-in-out infinite;
+}
+@keyframes nav-progress {
+  0%   { transform: scaleX(0);   opacity: 1; }
+  60%  { transform: scaleX(.75); opacity: 1; }
+  100% { transform: scaleX(1);   opacity: .35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .is-navigating::after { animation: none; transform: scaleX(1); opacity: .6; }
+}
+
+/* One control height across every top bar. Five had crept in - 23, 28, 30,
+   31 and 35px - which reads as carelessness even when nobody can name what
+   is wrong. The 32px is the size of the Projects sort menu, which is the one
+   that looked right. Both apps use these same rules. */
+.topbar .actions { --control-h: 32px; }
+.topbar .actions form { display: flex; align-items: center; gap: 8px; margin: 0; }
+.topbar .actions .btn,
+.topbar .actions .input,
+.topbar .actions select {
+  height: var(--control-h);
+  font-size: 12.5px;
+  border-radius: 8px;
+}
+.topbar .actions .input,
+.topbar .actions select { padding: 0 10px; min-width: 176px; width: auto; }
+.topbar .actions .btn { padding: 0 14px; }
+.topbar .actions .btn-icon { width: var(--control-h); min-width: 0; padding: 0; }
+.topbar .actions .segmented { height: var(--control-h); align-items: center; }
+.topbar .actions .segmented a,
+.topbar .actions .segmented button { height: calc(var(--control-h) - 6px); display: inline-flex; align-items: center; }
+
+/* Back to the page above this one. A real parent link, not history.back():
+   arriving from a search or a bookmark should still offer the way up. */
+.topbar .back {
+  width: var(--control-h, 32px); height: var(--control-h, 32px);
+  padding: 0; flex: none; font-size: 14px; justify-content: center;
+}
+
+/* `hidden` has to win. The browser's own [hidden] rule is weaker than any
+   author declaration, so `.grid-row { display: grid }` quietly outranked it
+   and every filtered-out row stayed on screen. This is why the table filters
+   looked broken: they were setting the attribute correctly the whole time. */
+[hidden] { display: none !important; }
+
+/* The document column and its rail run the full height of the page, so the
+   rail's border and background reach the bottom instead of stopping wherever
+   the text happens to end. */
+.main > main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* --- custom select ---------------------------------------------------------
+   The native control stays in the DOM and keeps doing the work; only its
+   drawn presentation is replaced, because the option list is the one part of
+   a <select> no stylesheet can reach. */
+.sel { position: relative; display: inline-flex; }
+.sel-native {
+  position: absolute; opacity: 0; pointer-events: none;
+  width: 100%; height: 100%; margin: 0;
+}
+.sel-button {
+  display: inline-flex; align-items: center; gap: 8px;
+  cursor: pointer; text-align: left;
+}
+.sel-button .sel-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sel-caret { color: var(--text-4); font-size: 11px; line-height: 1; flex: none; }
+.sel-button[aria-expanded="true"] { border-color: var(--accent); box-shadow: var(--focus); }
+
+.sel-list {
+  position: absolute; z-index: 40; top: calc(100% + 5px); left: 0; min-width: 100%;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: var(--shadow-pop);
+  padding: 5px; display: flex; flex-direction: column; gap: 1px;
+  max-height: min(320px, 60vh); overflow-y: auto;
+}
+.sel-option {
+  display: flex; align-items: center; gap: 8px;
+  font: 400 12.5px var(--font-sans); color: var(--text-2);
+  background: none; border: 0; border-radius: 7px;
+  padding: 7px 10px; cursor: pointer; text-align: left; white-space: nowrap;
+}
+.sel-option:hover, .sel-option:focus-visible { background: var(--chip); color: var(--text); outline: none; }
+.sel-option[aria-selected="true"] { color: var(--text); font-weight: 600; }
+.sel-option[aria-selected="true"]::after {
+  content: "¹3"; margin-left: auto; color: var(--accent-ink); font-weight: 700;
+}
+/* Right-aligned when the control sits at the right edge of the top bar, so
+   the panel opens inward instead of off the page. */
+.topbar .actions .sel-list { left: auto; right: 0; }
+
+/* The filter and sort controls sit side by side in the top bar. This rule
+   was missing entirely: `.listctl` was only ever styled inside the mobile
+   media query, where it becomes a sheet, so on a wide screen it fell back
+   to a plain block and stacked its children — which made the whole bar
+   two rows tall and pushed the buttons out of line. */
+.listctl { display: flex; align-items: center; gap: 8px; }
+
+/* Hidden on a wide screen; the media query below turns it on. Declared
+   first, because these have equal specificity and the last one would win. */
+.menu-toggle, .rail-theme, .filter-toggle { display: none; }
+
+/* --- mobile ------------------------------------------------------------------
+ *
+ * One header row, phone-first: menu, brand, search, theme. The navigation is a
+ * drawer that covers the page rather than pushing it down, so opening the menu
+ * never moves the thing you were reading. The filter and sort controls fold
+ * into an icon and open as a sheet.
+ */
+@media (max-width: 900px) {
+  .shell { flex-direction: column; }
+
+  .rail {
+    position: sticky; top: 0; z-index: 30;
+    width: auto; height: auto;
+    flex-direction: row; align-items: center; flex-wrap: nowrap; gap: 8px;
+    padding: 8px 12px;
+    border-right: 0; border-bottom: 1px solid var(--border);
+    background: var(--rail-bg);
+  }
+  .rail-brand { padding: 0; flex: 1; min-width: 0; gap: 8px; }
+  .rail-eyebrow, .rail-foot { display: none; }
+
+  .menu-toggle, .rail-theme { display: inline-flex; }
+  /* A thumb, not a mouse pointer: 40px is the smallest comfortable target. */
+  .menu-toggle, .rail-theme, .rail-search { width: 40px; height: 40px; flex: none; }
+  .menu-toggle { font-size: 15px; }
+  .topbar-theme { display: none; }
+
+  /* The palette trigger keeps only its icon; the full search opens on tap. */
+  .rail-search {
+    padding: 0; justify-content: center; margin: 0; gap: 0;
+    border-radius: 8px;
+  }
+  .rail-search span:not(:first-child), .rail-search kbd { display: none; }
+  .rail-search span:first-child { font-size: 15px; }
+
+  /* The drawer itself. Fixed, over the page, with its own scrim. */
+  .rail-nav {
+    position: fixed; inset: 0 auto 0 0; z-index: 60;
+    width: min(82vw, 320px); max-width: 100%;
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 14px 12px; overflow-y: auto;
+    background: var(--rail-bg); border-right: 1px solid var(--border);
+    box-shadow: var(--shadow-pop);
+    transform: translateX(-100%);
+    transition: transform .18s ease-out;
+    visibility: hidden;
+  }
+  .rail.is-open .rail-nav { transform: none; visibility: visible; }
+  .rail-nav a { padding: 11px 12px; font-size: 15px; }
+  .rail-nav .n { font-size: 12px; }
+
+  .scrim {
+    position: fixed; inset: 0; z-index: 55;
+    background: rgba(10, 12, 16, .45);
+    opacity: 0; pointer-events: none; transition: opacity .18s ease-out;
+  }
+  .scrim.is-open { opacity: 1; pointer-events: auto; }
+
+  /* Top bar: back, title, then the two icons. */
+  /* Wrapping is what lets a full-width row drop to the next line; without
+     it a 100% flex-basis just shrinks back down again. */
+  .topbar { padding: 10px 14px; gap: 7px; flex-wrap: wrap; }
+  .topbar .actions { margin-left: auto; gap: 6px; --control-h: 38px; }
+  .filter-toggle { display: inline-flex; width: 40px; height: 40px; font-size: 15px; }
+
+  /* Filter and sort become a sheet, opened by that icon. */
+  .listctl { display: none; }
+  .listctl.is-open {
+    position: fixed; inset: auto 0 0 0; z-index: 70;
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    box-shadow: var(--shadow-pop);
+  }
+  .listctl.is-open > *, .listctl.is-open form { width: 100%; }
+  .listctl.is-open .input,
+  .listctl.is-open select,
+  .listctl.is-open .sel,
+  .listctl.is-open .sel-button { width: 100%; min-width: 0; height: 44px; font-size: 15px; }
+  .listctl.is-open .sel-list { left: 0; right: 0; bottom: calc(100% + 6px); top: auto; }
+
+  .topbar .actions .btn { flex: 0 0 auto; }
+  .sel-option { padding: 11px 12px; font-size: 14px; }
+}
+
+/* A key/value row holds a name, a device id and a timestamp. On a narrow card
+   the three do not fit side by side, and the row was clipping its own content
+   rather than wrapping. The id is one unbroken token, so it needs permission
+   to break as well as room to wrap into. */
+.kv { flex-wrap: wrap; }
+.kv > * { min-width: 0; }
+.kv .mono, .kv b { overflow-wrap: anywhere; }
+.kv-end { margin-left: auto; }
+
+/* The pairing code is a 24-character token, not the short one in the design.
+   At 26px with letter-spacing it was wider than the dialog and made the whole
+   thing scroll sideways. It wraps now, and shrinks with the viewport. */
+.code-out {
+  font-size: clamp(17px, 5.4vw, 26px);
+  letter-spacing: .07em;
+  line-height: 1.35;
+  word-break: break-all;
+  white-space: normal;
+}
+
+@media (max-width: 900px) {
+  /* Label above value: side by side leaves no usable width for either. */
+  .kv { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .kv > span:first-child { min-width: 0; }
+  .kv-end { margin-left: 0; }
+  /* The command is a single line by design, but on a phone wrapping it beats
+     hiding half of it behind a scroll nobody notices. */
+  .cmd { flex-wrap: wrap; }
+  .cmd .t { white-space: normal; word-break: break-all; overflow-x: visible; }
+}
+
+/* The header stays above the scrim so the menu button can close what it
+   opened; everything else behind is inert (see the mobile shell in the JS). */
+@media (max-width: 900px) {
+  .rail { z-index: 65; }
+  .is-locked, .is-locked body { overflow: hidden; }
+  [inert] { cursor: default; }
+}
+
+/* One field per line at every width. These are read, not filled in, and
+   the values are wildly different lengths — a filesystem path beside a
+   four-digit port left the path wrapping onto two lines while half the row
+   sat empty. Stacking is what the narrow layout already did, and it was
+   the better of the two. */
+.field-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+
+@media (max-width: 900px) {
+
+  /* Breadcrumbs get the line to themselves. Sharing it with four buttons
+     squeezed the trail down to "che... serv..." and told you nothing.
+     Scoped with :has, so pages whose title is a short heading keep their
+     actions alongside it; a browser without :has simply keeps today's
+     behaviour rather than breaking. */
+  .topbar:has(.crumbs) .actions {
+    flex: 1 1 100%; margin-left: 0; justify-content: flex-end;
+  }
+  .topbar .crumbs { flex: 1 1 auto; min-width: 0; }
+}
+
+/* A card heading carries a title, a count and a note. On a narrow card those
+   three do not fit on one line, and it was overflowing rather than wrapping. */
+.card-head { flex-wrap: wrap; }
+
+@media (max-width: 900px) {
+  /* The reading popover hangs from the right edge of its button, which put
+     most of it off the left of a phone screen. It becomes a sheet, like the
+     filter controls, so it is always fully on screen wherever the button
+     happens to have wrapped to. */
+  .reading-panel {
+    position: fixed; inset: auto 10px 10px; width: auto; z-index: 70;
+    max-height: 70vh; overflow-y: auto;
+  }
+  .reading-seg { padding: 9px 8px; font-size: 12.5px; }
+}
+
+/* --- collapsible frontmatter -------------------------------------------------
+   Height is animated from an explicit pixel value set in script. The CSS-only
+   0fr-to-1fr grid trick was tried first and the row resolved to 0px even at
+   `auto`, so this measures instead of guessing, and is set back to `auto`
+   once open so the block still reflows if the window changes. */
+.meta { margin-bottom: 14px; }
+.meta-toggle { gap: 7px; }
+.meta-caret { display: inline-block; transition: transform .2s ease; color: var(--text-4); }
+.meta.is-open .meta-caret { transform: rotate(90deg); }
+/* On the chip ground the dimmest tier is 4.1:1, so this badge carries its
+   own value measured against that tint in both themes. */
+.meta-count {
+  font: 500 10.5px var(--font-mono); color: #6a6b73;
+  background: var(--chip); border-radius: 9px; padding: 1px 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .meta-count { color: #8e8f95; }
+}
+:root[data-theme="dark"] .meta-count { color: #8e8f95; }
+.meta-body {
+  height: 0; overflow: hidden; opacity: 0;
+  transition: height .22s ease, opacity .18s ease;
+}
+.meta.is-open .meta-body { opacity: 1; }
+.meta .frontmatter { margin-top: 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .meta-body, .meta-caret { transition: none; }
+}
+
+/* A heading inside the sidebar nav, separating the machine's own pages from
+   the ones that only mean anything once it has joined a mesh. */
+.rail-group {
+  font: 600 10.5px var(--font-mono); color: var(--text-4);
+  letter-spacing: .06em; text-transform: uppercase;
+  padding: 14px 10px 4px;
+}
+
+/* Ends the group above it. Without this, the last entry in the sidebar sat
+   directly under the "Team" heading and read as a third team page.
+   The rule is drawn in the gap rather than as a border on the link, so the
+   link keeps its own rounded highlight instead of having to square off its
+   top corners to meet the line. */
+.rail-nav a.rail-apart { position: relative; margin-top: 15px; }
+.rail-nav a.rail-apart::before {
+  content: ""; position: absolute; left: 10px; right: 10px; top: -8px;
+  border-top: 1px solid var(--divider);
+}
+
+/* --- outside review ------------------------------------------------------
+   Deliberately unlike a teammate's comment. A dashed edge and a warning pill
+   say "received, not authored" before anyone reads a word of it. */
+/* Teammate comments. Solid border and the ordinary surface, against the
+   dashed amber of an outside note: the difference between the two is that
+   one was signed by a device in this mesh and the other could not be, and
+   that difference has to be visible without reading a word. */
+.comment {
+  border: 1px solid var(--border); border-radius: 9px;
+  padding: 9px 11px; margin-bottom: 8px; background: var(--card-sunken);
+}
+.comment .quote {
+  font: 500 11px/1.5 var(--font-mono); color: var(--text-3);
+  border-left: 2px solid var(--accent-line); padding-left: 7px; margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+/* A comment that has lost its text keeps its words but stops claiming to
+   point at anything, so the bar that says "here" goes away entirely. Not
+   dimmed, not recoloured: a grey bar still outweighed the accent one on a
+   dark ground, which put the loudest marker on the weakest claim. Not
+   dashed either — that is the outside-note signal, and it means unsigned,
+   which is a different thing from adrift. */
+.comment.adrift .quote {
+  border-left: 0; padding-left: 0; opacity: .72;
+  font-style: italic;
+}
+.comment .body { font-size: 12.5px; color: var(--text); white-space: pre-wrap; }
+.comment .by {
+  margin-top: 5px; font-size: 11px; color: var(--text-3);
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.comment .by .pill { font-size: 10px; padding: 0 5px; }
+
+.plan-rail section.outside h2 { display: flex; align-items: center; gap: 8px; }
+.outside-note {
+  border: 1px dashed var(--aging); border-radius: 9px;
+  padding: 9px 11px; margin-bottom: 8px; background: var(--aging-bg);
+}
+.outside-note .quote {
+  font: 500 11px/1.5 var(--font-mono); color: var(--text-3);
+  border-left: 2px solid var(--aging); padding-left: 7px; margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+.outside-note .body { font-size: 12.5px; color: var(--text); white-space: pre-wrap; }
+/* The attribution sits on the amber ground, where the dimmest text tier
+   drops to 3.6:1. Its own value, measured against that tint in both themes. */
+.outside-note .by { margin-top: 5px; font-size: 11px; color: #6d6e76; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .outside-note .by { color: #999aa0; }
+}
+:root[data-theme="dark"] .outside-note .by { color: #999aa0; }

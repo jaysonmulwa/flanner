@@ -1,0 +1,116 @@
+"""Who may act in this project, and on whose authority (PRD §11.3).
+
+One question, answered in one place, because the review surface and the
+assurance verdict must not disagree about it. If they did, an approval
+recorded through one would look unauthorized to the other.
+
+There are two regimes and the difference is visible in the answer:
+
+**Solo.** No entitlement, or a project that has not joined a workspace.
+Roles come from ``workflow.local_roles()``, which answers maintainer for
+everyone. Review still runs, but it gates nothing: it is a rehearsal of the
+workflow, not an authorization check, and pretending otherwise would be
+worse than admitting it.
+
+**Joined.** The project names a control-plane workspace and this device
+holds a usable entitlement. Roles come from the signed capability, which
+cannot be self-assigned.
+
+The failure direction matters more than either regime. Once a project has
+joined a workspace, a missing, expired, or unverifiable entitlement yields
+an empty role map, never the local placeholder. Falling back would mean an
+expired entitlement granted strictly more than a valid one, which is the
+one way this could be worse than having no authorization at all.
+
+Nothing here reaches the network. It reads the cached entitlement through
+``session``, which has no HTTP in it, so a read command stays a read.
+Renewal is ``account``'s job and belongs to commands that expect to wait.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+
+from . import session as cache
+from . import workflow
+from .database import ProjectModel
+from .entitlements import roles_from_entitlement
+from .plan_ops import workspace_id_for
+
+# Where a role map came from. Reported rather than inferred, so a caller can
+# tell an advisory verdict from an enforced one.
+LOCAL = "local"
+ENTITLEMENT = "entitlement"
+
+
+@dataclass(frozen=True)
+class Authorization:
+    """The role map to project with, and the identity acting under it."""
+
+    roles: dict[str, str]
+    actor: str
+    source: str
+    workspace_id: str
+    reason: str = ""
+
+    @property
+    def enforced(self) -> bool:
+        """True when refusals here mean something the user cannot overrule."""
+        return self.source == ENTITLEMENT
+
+
+def resolve(
+    project: ProjectModel, *, actor: str | None = None, now: datetime | None = None
+) -> Authorization:
+    """Work out the authorization in force for this project."""
+    workspace_id = workspace_id_for(project)
+
+    if not project.workspace_id:
+        # Solo. A local workspace id can appear in no entitlement, so there
+        # is nothing to check even if this device holds one.
+        return Authorization(
+            roles=workflow.local_roles(),
+            actor=actor or workflow.LOCAL_ACTOR,
+            source=LOCAL,
+            workspace_id=workspace_id,
+            reason="this project has not joined a workspace",
+        )
+
+    session = cache.load()
+    if session is None:
+        return _refused(actor, workspace_id, "this device is not logged in")
+
+    verdict = session.status(now=now)
+    if not verdict.usable or verdict.claims is None:
+        return _refused(
+            actor, workspace_id, verdict.reason or f"the entitlement is {verdict.status}"
+        )
+
+    # The actor defaults to whoever the entitlement names. Keeping the local
+    # placeholder here would produce a role map keyed by a user the actor is
+    # not, and every action would be refused for the wrong reason.
+    acting_as = actor or verdict.claims.user_id
+    roles = roles_from_entitlement(verdict.claims, workspace_id, acting_as)
+    return Authorization(
+        roles=roles,
+        actor=acting_as,
+        source=ENTITLEMENT,
+        workspace_id=workspace_id,
+        reason="" if roles else "you hold no role in this workspace",
+    )
+
+
+def _refused(actor: str | None, workspace_id: str, reason: str) -> Authorization:
+    """A joined workspace with nothing to authorize against.
+
+    Empty, not local: a project that joined a team must not become more
+    permissive because its entitlement lapsed.
+    """
+    return Authorization(
+        roles={},
+        actor=actor or workflow.LOCAL_ACTOR,
+        source=ENTITLEMENT,
+        workspace_id=workspace_id,
+        reason=reason,
+    )

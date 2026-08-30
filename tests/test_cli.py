@@ -7,6 +7,7 @@ get_claude_config_path so the real Claude config is never written.
 
 import json
 import os
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -28,8 +29,15 @@ JIRA_URL = "https://x.atlassian.net"
 
 @pytest.fixture
 def home(tmp_path):
-    h = tmp_path / "home"
-    h.mkdir()
+    """The one flanner home for this test.
+
+    Reuses the isolated FLANNER_HOME conftest already set, so the CLI and
+    any fixture that calls into flanner directly share a device identity.
+    Pointing the runner somewhere else would quietly simulate two devices,
+    and signature checks would then fail for the wrong reason.
+    """
+    h = Path(os.environ["FLANNER_HOME"])
+    h.mkdir(parents=True, exist_ok=True)
     return h
 
 
@@ -201,7 +209,7 @@ def test_list_project_plans(runner, plan):
 def test_list_project_no_plans(runner, project):
     result = runner.invoke(cli, ["list", "--project", "proj"])
     assert result.exit_code == 0
-    assert "No plan files yet" in result.output
+    assert "No plans in" in result.output
 
 
 def test_list_project_missing(runner, initialized):
@@ -341,18 +349,18 @@ def test_sync_dry_run_and_import(runner, project, git_repo):
 
     dry = runner.invoke(cli, ["sync", "--dry-run"])
     assert dry.exit_code == 0, dry.output
-    assert "DRY RUN MODE" in dry.output
+    assert "Dry run" in dry.output
     assert "WOULD IMPORT" in dry.output
     assert "Not an MCP plan file" in dry.output
     assert "Invalid frontmatter" in dry.output
-    assert "Run without --dry-run" in dry.output
+    assert "Run flanner sync to apply" in dry.output
 
     real = runner.invoke(cli, ["sync", "--project", "proj"])
     assert real.exit_code == 0, real.output
     assert "OK IMPORTED synced_v1.md" in real.output
-    assert "Files imported: 1" in real.output
-    assert "Files skipped: 1" in real.output
-    assert "Errors: 1" in real.output
+    assert "1 imported" in real.output
+    assert "1 skipped" in real.output
+    assert "1 error" in real.output
 
     # Re-sync: version already in database
     again = runner.invoke(cli, ["sync"])
@@ -375,7 +383,7 @@ def test_sync_unparseable_plan_id_is_error(runner, project, git_repo):
     result = runner.invoke(cli, ["sync"])
     assert result.exit_code == 0
     assert "ERROR broken.md" in result.output
-    assert "Errors: 1" in result.output
+    assert "1 error" in result.output
 
 
 # --- start / stop / status ---
@@ -384,7 +392,7 @@ def test_sync_unparseable_plan_id_is_error(runner, project, git_repo):
 def test_start_prints_instructions(runner):
     result = runner.invoke(cli, ["start"])
     assert result.exit_code == 0
-    assert "MCP SERVER READY" in result.output
+    assert "MCP server ready" in result.output
 
 
 def test_start_already_running(runner, home, monkeypatch):
@@ -402,7 +410,7 @@ def test_start_stale_pid(runner, home, monkeypatch):
 
     monkeypatch.setattr(os, "kill", boom)
     result = runner.invoke(cli, ["start"])
-    assert "MCP SERVER READY" in result.output
+    assert "MCP server ready" in result.output
     assert not (home / "server.pid").exists()
 
 
@@ -435,9 +443,9 @@ def test_stop_stale_pid(runner, home, monkeypatch):
 def test_status_no_db(runner, claude_config):
     result = runner.invoke(cli, ["status"])
     assert result.exit_code == 0
-    assert "Server Status: Stopped" in result.output
-    assert "Database: Not initialized" in result.output
-    assert "Not Registered" in result.output
+    assert "stopped" in result.output
+    assert "not initialized" in result.output
+    assert "not registered" in result.output
 
 
 def test_status_with_db_and_registration(runner, home, project, claude_config, monkeypatch):
@@ -445,9 +453,9 @@ def test_status_with_db_and_registration(runner, home, project, claude_config, m
     (home / "server.pid").write_text("12345")
     monkeypatch.setattr(os, "kill", lambda *a: None)
     result = runner.invoke(cli, ["status"])
-    assert "Server Status: Running" in result.output
-    assert "Projects: 1" in result.output
-    assert "Registered & Valid" in result.output
+    assert "running" in result.output
+    assert "1 project" in result.output
+    assert "registered" in result.output
 
 
 def test_status_stale_pid(runner, home, initialized, claude_config, monkeypatch):
@@ -458,7 +466,7 @@ def test_status_stale_pid(runner, home, initialized, claude_config, monkeypatch)
 
     monkeypatch.setattr(os, "kill", boom)
     result = runner.invoke(cli, ["status"])
-    assert "Server Status: Stopped" in result.output
+    assert "stopped" in result.output
     assert not (home / "server.pid").exists()
 
 
@@ -518,7 +526,7 @@ def test_claude_info_not_registered(runner, claude_config):
 def test_claude_info_registered(runner, claude_config):
     ci.register_mcp_server()
     result = runner.invoke(cli, ["claude-info"])
-    assert "Current Configuration" in result.output
+    assert "Current configuration" in result.output
 
 
 # --- jira ---
@@ -888,3 +896,391 @@ def test_setup_registers_and_writes_global_nudge(runner, tmp_path, monkeypatch, 
     assert nudge.exists()
     assert "initialize_project_tool" in nudge.read_text(encoding="utf-8")
     assert "Claude Code CLI not found" in result.output  # took the no-claude branch
+
+
+# --- doctor: catalog/disk reconciliation ---
+
+
+@pytest.fixture
+def written_plan(project, git_repo):
+    """A plan created through the real write path, so its file exists on disk."""
+    from flanner.database import get_project
+    from flanner.plan_ops import create_plan
+
+    session = get_session()
+    proj = get_project(session, project)
+    plan_file, _ = create_plan(
+        session, project=proj, name="written", content="# body\n", created_by="test"
+    )
+    session.commit()
+    return plan_file.id
+
+
+def test_doctor_clean_project(runner, written_plan, git_repo):
+    result = runner.invoke(cli, ["doctor", "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert "agree" in result.output
+
+
+def test_doctor_reports_missing_file(runner, plan):
+    # The `plan` fixture records a version whose file was never written.
+    result = runner.invoke(cli, ["doctor", "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert "missing_file" in result.output
+
+
+def test_doctor_json_output(runner, plan):
+    result = runner.invoke(cli, ["doctor", "--project", "proj", "--output", "json"])
+    assert result.exit_code == 0, result.output
+    findings = json.loads(result.output)
+    assert findings[0]["kind"] == "missing_file"
+    assert findings[0]["repairable"] is False
+
+
+def test_doctor_repair_adopts_orphan(runner, written_plan, git_repo):
+    original = (git_repo / ".plans" / "written_v1.md").read_text(encoding="utf-8")
+    orphan = git_repo / ".plans" / "written_v2.md"
+    orphan.write_text(original.replace("version: 1", "version: 2"), encoding="utf-8")
+
+    result = runner.invoke(cli, ["doctor", "--project", "proj"])
+    assert "orphan_file" in result.output
+    assert "--repair" in result.output  # suggests the fix
+
+    repaired = runner.invoke(cli, ["doctor", "--project", "proj", "--repair"])
+    assert repaired.exit_code == 0, repaired.output
+    assert "Repaired 1" in repaired.output
+
+    after = runner.invoke(cli, ["doctor", "--project", "proj"])
+    assert "agree" in after.output
+
+
+def test_doctor_unknown_project_exits_1(runner, initialized):
+    """The name given back, not generic advice to do what was just done."""
+    result = runner.invoke(cli, ["doctor", "--project", "nope"])
+    assert result.exit_code == 1
+    assert "No project named 'nope'" in result.output
+    assert "pass --project" not in result.output
+
+
+# --- single-writer discipline: CLI writes go through the daemon ---
+
+
+def test_cli_write_routes_through_the_daemon(runner, plan, monkeypatch):
+    """With a daemon up, a CLI write is forwarded rather than applied directly."""
+    from flanner import services
+
+    seen = []
+
+    def fake_call(path, payload):
+        seen.append((path, payload["op"]))
+        return {"result": {"success": True, "message": "ok", "count": 2}}
+
+    monkeypatch.setattr(services.ipc, "call_daemon", fake_call)
+    result = runner.invoke(cli, ["jira", "unlink", "myplan", "--all", "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert seen == [("/ipc/call", "unlink_jira_issue")]
+    assert "Unlinked 2 JIRA issue(s)" in result.output
+
+
+def test_cli_write_applies_locally_without_a_daemon(runner, project, git_repo):
+    """No daemon: the write still happens exactly once, in-process."""
+    from flanner.database import get_jira_config, get_session
+
+    result = runner.invoke(
+        cli, ["jira", "config", "proj", "--url", JIRA_URL, "--project-key", "PROJ"]
+    )
+    assert result.exit_code == 0, result.output
+    assert get_jira_config(get_session(), project).jira_url == JIRA_URL
+
+
+def test_cli_links_are_attributed_to_the_user_not_the_agent(runner, plan):
+    """Routing through the shared service must not relabel human actions."""
+    from flanner.database import get_jira_links, get_session
+
+    result = runner.invoke(
+        cli, ["jira", "link", "myplan", "--issue", "PROJ-7", "--project", "proj"]
+    )
+    assert result.exit_code == 0, result.output
+    links = get_jira_links(get_session(), plan)
+    assert links[0].created_by == "user"
+
+
+# --- history, diff and why --------------------------------------------------
+
+
+@pytest.fixture
+def revised_plan(project, git_repo):
+    """A plan with three versions, so history and diff have something to say."""
+    from flanner.database import get_project
+    from flanner.plan_ops import create_plan, record_new_version
+
+    session = get_session()
+    proj = get_project(session, project)
+    plan_file, _ = create_plan(
+        session,
+        project=proj,
+        name="revised",
+        content="# Title\n\nfirst line\n",
+        created_by="claude",
+    )
+    record_new_version(
+        session,
+        project=proj,
+        plan_file=plan_file,
+        content="# Title\n\nfirst line\nsecond line\n",
+        created_by="jayson",
+        notes="added a line",
+    )
+    record_new_version(
+        session,
+        project=proj,
+        plan_file=plan_file,
+        content="# Title\n\nreplaced line\nsecond line\n",
+        created_by="claude",
+        notes="reworded",
+    )
+    session.commit()
+    return plan_file
+
+
+def test_history_lists_every_version_newest_first(runner, revised_plan):
+    result = runner.invoke(cli, ["history", "revised", "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert result.output.index("v3") < result.output.index("v1")
+    assert "reworded" in result.output
+    assert "added a line" in result.output
+    assert "3 versions" in result.output
+
+
+def test_history_counts_what_changed(runner, revised_plan):
+    """The churn column is computed from the files; it is stored nowhere."""
+    result = runner.invoke(cli, ["history", "revised", "--project", "proj"])
+    assert "+1" in result.output  # v2 added one line
+    assert "+3" in result.output  # v1 counts as all-added
+
+
+def test_history_limit(runner, revised_plan):
+    result = runner.invoke(cli, ["history", "revised", "--project", "proj", "--limit", "1"])
+    assert result.exit_code == 0, result.output
+    assert "v3" in result.output
+    assert "v1" not in result.output.split("3 versions")[0]
+
+
+def test_diff_defaults_to_the_last_two_versions(runner, revised_plan):
+    result = runner.invoke(cli, ["diff", "revised", "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert "- first line" in result.output
+    assert "+ replaced line" in result.output
+
+
+def test_diff_takes_a_version_with_or_without_the_v(runner, revised_plan):
+    bare = runner.invoke(cli, ["diff", "revised", "1", "3", "--project", "proj"])
+    prefixed = runner.invoke(cli, ["diff", "revised", "v1", "v3", "--project", "proj"])
+    assert bare.exit_code == 0, bare.output
+    assert prefixed.exit_code == 0, prefixed.output
+    assert "+ second line" in bare.output
+    assert bare.output == prefixed.output
+
+
+def test_diff_labels_hunks_with_the_heading_above_them(runner, revised_plan):
+    """Line numbers are true and useless; the section is what orients you."""
+    result = runner.invoke(cli, ["diff", "revised", "v1", "v3", "--project", "proj"])
+    assert "@@ # Title @@" in result.output
+
+
+def test_diff_rejects_a_version_that_does_not_exist(runner, revised_plan):
+    result = runner.invoke(cli, ["diff", "revised", "v1", "v99", "--project", "proj"])
+    assert result.exit_code == 1
+    assert "v99" in result.output
+
+
+def test_diff_says_so_when_nothing_differs(runner, written_plan):
+    result = runner.invoke(cli, ["diff", "written", "v1", "v1", "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert "identical" in result.output
+
+
+def test_why_reports_the_same_evidence_as_freshness(runner, written_plan, git_repo):
+    why = runner.invoke(cli, ["why", "written", "--project", "proj"])
+    freshness = runner.invoke(cli, ["freshness", "written", "--project", "proj"])
+    assert why.exit_code == 0, why.output
+    assert why.output == freshness.output
+
+
+# --- pack and import ----------------------------------------------------------
+
+
+def test_pack_writes_one_self_contained_file(runner, written_plan, git_repo, tmp_path):
+    out = tmp_path / "packet.html"
+    result = runner.invoke(
+        cli, ["review", "pack", "written", "--project", "proj", "--output", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    assert out.exists()
+    html = out.read_text(encoding="utf-8")
+    assert "@font-face" in html
+    assert 'class="toc"' in html
+    assert 'id="notes"' in html
+    assert "no team review" in result.output
+
+
+def test_pack_can_leave_the_fonts_out(runner, written_plan, git_repo, tmp_path):
+    fat = tmp_path / "fat.html"
+    thin = tmp_path / "thin.html"
+    runner.invoke(cli, ["review", "pack", "written", "--project", "proj", "--output", str(fat)])
+    runner.invoke(
+        cli,
+        ["review", "pack", "written", "--project", "proj", "--output", str(thin), "--no-fonts"],
+    )
+    assert thin.stat().st_size < fat.stat().st_size
+
+
+def test_pack_refuses_a_version_that_does_not_exist(runner, written_plan, git_repo):
+    result = runner.invoke(
+        cli, ["review", "pack", "written", "--project", "proj", "--version", "99"]
+    )
+    assert result.exit_code == 1
+    assert "does not exist" in result.output
+
+
+def test_deciding_in_a_solo_project_says_the_decision_binds_nobody(runner, written_plan):
+    """`review status` said this already; the moment of deciding did not.
+
+    Somebody can approve a plan without ever running status, and "Recorded
+    approve" on its own reads exactly like an authorization.
+    """
+    runner.invoke(cli, ["review", "propose", "written", "--project", "proj"])
+
+    result = runner.invoke(cli, ["review", "decide", "written", "approve", "--project", "proj"])
+
+    assert result.exit_code == 0, result.output
+    assert "Recorded approve" in result.output
+    assert "advisory" in result.output
+    # The why, not just the word. Taken from the resolution, so this also
+    # fails if the two call sites ever start wording it differently.
+    assert "has not joined a workspace" in result.output
+
+
+def test_whoami_says_what_this_device_holds_and_that_it_keeps_it(runner, written_plan):
+    """The Settings page has said this since retirement landed; the CLI had not.
+
+    A CLI-only user is the common case, so "keep everything" was a decision
+    they lived with and could not see.
+    """
+    result = runner.invoke(cli, ["whoami"])
+
+    assert result.exit_code == 0, result.output
+    assert "Holds" in result.output
+    assert "artifacts" in result.output
+    assert "never pruned" in result.output
+
+
+def test_retiring_with_yes_still_says_nothing_was_erased(runner, written_plan):
+    """--yes skips the prompt, which was the only place that said this.
+
+    A script is exactly where somebody would assume the command deleted
+    something, and it is the one context that never sees the warning.
+    """
+    result = runner.invoke(cli, ["retire", "written", "--project", "proj", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "retired" in result.output
+    assert "Nothing was erased" in result.output
+
+
+def _review_file(tmp_path, plan="written", version=1, notes=None):
+    body = {
+        "packet": {"plan": plan, "version": version, "project": "proj"},
+        "reviewer": "Dana at Acme",
+        "notes": notes
+        if notes is not None
+        else [{"quote": "body", "section": "", "occurrence": 0, "body": "Why this?"}],
+    }
+    path = tmp_path / "review.json"
+    path.write_text(json.dumps(body), encoding="utf-8")
+    return path
+
+
+def test_import_records_the_notes(runner, written_plan, git_repo, tmp_path):
+    result = runner.invoke(
+        cli, ["review", "import", str(_review_file(tmp_path)), "--project", "proj"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Recorded 1 note from Dana at Acme" in result.output
+    assert "Why this?" in result.output
+
+
+def test_import_says_the_notes_are_unverified(runner, written_plan, git_repo, tmp_path):
+    """The reviewer has no device key. Presenting their notes as though they
+    were a teammate's signed comment would be the one unforgivable bug."""
+    result = runner.invoke(
+        cli, ["review", "import", str(_review_file(tmp_path)), "--project", "proj"]
+    )
+    assert "Unverified" in result.output
+    assert "no device key" in result.output
+
+
+def test_imported_review_is_stored_as_its_own_artifact_type(
+    runner, written_plan, git_repo, tmp_path
+):
+    """A distinct type is what stops anything downstream mistaking outside
+    review for a signed teammate comment."""
+    from flanner.artifacts import REVIEW_EXTERNAL
+    from flanner.assurance import load_external_reviews
+
+    runner.invoke(cli, ["review", "import", str(_review_file(tmp_path)), "--project", "proj"])
+    external = load_external_reviews(get_session(), str(written_plan))
+    assert all(e.artifact.artifact_type == REVIEW_EXTERNAL for e in external)
+    assert len(external) == 1
+    assert external[0].payload["verified"] is False
+    assert external[0].payload["reviewer"] == "Dana at Acme"
+    assert external[0].payload["notes"][0]["body"] == "Why this?"
+
+
+def test_import_works_on_a_plan_that_was_never_signed(runner, written_plan, git_repo, tmp_path):
+    """A local plan that has never joined a workspace has no signed
+    artifact. Refusing there would fail exactly the people most likely to
+    be sending plans to outsiders."""
+    result = runner.invoke(
+        cli, ["review", "import", str(_review_file(tmp_path)), "--project", "proj"]
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_import_warns_when_the_plan_has_moved_on(runner, written_plan, git_repo, tmp_path):
+    path = _review_file(tmp_path, version=1)
+    from flanner.database import get_project_by_name
+    from flanner.plan_ops import record_new_version
+
+    session = get_session()
+    proj = get_project_by_name(session, "proj")
+    assert proj is not None
+    plan = next(p for p in proj.plan_files if p.name == "written")
+    record_new_version(
+        session,
+        project=proj,
+        plan_file=plan,
+        content="# body\n\nnow with more\n",
+        created_by="test",
+        notes="a later revision",
+    )
+    session.commit()
+
+    result = runner.invoke(cli, ["review", "import", str(path), "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert "written against v1" in result.output.lower()
+
+
+def test_import_rejects_a_file_that_names_no_plan(runner, initialized, tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps({"notes": [{"body": "x"}]}), encoding="utf-8")
+    result = runner.invoke(cli, ["review", "import", str(path)])
+    assert result.exit_code == 1
+    assert "which plan" in result.output
+
+
+def test_import_of_an_empty_review_changes_nothing(runner, written_plan, git_repo, tmp_path):
+    path = _review_file(tmp_path, notes=[])
+    result = runner.invoke(cli, ["review", "import", str(path), "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert "no notes" in result.output

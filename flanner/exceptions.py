@@ -53,3 +53,15 @@ class JiraError(FlannerError):
 
 class LinearError(FlannerError):
     """A Linear identifier/workspace is invalid, or a Linear API call failed."""
+
+
+class MeshError(FlannerError):
+    """A mesh provider could not be reached or refused an operation."""
+
+
+class MeshUnavailableError(MeshError):
+    """The provider's control plane is down or rate-limiting.
+
+    Distinct from a refusal: the request may succeed on retry, so callers
+    fail closed for new access while leaving existing local state intact.
+    """

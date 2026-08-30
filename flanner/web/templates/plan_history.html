@@ -1,108 +1,47 @@
 {% extends "base.html" %}
+{% block title %}{{ plan_file.name }} — history{% endblock %}
 
-{% block title %}History - {{ plan_file.name }} - {{ project.name }} - flanner{% endblock %}
+{% block topbar_back %}
+<a class="btn back" href="/plans/{{ plan_file.id }}" aria-label="Back to the plan" title="Back to the plan"><span aria-hidden="true">←</span></a>
+{% endblock %}
+
+{% block topbar_main %}
+<nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/projects">Projects</a><span class="sep">/</span>
+    <a href="/projects/{{ project.id }}">{{ project.name }}</a><span class="sep">/</span>
+    <a href="/plans/{{ plan_file.id }}">{{ plan_file.name }}.md</a><span class="sep">/</span>
+    <span class="here">History</span>
+  </nav>
+{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-primary" href="/plans/{{ plan_file.id }}">Back to the plan</a>
+{% endblock %}
 
 {% block content %}
-<div class="plan-history">
-    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">~</a><span class="crumb-sep"> / </span><a href="/projects">projects</a><span class="crumb-sep"> / </span><a href="/projects/{{ project.id }}">{{ project.name }}</a><span class="crumb-sep"> / </span><a href="/plans/{{ plan_file.id }}">{{ plan_file.name }}</a><span class="crumb-sep"> / </span><span class="crumb-here">history</span></nav>
-    <header class="page-header">
-        <div>
-            <h1>Version History</h1>
-            <p class="page-subtitle">
-                {{ plan_file.name }}
-                in <a href="/projects/{{ project.id }}">{{ project.name }}</a>
-            </p>
-        </div>
-        <div class="header-actions">
-            <a href="/plans/{{ plan_file.id }}" class="btn btn-primary">
-                View Latest
-            </a>
-            <a href="/plans/{{ plan_file.id }}/edit" class="btn btn-secondary">
-                Edit
-            </a>
-        </div>
-    </header>
-
-    <!-- Stats -->
-    <div class="stats-bar">
-        <div class="stat-item">
-            <strong>{{ versions|length }}</strong> Version(s)
-        </div>
-        <div class="stat-item">
-            Contributors: {{ versions|map(attribute='created_by')|unique|list|length }}
-        </div>
-        <div class="stat-item">
-            First Created: {{ versions[-1].created_at.strftime('%Y-%m-%d') if versions }}
-        </div>
+<div class="pane">
+  <div class="card">
+    <div class="card-head">Every version <span class="note">{{ versions | length }}</span></div>
+    <div class="tablewrap">
+      <div class="grid-head cols-history">
+        <span>Version</span><span>Notes</span><span>Author</span><span>File</span><span>Written</span>
+      </div>
+      {% for version in versions %}
+      <div class="grid-row cols-history">
+        <span><a class="vtag {% if version.version == plan_file.current_version %}vtag-current{% endif %}"
+                 href="/plans/{{ plan_file.id }}?version={{ version.version }}">v{{ version.version }}</a></span>
+        <span>{{ version.notes or '—' }}</span>
+        <span class="when">{{ version.created_by or 'user' }}</span>
+        <span class="path" title="{{ version.file_path }}">{{ version.file_path | basename }}</span>
+        <span class="when">{{ version.created_at | relative_time if version.created_at }}</span>
+      </div>
+      {% endfor %}
     </div>
-
-    <!-- Timeline -->
-    <div class="timeline">
-        {% for version in versions %}
-        <div class="timeline-item {% if version.version == plan_file.current_version %}timeline-current{% endif %}">
-            <div class="timeline-marker">
-                <div class="timeline-dot"></div>
-                {% if not loop.last %}
-                <div class="timeline-line"></div>
-                {% endif %}
-            </div>
-
-            <div class="timeline-content">
-                <div class="timeline-header">
-                    <div class="timeline-version">
-                        <h3>
-                            <a href="/plans/{{ plan_file.id }}?version={{ version.version }}">
-                                Version {{ version.version }}
-                            </a>
-                            {% if version.version == plan_file.current_version %}
-                            <span class="badge badge-success">Current</span>
-                            {% endif %}
-                        </h3>
-                    </div>
-                    <div class="timeline-date">
-                        {{ version.created_at.strftime('%Y-%m-%d %H:%M') if version.created_at }}
-                    </div>
-                </div>
-
-                <div class="timeline-meta">
-                    <span class="meta-badge">
-                        {{ version.created_by }}
-                    </span>
-                    <span class="meta-badge">
-                        {{ version.created_at|relative_time if version.created_at }}
-                    </span>
-                    <span class="meta-badge">
-                        {{ version.content_hash[:8] }}...
-                    </span>
-                </div>
-
-                {% if version.notes %}
-                <div class="timeline-notes">
-                    {{ version.notes }}
-                </div>
-                {% else %}
-                <div class="timeline-notes text-muted">
-                    No notes for this version
-                </div>
-                {% endif %}
-
-                <div class="timeline-actions">
-                    <a href="/plans/{{ plan_file.id }}?version={{ version.version }}" class="btn btn-sm btn-primary">
-                        View
-                    </a>
-                    <code class="timeline-path" title="{{ version.file_path }}">{{ version.file_path|basename }}</code>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-
-    {% if not versions %}
-    <div class="empty-state">
-        {% include "_empty_glyph.html" %}
-        <h3>No Version History</h3>
-        <p>This shouldn't happen. There should always be at least one version.</p>
-    </div>
-    {% endif %}
+  </div>
+  <div class="footnote">
+    <span class="i" aria-hidden="true">i</span>
+    Every version is kept as its own file. Nothing is overwritten, so an older plan
+    stays readable exactly as it was written.
+  </div>
 </div>
 {% endblock %}

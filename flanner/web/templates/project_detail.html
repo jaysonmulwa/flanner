@@ -1,130 +1,107 @@
 {% extends "base.html" %}
+{% block title %}{{ project.name }}{% endblock %}
 
-{% block title %}{{ project.name }} - flanner{% endblock %}
+{% block topbar_back %}
+<a class="btn back" href="/projects" aria-label="Back to projects" title="Back to projects"><span aria-hidden="true">←</span></a>
+{% endblock %}
+
+{% block topbar_main %}
+<nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/projects">Projects</a><span class="sep">/</span>
+    <span class="here">{{ project.name }}</span>
+  </nav>
+{% endblock %}
+
+{% block topbar_actions %}
+<div class="listctl" id="listctl">
+<label class="sr-only" for="plans-filter">Filter</label>
+    <input class="input input-sm" type="search" id="plans-filter" data-list-filter
+           placeholder="Filter plans…" autocomplete="off" spellcheck="false">
+    <label class="sr-only" for="plans-sort">Sort</label>
+    <select class="btn btn-sm" id="plans-sort" data-list-sort>
+      <option value="updated:desc">Sort: Recently updated</option>
+      <option value="name:asc">Sort: Name</option>
+      <option value="version:desc">Sort: Version</option>
+    </select>
+</div>
+    <form method="post" action="/projects/{{ project.id }}/delete"
+          onsubmit="return confirm('Delete {{ project.name }}? Plan files on disk are left alone.')">
+      <button class="btn btn-danger" type="submit">Delete project</button>
+    </form>
+    <a class="btn btn-primary" href="/projects/{{ project.id }}/plans/new">New plan</a>
+{% endblock %}
 
 {% block content %}
-<div class="project-detail">
-    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">~</a><span class="crumb-sep"> / </span><a href="/projects">projects</a><span class="crumb-sep"> / </span><span class="crumb-here">{{ project.name }}</span></nav>
-    <header class="page-header">
-        <div>
-            <h1>{{ project.name }}</h1>
-            <p class="page-subtitle">{{ project.description or 'No description' }}</p>
-        </div>
-        <a href="/projects/{{ project.id }}/plans/new" class="btn btn-primary">
-            New Plan File
-        </a>
-    </header>
+<div class="pane">
 
-    <!-- Project Info -->
-    <div class="info-grid">
-        <div class="info-card">
-            <div class="info-label">Project Root</div>
-            <div class="info-value"><code>{{ project.project_root or 'Not set' }}</code></div>
-        </div>
-        <div class="info-card">
-            <div class="info-label">Plan Directory</div>
-            <div class="info-value"><code>{{ project.plan_directory }}</code></div>
-        </div>
-        <div class="info-card">
-            <div class="info-label">Auto .gitignore</div>
-            <div class="info-value">
-                {% if project.auto_gitignore %}
-                <span class="badge badge-success">Enabled</span>
-                {% else %}
-                <span class="badge badge-warning">Disabled</span>
-                {% endif %}
-            </div>
-        </div>
-        <div class="info-card">
-            <div class="info-label">Total Plan Files</div>
-            <div class="info-value"><strong>{{ total }}</strong></div>
-        </div>
-    </div>
-
-    <!-- Plan Files -->
-    <section class="content-section">
-        <h2>Plan Files</h2>
-
-        {% if plan_files %}
-        <div data-listgroup>
-        <div class="list-controls">
-            <input type="search" class="list-filter" data-list-filter
-                   placeholder="Filter plans..." aria-label="Filter plans by name">
-            <label class="list-sort">Sort
-                <select data-list-sort aria-label="Sort plans">
-                    <option value="updated:desc">Recently updated</option>
-                    <option value="name:asc">Name (A-Z)</option>
-                    <option value="created:desc">Newest first</option>
-                    <option value="created:asc">Oldest first</option>
-                </select>
-            </label>
-        </div>
-        <div class="plan-files-list" data-list>
-            {% for plan_file in plan_files %}
-            <div class="plan-file-card" data-list-item data-name="{{ plan_file.name }}"
-                 data-created="{{ plan_file.created_at.isoformat() if plan_file.created_at else '' }}"
-                 data-updated="{{ plan_file.updated_at.isoformat() if plan_file.updated_at else '' }}">
-                <div class="plan-file-header">
-                    <h3>
-                        <a href="/plans/{{ plan_file.id }}">{{ plan_file.name }}</a>
-                    </h3>
-                    <span class="version-badge">v{{ plan_file.current_version }}</span>
-                </div>
-
-                {% if plan_file.description %}
-                <p class="plan-file-description">{{ plan_file.description }}</p>
-                {% endif %}
-
-                <div class="plan-file-meta">
-                    <span class="meta-item">
-                        {{ plan_file.versions|length if plan_file.versions else plan_file.current_version }} version(s)
-                    </span>
-                    {% set lc = linear_counts.get(plan_file.id|string) %}
-                    {% if lc %}
-                    <span class="meta-item"><span class="linear-marker">Linear &times;{{ lc }}</span></span>
-                    {% endif %}
-                    <span class="meta-item">
-                        Updated {{ plan_file.updated_at|relative_time if plan_file.updated_at else 'never' }}
-                    </span>
-                    <span class="meta-item">
-                        Created {{ plan_file.created_at.strftime('%Y-%m-%d') if plan_file.created_at else 'unknown' }}
-                    </span>
-                </div>
-
-                <div class="plan-file-actions">
-                    <a href="/plans/{{ plan_file.id }}" class="btn btn-sm btn-primary">
-                        View
-                    </a>
-                    <a href="/plans/{{ plan_file.id }}/edit" class="btn btn-sm btn-secondary">
-                        Edit
-                    </a>
-                    <a href="/plans/{{ plan_file.id }}/history" class="btn btn-sm btn-info">
-                        History
-                    </a>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        <p class="list-empty" data-list-empty hidden>No plans match that filter.</p>
-        </div>
-        {% else %}
-        <div class="empty-state">
-        {% include "_empty_glyph.html" %}
-            <h3>No Plan Files Yet</h3>
-            <p>Create your first plan file for this project.</p>
-            <a href="/projects/{{ project.id }}/plans/new" class="btn btn-primary">
-                Create Plan File
-            </a>
-        </div>
+  <div class="card card-pad">
+    <div style="display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap">
+      <div>
+        <div style="font-size:18px; font-weight:700">{{ project.name }}</div>
+        {% if project.description %}
+        <div style="color:var(--text-3); font-size:13px; margin-top:2px">{{ project.description }}</div>
         {% endif %}
-    </section>
+      </div>
+      <div style="margin-left:auto; display:flex; gap:20px; font-size:12.5px">
+        <div><div style="color:var(--text-4)">Plans</div>
+          <div class="mono tnum" style="font-weight:600">{{ total }}</div></div>
+        <div><div style="color:var(--text-4)">Plan directory</div>
+          <div class="mono">{{ project.plan_directory }}</div></div>
+      </div>
+    </div>
+    {% if project.project_root %}
+    <div class="filebar" style="margin-top:12px">
+      <span>Project root:</span><span class="p">{{ project.project_root }}</span>
+      {% if project.auto_gitignore %}<span class="ok">.gitignore managed ✓</span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
 
-{% if pages > 1 %}
-<nav class="pager" aria-label="Pagination">
-    {% if page > 1 %}<a href="?page={{ page - 1 }}">&larr; prev</a>{% endif %}
+  {% if plan_files %}
+  <div class="card" data-listgroup>
+    <div class="card-head">Plans <span class="note">{{ total }}</span></div>
+    <div class="tablewrap">
+      <div class="grid-head cols-plans">
+        <span>Plan</span><span>Version</span><span>Links</span><span>Author</span><span>Updated</span>
+      </div>
+      <div data-list>
+      {% for plan_file in plan_files %}
+      <div class="plan-file-card" data-list-item
+           data-name="{{ plan_file.name }}"
+           data-version="{{ plan_file.current_version }}"
+           data-updated="{{ plan_file.updated_at.isoformat() if plan_file.updated_at }}">
+        <span><a class="name" href="/plans/{{ plan_file.id }}">{{ plan_file.name }}.md</a></span>
+        <span><span class="vtag">v{{ plan_file.current_version }}</span></span>
+        <span>
+          {% set lc = linear_counts.get(plan_file.id|string) %}
+          {% if lc %}<span class="pill pill-quiet linear-marker">Linear ×{{ lc }}</span>{% else %}
+          <span class="sub">—</span>{% endif %}
+        </span>
+        <span class="when">{{ plan_file.created_by or 'user' }}</span>
+        <span class="when">{{ plan_file.updated_at | relative_time }}</span>
+      </div>
+      {% endfor %}
+      </div>
+      <div class="empty-filter" data-list-empty hidden>Nothing matches that filter.</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="card empty">
+    <h2>No plans in this project</h2>
+    <p>Your agents will fill this in, or you can write the first one yourself.</p>
+    <a class="btn btn-primary" href="/projects/{{ project.id }}/plans/new">New plan</a>
+  </div>
+  {% endif %}
+
+  {% if pages and pages > 1 %}
+  <div class="footnote" style="justify-content:center">
+    {% if page > 1 %}
+    <a class="btn btn-sm" href="/projects/{{ project.id }}?page={{ page - 1 }}">Previous</a>{% endif %}
     <span>page {{ page }} / {{ pages }} ({{ total }} total)</span>
-    {% if page < pages %}<a href="?page={{ page + 1 }}">next &rarr;</a>{% endif %}
-</nav>
-{% endif %}
+    {% if page < pages %}
+    <a class="btn btn-sm" href="/projects/{{ project.id }}?page={{ page + 1 }}">Next</a>{% endif %}
+  </div>
+  {% endif %}
+
 </div>
 {% endblock %}

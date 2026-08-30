@@ -1,5 +1,7 @@
 """Web interface tests: pages, API endpoints, and error statuses."""
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -235,6 +237,58 @@ def test_list_sort_filter_controls(client, project_id, plan_id):
     assert "data-updated=" in detail
 
 
+def test_projects_sort_control_actually_sorts(client, git_repo, tmp_path):
+    """The control shipped for months without the route reading the parameter.
+
+    It rendered, it round-tripped, and it changed nothing: `sort` was never a
+    parameter of the view, so `?sort=name` was silently discarded. Asserting on
+    the order rather than on the markup is the only version of this test that
+    would have failed.
+    """
+    from flanner.server import create_project_tool
+
+    for name in ("zulu-service", "alpha-service", "mike-service"):
+        root = tmp_path / name
+        root.mkdir()
+        (root / ".git").mkdir()
+        create_project_tool(name=name, project_root=str(root), plan_directory=".plans")
+
+    def names(query: str) -> list[str]:
+        body = client.get(f"/projects{query}").text
+        return re.findall(r'data-name="([^"]+)"', body)
+
+    by_name = names("?sort=name")
+    assert by_name == sorted(by_name), by_name
+    # The default is not alphabetical, so the two orders must differ.
+    assert names("") != by_name
+    # A nonsense value falls back instead of erroring.
+    assert client.get("/projects?sort=nonsense").status_code == 200
+
+
+def test_download_serves_the_file_rather_than_a_disk_path(client, plan_id):
+    """The button pointed at the absolute path stored in the database.
+
+    That is not a URL, so every click asked this server for a path starting
+    with a drive letter and got a 404. Asserting on the response rather than
+    on the presence of a button is the only version that would have caught it.
+    """
+    page = client.get(f"/plans/{plan_id}").text
+    href = re.search(r'href="([^"]+)"[^>]*download', page).group(1)
+    assert href.startswith("/plans/"), href
+
+    got = client.get(href)
+    assert got.status_code == 200
+    assert "# Web Plan v1" in got.text
+    assert "attachment" in got.headers["content-disposition"]
+    assert "webplan_v1.md" in got.headers["content-disposition"]
+
+
+def test_download_refuses_anything_but_a_known_version(client, plan_id):
+    assert client.get(f"/plans/{BAD_UUID}/download").status_code == 400
+    assert client.get(f"/plans/{MISSING_UUID}/download").status_code == 404
+    assert client.get(f"/plans/{plan_id}/download?version=99").status_code == 404
+
+
 def test_tier3_craft_signals(client, plan_id):
     # SVG favicon is served and referenced, with theme-color meta for both schemes
     favicon = client.get("/static/favicon.svg")
@@ -279,6 +333,38 @@ def test_plan_update_no_changes(client, plan_id):
     response = client.post(f"/plans/{plan_id}/edit", data={"content": "# Web Plan v1\n"})
     assert response.status_code == 303
     assert "no_changes" in response.headers["location"]
+
+
+def test_resaving_untouched_content_makes_no_new_version(client, plan_id):
+    """A browser submits a textarea as CRLF, whatever the platform.
+
+    So content that came back from the editor untouched is not byte-identical
+    to the content that went in, and the change check compared raw bytes. The
+    result was a new, identical version on every save through the web editor.
+    The comparison is over the normalised form now.
+    """
+    before = client.get(f"/plans/{plan_id}").text.count("vtag")
+
+    crlf = "# Web Plan v1\r\n"
+    response = client.post(f"/plans/{plan_id}/edit", data={"content": crlf})
+    assert response.status_code == 303
+    assert "no_changes" in response.headers["location"], response.headers["location"]
+
+    # And the reader is told why nothing happened.
+    landed = client.get(f"/plans/{plan_id}?message=no_changes").text
+    assert "No changes detected" in landed
+    assert client.get(f"/plans/{plan_id}").text.count("vtag") == before
+
+
+def test_a_real_edit_still_makes_a_version(client, plan_id):
+    """The guard must not swallow genuine edits."""
+    response = client.post(
+        f"/plans/{plan_id}/edit",
+        data={"content": "# Web Plan v1\r\nplus a line\r\n"},
+    )
+    assert response.status_code == 303
+    assert "no_changes" not in response.headers["location"]
+    assert "plus a line" in client.get(f"/plans/{plan_id}").text
 
 
 def test_plan_update_errors(client):
@@ -366,3 +452,86 @@ def test_project_detail_linear_marker(client, plan_id, project_id):
 
     create_linear_link(get_session(), UUID(plan_id), "ENG-7")
     assert "linear-marker" in client.get(f"/projects/{project_id}").text
+
+
+def _import_outside_review(plan_id, reviewer="Dana at Acme", version=None):
+    """Put an outside review against a plan, the way the CLI would."""
+    from uuid import UUID
+
+    from flanner.database import get_plan_file, get_project, get_session
+    from flanner.review import import_external
+
+    session = get_session()
+    plan_file = get_plan_file(session, UUID(plan_id))
+    project = get_project(session, plan_file.project_id)
+    return import_external(
+        session,
+        project=project,
+        plan_file=plan_file,
+        reviewer=reviewer,
+        notes=[{"quote": "Web Plan", "body": "Who owns this?", "occurrence": 0}],
+        reviewed_version=version,
+    )
+
+
+def test_the_plan_page_shows_notes_from_outside(client, plan_id):
+    _import_outside_review(plan_id)
+    body = client.get(f"/plans/{plan_id}").text
+    assert "From outside" in body
+    assert "Who owns this?" in body
+    assert "Dana at Acme" in body
+
+
+def test_outside_notes_are_labelled_unverified(client, plan_id):
+    """The reviewer had no device key. A page that showed their note the
+    same way as a teammate's would be the one unforgivable bug here."""
+    _import_outside_review(plan_id)
+    body = client.get(f"/plans/{plan_id}").text
+    assert "unverified" in body
+    assert "received rather than authored" in body
+
+
+def test_a_plan_with_no_outside_review_shows_no_such_panel(client, plan_id):
+    assert "From outside" not in client.get(f"/plans/{plan_id}").text
+
+
+def test_outside_notes_are_anchored_to_the_version_reviewed(client, plan_id):
+    """Recording them against a later revision the reviewer never saw would
+    misattribute every one of them."""
+    _import_outside_review(plan_id, version=1)
+    assert "on v1" in client.get(f"/plans/{plan_id}").text
+
+
+def test_the_review_page_counts_outside_notes(client, plan_id):
+    _import_outside_review(plan_id)
+    body = client.get("/review").text
+    assert "outside review" in body
+
+
+def test_the_review_page_says_when_a_decision_would_bind_nobody(client, plan_id):
+    """A solo project projects review against a role map anyone can edit.
+
+    The page draws the same states either way, so without this a reader
+    cannot tell a rehearsal from an authorization. The reason travels too:
+    "advisory" without a why is just a word.
+    """
+    _import_outside_review(plan_id)
+
+    body = client.get("/review").text
+
+    # The pill, not the word: the footnote below the table explains what
+    # "advisory" means and would satisfy a bare substring check even with an
+    # empty table.
+    assert ">advisory</span>" in body
+    assert "has not joined a workspace" in body
+    assert "+1" in body
+
+
+def test_a_plan_with_only_outside_review_still_appears(client, plan_id):
+    """It has no proposal, so the old filter dropped it entirely - which is
+    exactly the plan somebody is waiting to hear about."""
+    before = client.get("/review").text
+    assert "Nothing is waiting" in before
+    _import_outside_review(plan_id)
+    after = client.get("/review").text
+    assert "Nothing is waiting" not in after

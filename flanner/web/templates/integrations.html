@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Integrations{% endblock %}
+
+{% block topbar_main %}
+<h1>Integrations</h1>
+  <span class="sub">Issue trackers a plan can be linked to</span>
+{% endblock %}
+
+{% block content %}
+<div class="pane narrow">
+
+  <div class="card card-pad">
+    <div style="display:flex; align-items:center; gap:12px">
+      <h2 class="card-title" style="margin:0">Linear</h2>
+      <span class="pill {% if linear_config %}pill-fresh{% else %}pill-quiet{% endif %}"
+            style="margin-left:auto">
+        {{ 'configured' if linear_config else 'not configured' }}</span>
+    </div>
+    {% if linear_config %}
+    <div class="kv" style="margin-top:10px"><span>Workspace</span>
+      <b class="mono">{{ linear_config.workspace }}</b></div>
+    {% endif %}
+    <p class="hint">Set up with
+      <code class="mono">flanner linear config PROJECT --workspace acme</code>. With
+      <code class="mono">LINEAR_API_KEY</code> set, linking verifies the issue exists and
+      caches its title; without one it stays link-only. The key is read from the
+      environment and never stored on disk.</p>
+  </div>
+
+  <div class="card card-pad">
+    <h2 class="card-title">JIRA</h2>
+    <p style="margin:0; color:var(--text-3); font-size:13px">
+      Link-only. Set up with <code class="mono">flanner jira config</code>.</p>
+  </div>
+
+  {% if linear_links %}
+  <div class="card">
+    <div class="card-head">Linked plans <span class="note">{{ linear_links | length }}</span></div>
+    <div class="tablewrap">
+      {% for link in linear_links %}
+      <div class="grid-row cols-links">
+        <span><a class="name" href="/plans/{{ link.plan_file_id }}">{{ link.plan_name or 'plan' }}</a></span>
+        <span class="path">{{ link.issue_key }}</span>
+        <span class="when">{{ link.issue_title or '—' }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

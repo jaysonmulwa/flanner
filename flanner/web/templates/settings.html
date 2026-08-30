@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+
+{% block topbar_main %}
+<h1>Settings</h1>
+  <span class="sub">This machine only</span>
+{% endblock %}
+
+{% block content %}
+<div class="pane narrow">
+
+  <div class="card card-pad">
+    <h2 class="card-title">General</h2>
+    <div class="field-grid">
+      <div class="field">
+        <span class="field-label">Database</span>
+        <div class="input mono" role="text">{{ db_path }}</div>
+      </div>
+      <div class="field">
+        <span class="field-label">Web UI port</span>
+        <div class="input mono" role="text">{{ port }}</div>
+      </div>
+      <div class="field">
+        <span class="field-label">Version</span>
+        <div class="input mono" role="text">flanner {{ version }}</div>
+      </div>
+    </div>
+    <p class="hint">Changed with <code class="mono">flanner web --port</code> or
+       <code class="mono">FLANNER_HOME</code>. Shown here so you know where to look.</p>
+  </div>
+
+  {#
+    Nothing here is ever pruned, and that is a decision rather than an
+    oversight — so it is stated, with the number it costs. There is no
+    cleanup button on purpose: keeping every version is what makes history
+    and signatures worth anything, and a control that quietly broke lineage
+    would be worse than a figure that grows.
+  #}
+  <div class="card card-pad">
+    <h2 class="card-title">Storage</h2>
+    <div class="field-grid">
+      <div class="field">
+        <span class="field-label">Plan text</span>
+        <div class="input mono" role="text">{{ storage.plans }}</div>
+      </div>
+      <div class="field">
+        <span class="field-label">Signed history</span>
+        <div class="input mono" role="text">
+          {{ storage.payload }} across {{ storage.artifacts }} artifacts</div>
+      </div>
+      <div class="field">
+        <span class="field-label">Total on this machine</span>
+        <div class="input mono" role="text">{{ storage.total }}</div>
+      </div>
+    </div>
+    <p class="hint">Flanner never prunes. Every version, comment and decision
+       is kept, because a history with holes cannot be verified and a plan you
+       need is usually an old one. Retiring a plan hides it; it does not
+       reclaim space.</p>
+  </div>
+
+  <div class="card card-pad">
+    <h2 class="card-title" style="margin-bottom:2px">Agent integration</h2>
+    <div class="switch-row">
+      <div class="body">MCP server
+        <span>
+          {% if claude.get('registered') %}
+            Registered with Claude Code · <b style="color:var(--accent-ink)">● {{ claude.get('state', 'ready') }}</b>
+          {% else %}
+            Not registered. Run <code class="mono">flanner register</code>.
+          {% endif %}
+        </span>
+      </div>
+      <a class="btn" style="margin-left:auto" href="/integrations">Details</a>
+    </div>
+    <div class="switch-row">
+      <div class="body">Config file
+        <span class="mono" style="font-size:11.5px">{{ claude.config_path or 'not found' }}</span></div>
+      <span class="pill pill-quiet" style="margin-left:auto">{{ claude.servers or 0 }} servers</span>
+    </div>
+    <p class="hint">Read from the same file <code class="mono">flanner claude-info</code> reads,
+       so the CLI and this page cannot disagree. Change it with
+       <code class="mono">flanner register</code>.</p>
+  </div>
+
+  <div class="card card-pad">
+    <div style="display:flex; align-items:center; gap:12px">
+      <h2 class="card-title" style="margin:0">Appearance</h2>
+      <div class="segmented" role="group" aria-label="Theme" style="margin-left:auto">
+        <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+        <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+      </div>
+    </div>
+    <p class="hint">Reading preferences for plan documents — typeface, size and line
+       width — live on the plan page itself, next to the text they change.</p>
+  </div>
+
+  <div class="card card-pad">
+    <h2 class="card-title">Where your data is</h2>
+    <p style="margin:0; color:var(--text-3); font-size:13px">
+      Everything is in one SQLite file and the plan directories inside your own
+      repositories. There is no account and nothing is uploaded. Delete
+      <code class="mono">{{ db_path }}</code> and flanner forgets it ever ran.</p>
+  </div>
+
+</div>
+{% endblock %}

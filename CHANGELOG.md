@@ -6,6 +6,124 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-22
+
+### Fixed
+
+- `flanner.__version__` reported `0.7.1`, two releases behind. It was a
+  literal that had to be remembered on release, and it had not been. It
+  reaches the web UI footer and the settings page, so it was wrong on
+  screen rather than merely wrong in principle. It is now read from
+  installed package metadata, leaving one source of truth, and two tests
+  fail if anybody types it out again.
+
+
+## [0.9.0] - 2026-08-22
+
+Team sync. Everything below the local plan manager is unchanged: flanner
+still runs with no account, no network and no daemon, and everything new
+here is opt-in. Plan content is never uploaded — the hosted control plane
+holds accounts, devices and access, and nothing else.
+
+### Added
+
+- **Device identity and signed artifacts.** Every plan version, proposal,
+  decision and comment is an append-only, content-addressed artifact signed
+  by an Ed25519 key that never leaves the machine. A device id is the hash
+  of its public key, so nothing assigns it.
+- **Peer sync.** `flanner peer serve` and `flanner peer pull <device-id>`
+  exchange artifacts directly between machines over iroh, with NAT
+  traversal and a relay fallback. No listening port, no VPN and no
+  administrator rights. Artifacts are verified against their *author's*
+  key, not against the peer that handed them over.
+- **Push.** `flanner peer push` sends a peer what it lacks, rather than
+  waiting to be asked. Bounded by the sender's workspace role per artifact,
+  by size and rate, and refusable outright with `FLANNER_ACCEPT_PUSHES=0`.
+  Receiving adds to your history; it never moves your working copy.
+- **Catch-up pull** from known peers when the daemon starts, so a machine
+  that was asleep does not need to be pushed to.
+- **Review.** `flanner review propose`, `decide` and `status` record signed
+  proposals and decisions, with an accepted baseline that a synced proposal
+  cannot replace and a conflict state when two people accept offline.
+- **Comments.** `flanner review comment` attaches a note to a *quotation*
+  rather than a line number. A comment whose text has since changed says it
+  lost its place instead of sliding onto a sentence nobody commented on.
+- **Review packets.** `flanner review pack` writes a self-contained HTML
+  file for somebody with no account and no client; `flanner review import`
+  reads their notes back in, recorded as received rather than authored.
+- **Retiring a plan.** `flanner retire` records a claim that peers hide the
+  plan and stop serving it. Deliberately not a deletion: nothing is erased,
+  and `--restore` brings it back.
+- **Accounts and access.** `flanner login`, `flanner join`, `flanner
+  devices` and `flanner whoami`. Entitlements are short-lived, signed, and
+  checked offline, so a device keeps working on a train.
+- **Workspace roles** — `reader`, `commenter`, `editor`, `maintainer` — now
+  enforced rather than advisory, in review, in assurance and on push.
+- **Plan assurance and workspace policy**, so an agent can state the exact
+  artifact, freshness evidence and approval it relied on.
+- **New CLI commands**: `history`, `diff`, `why`, `doctor`.
+- **A local daemon** with authenticated IPC, atomic writes and
+  cross-process locking, so two MCP clients cannot corrupt shared state.
+- **Provider-neutral mesh seam** and a portability conformance suite.
+
+- **The device key moves into the OS keychain.** It falls back to the file
+  for an existing install, and generates one only when neither has it.
+  Machines with no keychain skip rather than fail.
+- **Locks are per plan, not per project.** Two people editing different
+  plans in the same project no longer wait for each other. Keyed by plan id
+  rather than name, so a rename cannot move a lock out from under whoever
+  is holding it.
+- **A citation that drifted is told apart from one that was never there.**
+  The first is a plan going stale; the second is a reference to something
+  outside the repository, and it is not evidence of anything.
+- **A solo project now says when an approval binds nobody.** It already
+  warned when a joined project could not authorise at all; this is the
+  mirror of that check.
+- Refusals say which failures belong to the platform and which are
+  decisions, instead of wording the same fact two different ways.
+
+### Changed
+
+- **The command line has one look.** A single palette, borderless tables
+  and consistent status glyphs across every command, degrading to ASCII on
+  a console that cannot encode them rather than crashing.
+- **The local web UI is rebuilt**: new shell and stylesheet, self-hosted
+  variable fonts, three-state theming, navigation that swaps in place, and
+  new Mesh, Review, Freshness and Settings pages.
+- **Sync is no longer pull-only**, so documentation that described it that
+  way has been corrected.
+- Settings now reports what this device is holding, and states plainly that
+  flanner never prunes.
+
+### Fixed
+
+- Saving a plan from the browser created an identical new version every
+  time, because textareas submit CRLF and the comparison hashed raw bytes.
+- The projects list ignored its own sort control.
+- Filtered table rows stayed visible: `[hidden]` lost to `display: grid`.
+- A filled-circle glyph crashed the CLI on a Windows console still running
+  cp1252.
+- Several stylesheet rules existed only inside the mobile media query, so
+  command blocks, filter controls, footnotes and notices rendered unstyled
+  on a wide screen.
+- The wheel shipped without its stylesheets, because `package-data` did not
+  include `static/`.
+
+
+## [0.8.0] - 2026-08-05
+
+### Added
+- Plan freshness: evidence-based drift detection. Every plan version gets a
+  status (`fresh | aging | suspect | stale`) derived from checkable evidence:
+  the paths and symbols it cites, whether those still exist in the repo, an
+  anchor commit resolved from the version's authored time, and how many
+  commits touched the cited files since. Nothing is stored; git access is
+  read-only and fails open (no git degrades to age-only judgment).
+- `flanner freshness [PLAN_NAME]` CLI command: status table for all plans, a
+  full evidence breakdown for one plan, and `--output json` for scripting.
+- `get_plan_freshness_tool` MCP tool so agents can check whether a plan is
+  still likely true before trusting it.
+
 ## [0.7.1] - 2026-07-10
 
 ### Added

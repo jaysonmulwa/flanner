@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}Mesh{% endblock %}
+
+{% block topbar_main %}
+<h1>Mesh</h1>
+<span class="sub">This device, and who it can sync with</span>
+{% endblock %}
+
+{% block content %}
+<div class="pane">
+
+  {% if not mesh.signed_in %}
+  <div class="card card-pad card-prose">
+    <h2 class="card-title">This machine works on its own</h2>
+    <p>
+      Everything you have here — projects, versions, history, freshness, the
+      MCP server — runs with no account and no network. Joining a mesh adds
+      one thing: your other machines, and your colleagues' machines, can pull
+      these plans directly from this one.</p>
+    <div class="kv"><span>This device</span><b class="mono">{{ mesh.device_id }}</b></div>
+    <p class="hint">The id is the hash of a key this machine generated. It was
+       not assigned by anyone, and the private half has never left this disk.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-head">Joining a mesh</div>
+    <div class="checklist">
+      <div class="step">
+        <span class="box" aria-hidden="true">1</span>
+        <span><span class="what">Get an invitation</span><span class="why">an admin sends one from the console</span></span>
+      </div>
+      <div class="step">
+        <span class="box" aria-hidden="true">2</span>
+        <span><span class="what">Run <code class="mono">flanner login &lt;code&gt;</code></span><span class="why">on this machine, not in the browser</span></span>
+      </div>
+      <div class="step">
+        <span class="box" aria-hidden="true">3</span>
+        <span><span class="what">Run <code class="mono">flanner peer serve</code></span><span class="why">so others can pull from you</span></span>
+      </div>
+      <div class="step">
+        <span class="box" aria-hidden="true">4</span>
+        <span><span class="what">Run <code class="mono">flanner peer pull &lt;device-id&gt;</code></span><span class="why">to take their work</span></span>
+      </div>
+    </div>
+  </div>
+  {% else %}
+
+  <div class="stat-grid">
+    <div class="stat">
+      <div class="v tnum">{{ mesh.peers | length }}</div>
+      <div class="k">Known peers</div>
+    </div>
+    <div class="stat">
+      <div class="v tnum">{{ mesh.grants | length if mesh.grants else mesh.workspaces | length }}</div>
+      <div class="k">Workspaces you may enter</div>
+    </div>
+    <div class="stat">
+      <div class="v"><span class="pill pill-{{ 'fresh' if mesh.status in ('valid', 'in_grace') else 'stale' }}">{{ mesh.status }}</span></div>
+      <div class="k">Access</div>
+    </div>
+    {#
+      The zero is structural, not measured: no endpoint on the control
+      plane accepts plan content, which an architecture test enforces. The
+      figure beside it is measured, and is the point — a zero on its own
+      says nothing, a zero next to what is actually here says everything.
+    #}
+    <div class="stat">
+      <div class="v tnum">0 B</div>
+      <div class="k">Of your {{ mesh.local_bytes }} held by flanner</div>
+    </div>
+  </div>
+
+  {% if mesh.reason %}
+  <div class="notice {{ 'bad' if mesh.status not in ('valid', 'in_grace') else 'info' }}">
+    {{ mesh.reason }}
+  </div>
+  {% endif %}
+
+  <div class="card card-pad">
+    <h2 class="card-title">This device</h2>
+    <div class="kv"><span>Device id</span><b class="mono">{{ mesh.device_id }}</b></div>
+    <div class="kv"><span>Signed in as</span><b>{{ mesh.user_id }}</b></div>
+    <div class="kv"><span>Team</span><b class="mono">{{ mesh.organization_id }}</b></div>
+    <div class="kv"><span>Control plane</span><b class="mono">{{ mesh.endpoint }}</b></div>
+    <div class="kv"><span>Relay</span>
+      <b class="mono">{{ mesh.relay_url or "the transport's own defaults" }}</b></div>
+    {% if mesh.plan %}
+    <div class="kv"><span>Plan</span><b>{{ mesh.plan }}</b></div>
+    {% endif %}
+    {% if mesh.expires_at %}
+    <div class="kv"><span>Access renews</span><b class="mono">{{ mesh.expires_at }}</b></div>
+    {% endif %}
+    <p class="hint">Entitlements are short on purpose, and this device checks
+       them itself without asking anyone. That is what lets it keep working
+       on a train. Run <code class="mono">flanner whoami --refresh</code> to
+       pick up a new grant early.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      Peers
+      <span class="note">devices this machine can verify, and when their work last arrived</span>
+    </div>
+    {% if mesh.peers %}
+    <div class="tablewrap">
+      {% for peer in mesh.peers %}
+      <div class="grid-row cols-peers">
+        <span class="mono">{{ peer }}</span>
+        {#
+          Last arrival, not last seen. Nothing here polls a peer, and an
+          artifact can reach this machine relayed through a third one long
+          after its author went offline — so this says when their work got
+          here, which is true, rather than whether they are up, which we
+          have no way to know.
+        #}
+        <span class="when">
+          {%- if peer == mesh.device_id -%}
+            this device
+          {%- elif mesh.last_received.get(peer) -%}
+            {{ mesh.last_received[peer] | relative_time }}
+          {%- else -%}
+            nothing yet
+          {%- endif -%}
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div style="padding:22px 18px" class="dim">
+      No other devices yet. They appear here once an admin enrols them and
+      this device next renews its access.
+    </div>
+    {% endif %}
+    <div class="footnote" style="padding: 0 18px 14px">
+      <span class="i" aria-hidden="true">i</span>
+      A peer is a device whose public key this machine holds. Without the key
+      there is nothing to check a signature against, so the keyring is the
+      honest answer to "who can I sync with".
+    </div>
+  </div>
+
+  {% if mesh.grants %}
+  <div class="card">
+    <div class="card-head">Workspace access</div>
+    <div class="tablewrap">
+      {% for grant in mesh.grants %}
+      <div class="grid-row cols-wsaccess">
+        <span class="mono">{{ grant.workspace_id }}</span>
+        <span><span class="pill pill-quiet">{{ grant.role }}</span></span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card card-pad card-prose">
+    <h2 class="card-title">How syncing actually works</h2>
+    <p>
+      Nothing is uploaded. When you pull, this machine asks a peer for a list
+      of what it holds, then fetches only the versions it is missing. Each
+      version was signed by the device that wrote it, so this machine checks
+      it against that device's public key rather than trusting the sender.</p>
+    <p>
+      A teammate can also push work to you rather than wait for you to pull
+      it. That sounds alarming and is not: receiving a version adds it to
+      your history, it does not change what you are working on. Nothing is
+      ever overwritten here, so what you have open stays open until you
+      decide otherwise.</p>
+    <p>
+      Pushes are still checked. The sender needs the right role for what
+      they sent, every artifact is verified against the key of whoever
+      <em>wrote</em> it rather than whoever handed it over, and a machine
+      can decline pushes entirely with
+      <code class="mono">FLANNER_ACCEPT_PUSHES=0</code> while still serving
+      every read.</p>
+    <p>
+      You never edit on somebody else's computer, and there is no live
+      cursor — this is closer to git than to a shared document.</p>
+    <p>
+      Review works the same way. A proposal and a decision are records that
+      sync like any other, which is why they survive being made offline.</p>
+    <div class="cmd" style="margin-top:14px">
+      <span class="p" aria-hidden="true">$</span>
+      <span class="t" id="pull-cmd">flanner peer pull &lt;device-id&gt;</span>
+      <button type="button" class="cmd-copy" data-copy="#pull-cmd"
+              aria-label="Copy command" title="Copy command">
+        <svg class="ic-copy" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+          <rect x="2.6" y="4.6" width="8.8" height="9.8" rx="1.3" fill="none"
+                stroke="currentColor" stroke-width="1.4"/>
+          <path d="M5.4 2.1h6.3a1.6 1.6 0 0 1 1.6 1.6v7.4" fill="none"
+                stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <svg class="ic-done" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+          <path d="M2.8 8.4l3.3 3.3L13.2 4.6" fill="none" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

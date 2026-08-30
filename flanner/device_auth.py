@@ -1,0 +1,144 @@
+"""Proving a device is itself, without a bearer token (PRD §21.1).
+
+A device already holds an Ed25519 key, so it can authenticate by signing
+each request rather than presenting a secret. That removes the usual
+problem with API tokens: there is nothing to steal from disk, a captured
+request cannot be reused, and the control plane stores only public keys, so
+a breach there cannot impersonate anyone.
+
+Both sides need the same rules, so they live in the public package: the
+client builds requests here, and the control plane verifies them with this
+same code. A format only one side could compute would be a format only one
+side could get right.
+
+Freshness is enforced by a bounded timestamp plus a nonce. The window is
+deliberately small but not zero, because clocks drift and a request that
+crossed a slow network is not an attack.
+"""
+
+from __future__ import annotations
+
+import secrets
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from . import identity
+from .artifacts import canonical_bytes
+
+# How far apart the two clocks may be. Small enough that a captured request
+# is useless within a minute, wide enough to survive ordinary drift.
+MAX_SKEW = timedelta(minutes=2)
+
+
+@dataclass(frozen=True)
+class SignedRequest:
+    """A request body, and proof the holder of a device key produced it."""
+
+    device_id: str
+    issued_at: str
+    nonce: str
+    body: dict[str, Any]
+    signature: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "device_id": self.device_id,
+            "issued_at": self.issued_at,
+            "nonce": self.nonce,
+            "body": self.body,
+            "signature": self.signature,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SignedRequest:
+        try:
+            body = data.get("body") or {}
+            if not isinstance(body, dict):
+                raise ValueError("body must be an object")
+            return cls(
+                device_id=str(data["device_id"]),
+                issued_at=str(data["issued_at"]),
+                nonce=str(data["nonce"]),
+                body=body,
+                signature=str(data["signature"]),
+            )
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError(f"Malformed signed request: {e}") from None
+
+
+def _payload(device_id: str, issued_at: str, nonce: str, body: dict[str, Any]) -> bytes:
+    """Exactly what gets signed: identity, freshness, and the whole body.
+
+    The body is covered too, so an intercepted request cannot be replayed
+    with different arguments.
+    """
+    return canonical_bytes(
+        {"device_id": device_id, "issued_at": issued_at, "nonce": nonce, "body": body}
+    )
+
+
+def sign_request(
+    body: dict[str, Any],
+    *,
+    device_id: str | None = None,
+    signing_key: Any = None,
+    now: datetime | None = None,
+) -> SignedRequest:
+    """Build a request signed by this device's key."""
+    key = signing_key if signing_key is not None else identity.load_or_create_device_key()
+    who = device_id or identity.device_id_for(key.public_key())
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    issued_at = moment.isoformat().replace("+00:00", "Z")
+    nonce = secrets.token_hex(16)
+    return SignedRequest(
+        device_id=who,
+        issued_at=issued_at,
+        nonce=nonce,
+        body=body,
+        signature=identity.sign(_payload(who, issued_at, nonce, body), key),
+    )
+
+
+@dataclass(frozen=True)
+class AuthResult:
+    """Whether a request may be acted on, and why not when it may not."""
+
+    ok: bool
+    reason: str = ""
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
+def verify_request(
+    request: SignedRequest,
+    public_key: str,
+    *,
+    now: datetime | None = None,
+    max_skew: timedelta = MAX_SKEW,
+) -> AuthResult:
+    """Check a request really came from the holder of that device key.
+
+    Never raises. This runs on an unauthenticated endpoint, so hostile input
+    is expected and must produce a refusal rather than a stack trace.
+    """
+    try:
+        issued = datetime.fromisoformat(request.issued_at.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return AuthResult(False, "issued_at is not a timestamp")
+    if issued.tzinfo is None:
+        issued = issued.replace(tzinfo=timezone.utc)
+
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    drift = abs((moment - issued).total_seconds())
+    if drift > max_skew.total_seconds():
+        return AuthResult(False, f"request is {int(drift)}s out of date")
+
+    if not request.nonce:
+        return AuthResult(False, "request has no nonce")
+
+    payload = _payload(request.device_id, request.issued_at, request.nonce, request.body)
+    if not identity.verify(public_key, payload, request.signature):
+        return AuthResult(False, "signature does not match this device key")
+    return AuthResult(True)

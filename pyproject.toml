@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flanner"
-version = "0.7.1"
+version = "0.9.1"
 description = "Plan file management for AI assistants via MCP"
 authors = [{ name = "Jayson Mulwa", email = "jayson.mulwa@gmail.com" }]
 license = "MIT"
@@ -40,6 +40,28 @@ dependencies = [
     "pygments>=2.17,<3",
     "pydantic>=2.5,<3",
     "mcp>=1.0,<2",
+    "cryptography>=42,<50",
+    # The device key lives in the OS keychain. Unconditional: every desktop
+    # platform has a backend, and where one is missing (headless Linux with
+    # no Secret Service, containers, CI) `identity` falls back to the 0600
+    # file it always used, so the import failing softly is already handled.
+    "keyring>=25,<26",
+    # Direct peer transport. Required only where the project publishes a
+    # wheel, because it publishes no sdist: without a marker, pip on an
+    # unsupported platform fails with "could not find a version", which
+    # reads as a broken package rather than an unsupported machine.
+    #
+    # Absent, the client still works. Peer sync falls back to an http
+    # address and `flanner peer serve --http`, and every entry point says
+    # so rather than raising.
+    #
+    # Not expressible here: musl. On Alpine the manylinux wheel does not
+    # match and the install fails anyway. Only upstream can fix it; the
+    # request is drafted in docs/upstream-iroh-musllinux.md. See the README.
+    "iroh>=1.1,<2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "iroh>=1.1,<2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "iroh>=1.1,<2; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "iroh>=1.1,<2; sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
 
 [project.optional-dependencies]
@@ -70,6 +92,22 @@ strict = true
 python_version = "3.10"
 warn_unreachable = true
 
+# The conformance suite ships in the package so adapter authors outside this
+# repository can run it, but it is a pytest suite: it takes provider objects
+# as `object` on purpose, because the whole point is that it must not know
+# any concrete implementation.
+[[tool.mypy.overrides]]
+module = "flanner.mesh_conformance"
+ignore_errors = true
+
+# python-frontmatter ships no py.typed and has no stubs on typeshed. The
+# narrowest possible admission: this says nothing about our own code, and
+# the two values we take from it are converted at the call site rather
+# than trusted.
+[[tool.mypy.overrides]]
+module = "frontmatter"
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 99
 target-version = "py310"
@@ -79,11 +117,15 @@ select = ["E", "F", "W", "I", "B", "UP", "S"]
 [tool.ruff.lint.per-file-ignores]
 # assert, hardcoded tmp paths, and a 0.0.0.0 bind literal (to test the
 # non-local-bind warning) are fine in tests and benchmarks
-"tests/*" = ["S101", "S104", "S108", "S603", "S607"]
+"tests/*" = ["S101", "S104", "S105", "S107", "S108", "S603", "S607"]
+# A test suite that happens to be packaged, so adapter authors can run it.
+"flanner/mesh_conformance.py" = ["S101"]
 "benchmarks/*" = ["S101", "S603", "S607"]
 
 [tool.setuptools.packages.find]
 include = ["flanner*"]
 
 [tool.setuptools.package-data]
-flanner = ["web/templates/*.html", "web/static/**/*"]
+# py.typed: the package is checked under mypy --strict, so downstream
+# consumers should get its types rather than an untyped stub.
+flanner = ["py.typed", "web/templates/*.html", "web/static/**/*"]

@@ -4,10 +4,11 @@ Database layer for Flanner
 Provides SQLAlchemy models and database operations.
 """
 
+import json
 import logging
 import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    cast,
     create_engine,
     func,
     inspect,
@@ -55,7 +57,7 @@ class Base(DeclarativeBase):
 
 # Bump when the table layout changes incompatibly; stamped into SQLite's
 # PRAGMA user_version so future releases can detect and migrate old files.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 
 class GUID(TypeDecorator[uuid.UUID]):
@@ -109,6 +111,10 @@ class ProjectModel(Base):
     plan_directory: Mapped[str] = mapped_column(String, default=".plans", nullable=True)
     # Auto-update .gitignore
     auto_gitignore: Mapped[bool] = mapped_column(Boolean, default=True, nullable=True)
+    # The control-plane workspace this project belongs to, once joined.
+    # NULL means solo: artifacts get a local workspace id derived from the
+    # project, and review authorization stays advisory (PRD §11.3).
+    workspace_id: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow
@@ -172,12 +178,52 @@ class VersionModel(Base):
     created_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
     # Version notes/changelog
     notes: Mapped[str | None] = mapped_column(Text)
+    # Id of the signed plan.version artifact this row records (PRD §12.4).
+    # Null for versions written before artifacts existed.
+    artifact_id: Mapped[str | None] = mapped_column(String, index=True)
 
     # Relationships
     plan_file: Mapped["PlanFileModel"] = relationship("PlanFileModel", back_populates="versions")
 
     def __repr__(self) -> str:
         return f"<Version(id={self.id}, version={self.version}, created_by='{self.created_by}')>"
+
+
+class ArtifactModel(Base):
+    """A signed immutable artifact (PRD §12).
+
+    The row is an index over the envelope, not the authority: identity lives
+    in the signature and the content hash, so a rebuilt catalog re-derives
+    exactly the same artifacts from the files and payloads on disk.
+
+    ``plan_file_id`` is deliberately not a foreign key. Artifacts arrive out
+    of order during sync, so one may reference a plan this device has not
+    received yet; holding it is correct, rejecting it is not.
+    """
+
+    __tablename__ = "artifacts"
+
+    artifact_id: Mapped[str] = mapped_column(String, primary_key=True)
+    artifact_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    protocol_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    organization_id: Mapped[str | None] = mapped_column(String)
+    workspace_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    plan_file_id: Mapped[str | None] = mapped_column(String, index=True)
+    # JSON array of parent artifact ids; ordering carries no meaning.
+    parents: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    # Envelope timestamp, stored verbatim. Descriptive only, never ordering.
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(String)
+    actor_device_id: Mapped[str] = mapped_column(String, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String, nullable=False)
+    signature: Mapped[str] = mapped_column(String, nullable=False)
+    # Event payloads live here; a plan.version's payload is its .md file.
+    payload: Mapped[str | None] = mapped_column(Text)
+    # When this device stored it. Local bookkeeping, never part of identity.
+    received_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
+
+    def __repr__(self) -> str:
+        return f"<Artifact(id={self.artifact_id[:19]}..., type='{self.artifact_type}')>"
 
 
 class JiraConfigModel(Base):
@@ -310,8 +356,31 @@ def _migration_1(conn: Connection) -> None:
 # entry for every SCHEMA_VERSION bump; _apply_schema runs the pending ones in
 # order. New whole tables are handled by create_all; use a migration here for
 # in-place changes to existing tables (ADD COLUMN, backfills, index changes).
+def _migration_2(conn: Connection) -> None:
+    """1 -> 2: versions gain the id of their signed artifact (PRD §12.4).
+
+    Existing rows keep NULL: they predate artifacts and are still valid
+    plan versions, they simply carry no signature yet.
+    """
+    conn.exec_driver_sql("ALTER TABLE versions ADD COLUMN artifact_id VARCHAR")
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_versions_artifact_id ON versions (artifact_id)"
+    )
+
+
+def _migration_3(conn: Connection) -> None:
+    """2 -> 3: projects may name the control-plane workspace they joined.
+
+    Existing rows keep NULL, which is the solo case and stays correct: the
+    workspace id is derived locally and review remains advisory.
+    """
+    conn.exec_driver_sql("ALTER TABLE projects ADD COLUMN workspace_id VARCHAR")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: _migration_1,
+    2: _migration_2,
+    3: _migration_3,
 }
 
 
@@ -371,7 +440,22 @@ def init_database(db_path: str | None = None) -> None:
     # NullPool: server tools create short-lived sessions without closing them;
     # a bounded QueuePool exhausts after ~15 rapid calls. Local SQLite connections
     # are cheap, so open/close per session is the safer default.
-    # ponytail: revisit with a session_scope() contextmanager if perf matters
+    # NullPool because callers do not close sessions explicitly, and a
+    # bounded QueuePool would exhaust after ~15 rapid calls. Local SQLite
+    # connections are cheap, so open/close per session is the safer default.
+    #
+    # This was carried as debt on the belief that sessions leak. They do
+    # not: a session is dropped when the call that made it returns, and
+    # refcounting closes it there. Measured, not assumed — 0 of 30 survive
+    # a create-use-drop cycle, and `test_sessions_do_not_accumulate_across_
+    # tool_calls` pins it against the real tool path. The one place a
+    # session outlives a call is `peer.serve_request`, which already holds
+    # it in a `with` block; `Session` is its own context manager.
+    #
+    # So the pool is a decision rather than a deferral. What would reopen
+    # it is an interpreter without refcounting — none is supported, the
+    # classifiers are CPython 3.10 to 3.13 — or a session stored somewhere
+    # that outlives a call, which is what the test above would catch.
     _engine = create_engine(f"sqlite:///{db_path}", echo=False, poolclass=NullPool)
 
     # Create tables (fresh) or run pending migrations (existing), then stamp.
@@ -473,10 +557,20 @@ def get_project_by_name(session: Session, name: str) -> ProjectModel | None:
 
 
 def list_projects(
-    session: Session, limit: int | None = None, offset: int = 0
+    session: Session, limit: int | None = None, offset: int = 0, sort: str = "updated"
 ) -> list[ProjectModel]:
-    """List projects, newest first; optionally a page of them."""
-    query = session.query(ProjectModel).order_by(ProjectModel.created_at.desc(), ProjectModel.id)
+    """List projects; optionally a page of them.
+
+    ``sort`` orders before paging, so the control on the projects page sorts
+    the whole collection rather than reshuffling whichever fifty rows the
+    current page happens to hold.
+    """
+    order = (
+        (ProjectModel.name.asc(), ProjectModel.id)
+        if sort == "name"
+        else (ProjectModel.updated_at.desc(), ProjectModel.created_at.desc(), ProjectModel.id)
+    )
+    query = session.query(ProjectModel).order_by(*order)
     if offset:
         query = query.offset(offset)
     if limit is not None:
@@ -489,32 +583,64 @@ def count_projects(session: Session) -> int:
     return session.query(func.count(ProjectModel.id)).scalar() or 0
 
 
-def count_plan_files(session: Session, project_id: uuid.UUID | None = None) -> int:
-    """Total plan files, overall or for one project (SQL COUNT)."""
+def _without(query: Any, exclude: Collection[str]) -> Any:
+    """Drop named plans from a plan-file query, if any were named.
+
+    Ids arrive as strings because that is how they are stored on an
+    artifact envelope; the column is a UUID, so the comparison is made
+    against text to avoid a per-row cast.
+    """
+    if not exclude:
+        return query
+    return query.filter(~cast(PlanFileModel.id, String).in_([str(x) for x in exclude]))
+
+
+def count_plan_files(
+    session: Session,
+    project_id: uuid.UUID | None = None,
+    exclude: Collection[str] = (),
+) -> int:
+    """Total plan files, overall or for one project (SQL COUNT).
+
+    ``exclude`` drops plans the caller is hiding. Taken as a parameter
+    rather than worked out here, because deciding what is hidden means
+    reading review artifacts and this layer sits below the module that
+    defines them. Every listing and every count takes the same set, so a
+    sidebar badge cannot disagree with the list it is counting.
+    """
     query = session.query(func.count(PlanFileModel.id))
     if project_id is not None:
         query = query.filter(PlanFileModel.project_id == project_id)
+    query = _without(query, exclude)
     return query.scalar() or 0
 
 
-def plan_file_counts_by_project(session: Session) -> dict[uuid.UUID, int]:
+def plan_file_counts_by_project(
+    session: Session, exclude: Collection[str] = ()
+) -> dict[uuid.UUID, int]:
     """Plan-file count per project in one grouped query."""
     rows = (
-        session.query(PlanFileModel.project_id, func.count(PlanFileModel.id))
+        _without(session.query(PlanFileModel.project_id, func.count(PlanFileModel.id)), exclude)
         .group_by(PlanFileModel.project_id)
         .all()
     )
     return {project_id: count for project_id, count in rows}
 
 
-def recent_plan_files(session: Session, limit: int = 10) -> list[PlanFileModel]:
+def recent_plan_files(
+    session: Session, limit: int = 10, exclude: Collection[str] = ()
+) -> list[PlanFileModel]:
     """Most recently updated plan files across all projects (SQL ORDER BY ... LIMIT)."""
-    return (
-        session.query(PlanFileModel).order_by(PlanFileModel.updated_at.desc()).limit(limit).all()
+    rows: list[PlanFileModel] = (
+        _without(session.query(PlanFileModel), exclude)
+        .order_by(PlanFileModel.updated_at.desc())
+        .limit(limit)
+        .all()
     )
+    return rows
 
 
-def count_plan_files_recent(session: Session, days: int = 7) -> int:
+def count_plan_files_recent(session: Session, days: int = 7, exclude: Collection[str] = ()) -> int:
     """Plan files updated within the last `days` (SQL COUNT).
 
     The cutoff is computed with the same naive-UTC convention as the columns
@@ -522,7 +648,7 @@ def count_plan_files_recent(session: Session, days: int = 7) -> int:
     """
     cutoff = _utcnow() - timedelta(days=days)
     return (
-        session.query(func.count(PlanFileModel.id))
+        _without(session.query(func.count(PlanFileModel.id)), exclude)
         .filter(PlanFileModel.updated_at >= cutoff)
         .scalar()
         or 0
@@ -564,6 +690,7 @@ def create_plan_file(
     name: str,
     description: str = "",
     auto_version: bool = True,
+    plan_file_id: uuid.UUID | None = None,
 ) -> PlanFileModel:
     """
     Create a new plan file.
@@ -574,6 +701,8 @@ def create_plan_file(
         name: Plan file name (without .md extension)
         description: Plan file description
         auto_version: Whether to auto-increment version on update
+        plan_file_id: Explicit id, so a plan materialized from a peer keeps
+            the identity it already has on the device that authored it
 
     Returns:
         Created plan file model
@@ -597,6 +726,7 @@ def create_plan_file(
         description=description,
         current_version=1,
         auto_version=auto_version,
+        **({"id": plan_file_id} if plan_file_id is not None else {}),
     )
     session.add(plan_file)
     _commit(session)
@@ -611,19 +741,22 @@ def get_plan_file(session: Session, plan_file_id: uuid.UUID) -> PlanFileModel | 
 
 
 def list_plan_files(
-    session: Session, project_id: uuid.UUID, limit: int | None = None, offset: int = 0
+    session: Session,
+    project_id: uuid.UUID,
+    limit: int | None = None,
+    offset: int = 0,
+    exclude: Collection[str] = (),
 ) -> list[PlanFileModel]:
     """List plan files for a project, newest first; optionally a page of them."""
-    query = (
-        session.query(PlanFileModel)
-        .filter_by(project_id=project_id)
-        .order_by(PlanFileModel.created_at.desc(), PlanFileModel.id)
-    )
+    query = _without(
+        session.query(PlanFileModel).filter_by(project_id=project_id), exclude
+    ).order_by(PlanFileModel.created_at.desc(), PlanFileModel.id)
     if offset:
         query = query.offset(offset)
     if limit is not None:
         query = query.limit(limit)
-    return query.all()
+    rows: list[PlanFileModel] = query.all()
+    return rows
 
 
 def create_version(
@@ -634,6 +767,7 @@ def create_version(
     content_hash: str,
     created_by: str = "user",
     notes: str = "",
+    artifact_id: str | None = None,
 ) -> VersionModel:
     """
     Create a new version of a plan file.
@@ -646,6 +780,7 @@ def create_version(
         content_hash: SHA256 hash of content
         created_by: Who created this version
         notes: Version notes
+        artifact_id: Id of the signed artifact for this version
 
     Returns:
         Created version model
@@ -657,6 +792,7 @@ def create_version(
         content_hash=content_hash,
         created_by=created_by,
         notes=notes,
+        artifact_id=artifact_id,
     )
     session.add(version_model)
     _commit(session)
@@ -695,6 +831,126 @@ def list_versions(session: Session, plan_file_id: uuid.UUID) -> list[VersionMode
         .order_by(VersionModel.version.desc())
         .all()
     )
+
+
+def save_artifact(
+    session: Session,
+    *,
+    artifact_id: str,
+    artifact_type: str,
+    workspace_id: str,
+    content_hash: str,
+    actor_device_id: str,
+    created_at: str,
+    signature: str,
+    protocol_version: int = 1,
+    organization_id: str | None = None,
+    plan_file_id: str | None = None,
+    parents: list[str] | tuple[str, ...] = (),
+    actor_user_id: str | None = None,
+    payload: str | None = None,
+) -> ArtifactModel:
+    """Store an artifact, or return the one already held.
+
+    Artifacts are immutable and content-addressed, so re-receiving one is
+    normal during sync and must be a no-op rather than a conflict. The
+    caller verifies the envelope before calling; storage does not re-judge it.
+    """
+    existing = session.get(ArtifactModel, artifact_id)
+    if existing is not None:
+        return existing
+
+    artifact = ArtifactModel(
+        artifact_id=artifact_id,
+        artifact_type=artifact_type,
+        protocol_version=protocol_version,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        plan_file_id=plan_file_id,
+        parents=json.dumps(list(parents)),
+        created_at=created_at,
+        actor_user_id=actor_user_id,
+        actor_device_id=actor_device_id,
+        content_hash=content_hash,
+        signature=signature,
+        payload=payload,
+    )
+    session.add(artifact)
+    _commit(session)
+    return artifact
+
+
+def get_artifact(session: Session, artifact_id: str) -> ArtifactModel | None:
+    return session.get(ArtifactModel, artifact_id)
+
+
+def list_artifacts(
+    session: Session,
+    plan_file_id: str | None = None,
+    artifact_type: str | None = None,
+) -> list[ArtifactModel]:
+    """Artifacts, optionally narrowed to one plan or one type."""
+    query = session.query(ArtifactModel)
+    if plan_file_id is not None:
+        query = query.filter_by(plan_file_id=plan_file_id)
+    if artifact_type is not None:
+        query = query.filter_by(artifact_type=artifact_type)
+    return query.all()
+
+
+def recent_arrivals(
+    session: Session,
+    *,
+    exclude_device_id: str | None = None,
+    limit: int = 20,
+) -> list[ArtifactModel]:
+    """What reached this device most recently, newest first.
+
+    Ordered by ``received_at`` rather than the envelope's ``created_at``,
+    which is the author's clock and is descriptive only. "What is new to me"
+    is a local question and deserves the local answer.
+
+    ``exclude_device_id`` drops this device's own work, which is stored
+    through the same path and would otherwise crowd out everything a
+    teammate sent.
+    """
+    query = session.query(ArtifactModel).filter(ArtifactModel.received_at.isnot(None))
+    if exclude_device_id:
+        query = query.filter(ArtifactModel.actor_device_id != exclude_device_id)
+    return query.order_by(ArtifactModel.received_at.desc()).limit(limit).all()
+
+
+def last_received_by_device(session: Session) -> dict[str, datetime]:
+    """When something last arrived that each device had signed.
+
+    Note what this does and does not say. It answers "when did I last get
+    work of theirs", not "when did I last hear from them" — an artifact can
+    reach us relayed through a third machine long after its author went
+    offline. Presenting it as a liveness signal would be a lie the data
+    cannot support.
+    """
+    rows = (
+        session.query(
+            ArtifactModel.actor_device_id,
+            func.max(ArtifactModel.received_at),
+        )
+        .filter(ArtifactModel.received_at.isnot(None))
+        .group_by(ArtifactModel.actor_device_id)
+        .all()
+    )
+    return {device_id: stamp for device_id, stamp in rows if stamp is not None}
+
+
+def artifact_parents(session: Session, plan_file_id: str) -> dict[str, tuple[str, ...]]:
+    """The parent graph for one plan, in the form the lineage helpers take."""
+    graph: dict[str, tuple[str, ...]] = {}
+    for artifact in list_artifacts(session, plan_file_id=plan_file_id):
+        try:
+            parents = tuple(json.loads(artifact.parents))
+        except (ValueError, TypeError):
+            parents = ()
+        graph[artifact.artifact_id] = parents
+    return graph
 
 
 def delete_project(session: Session, project_id: uuid.UUID) -> bool:

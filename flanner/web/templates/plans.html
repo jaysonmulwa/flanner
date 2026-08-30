@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Plans{% endblock %}
+
+{% block topbar_main %}
+<h1>Plans</h1>
+  <span class="sub">Across every project, newest first</span>
+{% endblock %}
+
+{% block topbar_actions %}
+<div class="listctl" id="listctl">
+<label class="sr-only" for="plans-filter">Filter</label>
+<input class="input input-sm" type="search" id="plans-filter" data-list-filter
+       placeholder="Filter plans…" autocomplete="off" spellcheck="false">
+<label class="sr-only" for="plans-sort">Sort</label>
+<select class="btn btn-sm" id="plans-sort" data-list-sort>
+  <option value="updated:desc">Sort: Recently updated</option>
+  <option value="name:asc">Sort: Name</option>
+  <option value="project:asc">Sort: Project</option>
+  <option value="version:desc">Sort: Version</option>
+</select>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="pane">
+  {% if rows %}
+  <div class="card" data-listgroup>
+    <div class="tablewrap">
+      <div class="grid-head cols-plans">
+        <span>Plan</span><span>Version</span><span>Project</span><span>Author</span><span>Updated</span>
+      </div>
+      <div data-list>
+      {% for row in rows %}
+      <div class="grid-row cols-plans" data-list-item
+           data-name="{{ row.plan_file.name }}"
+           data-project="{{ row.project.name if row.project else '' }}"
+           data-version="{{ row.plan_file.current_version }}"
+           data-updated="{{ row.plan_file.updated_at.isoformat() if row.plan_file.updated_at }}">
+        <span><a class="name" href="/plans/{{ row.plan_file.id }}">{{ row.plan_file.name }}.md</a></span>
+        <span><span class="vtag">v{{ row.plan_file.current_version }}</span></span>
+        <span class="when">
+          {% if row.project %}<a href="/projects/{{ row.project.id }}">{{ row.project.name }}</a>
+          {% else %}—{% endif %}</span>
+        <span class="when">{{ row.plan_file.created_by or 'user' }}</span>
+        <span class="when">{{ row.plan_file.updated_at | relative_time }}</span>
+      </div>
+      {% endfor %}
+      </div>
+      <div class="empty-filter" data-list-empty hidden>Nothing matches that filter.</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="card empty">
+    <h2>No plans yet</h2>
+    <p>Plans appear here as your agents write them, or when you import an existing
+       directory with <code class="mono">flanner sync</code>.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

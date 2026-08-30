@@ -4,8 +4,10 @@ Storage layer for Flanner
 Handles file system operations for plan files.
 """
 
+import contextlib
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -56,8 +58,20 @@ def save_plan_file_with_frontmatter(
     # LF again, yielding CRLF-CR (\r\r\n). On the next read universal-newlines
     # turns that into an extra blank line, so the file degrades on every edit.
     normalized = content.replace("\r\n", "\n").replace("\r", "\n")
-    with open(file_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(normalized)
+
+    # Atomic write: temp file in the same directory, then os.replace, so a
+    # crash mid-write can never leave a truncated plan visible as current.
+    fd, tmp_path = tempfile.mkstemp(dir=file_path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(normalized)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, file_path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
 
     return str(file_path)
 

@@ -140,6 +140,46 @@ group links to JIRA issue keys (link-only).
 </details>
 
 <details>
+<summary><b>Syncing plans between devices</b></summary>
+
+```bash
+flanner peer serve                                      # answer authorised peers
+flanner peer pull <device-id>                           # pull what a peer holds
+flanner peer status [<device-id>]                       # how this device is reached
+```
+
+`peer serve` opens no listening port. It dials out and answers on that
+connection, so it needs no port forwarding, no VPN and no administrator
+rights. Devices find each other by public key rather than by address.
+
+Being reachable grants nothing. A caller needs a signed request and an
+entitlement naming both its device and the workspace, and every artifact
+received is checked against its *author's* key, not the peer that handed it
+over. So a peer you sync with is not a peer you trust.
+
+`peer status` answers the question a slow sync raises: direct or relayed?
+Both work. A relay is slower, and usually means a firewall that refuses to
+be punched through.
+
+Connections go direct where possible and relay only where they must. Pass
+an http address instead of a device id to reach a peer already on your
+network, which needs `flanner peer serve --http` on the other side.
+
+**Platforms.** Reaching a peer that has no address needs the `iroh`
+transport, which publishes builds for macOS on Apple Silicon, Linux on
+x86-64 and arm64, and Windows on x86-64. It is declared only for those, so
+`pip install flanner` works everywhere; elsewhere it is simply absent and
+`flanner peer status` says so. Everything else in flanner is unaffected,
+and peers on a shared network still sync over an address.
+
+Alpine and other musl distributions are the exception: the Linux build does
+not match there, so the install fails rather than skipping it. Use a
+glibc-based image, or install with `--no-deps` and add the remaining
+dependencies yourself.
+
+</details>
+
+<details>
 <summary><b>Architecture</b></summary>
 
 Layering is enforced by `tests/test_architecture.py`:
@@ -155,6 +195,8 @@ Decisions are recorded in [docs/adr/](docs/adr/), with more guides in [docs/](do
 ## How it works
 
 An agent calls `get_plan_config` to learn where plans go, then `create_plan_file_tool` or `update_plan_file_tool` to write them. Flanner places the file in the project's plan directory, adds the header, and bumps the version. Files stay in `.plans/` (git-ignored), so they never land in a commit by accident.
+
+**Nothing is pruned, and nothing is erased.** Every version, comment and review decision is kept. The store is append-only, there is no cleanup command, and the Settings page shows what that costs in bytes so the choice is visible rather than assumed. Deletion follows from the same design: `flanner retire <plan>` asks every peer to stop showing and serving a plan, and `--restore` undoes it, but it is a claim other devices honour rather than an erasure. A teammate who was offline when you ran it keeps the content until they next sync, and anyone already holding the bytes keeps them. That is the strongest promise an append-only store spread across machines you do not control can honestly make, so it is the one made here.
 
 **Keeping the agent on the rails.** The MCP tools are the *how*; `flanner init` also installs two layers that make the agent actually use them. It writes a managed block into `CLAUDE.md` and `AGENTS.md` (guidance Claude Code and Codex read every session) plus a `flanner-plan` skill, so the agent knows to route plan docs through flanner. On top of that, a `guard-write` PreToolUse hook denies any raw write into the plan directory and points the agent back to `create_plan_file_tool`, so even if it ignores the guidance a plan cannot land as unmanaged markdown. The hook fails open and never blocks writes elsewhere.
 
