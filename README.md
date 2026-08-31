@@ -21,7 +21,7 @@ AI agents write markdown constantly: design docs, migration plans, architecture 
 
 Those plan files pile up in two directions at once: scattered across your projects locally, and scattered across open issues in your project-management tool. Flanner is the choke point for both, keeping you organized on disk and linked to the issue each plan belongs to.
 
-Today Flanner is local-first; the goal is cloud-hosted plans: shared workspaces for easier collaboration, effectively unlimited storage and history, and clean links to the tools teams already work in, from product trackers and chat to second brains like Notion.
+Flanner is local-first, and stays that way when a team uses it. Plans sync directly between your machines over an encrypted connection — there is no server holding them, and no upload step. The hosted side ([Flanner Mesh](https://flanner.io/mesh)) issues identities and decides who may read what; it never sees plan contents and could not read them if it wanted to. Next after that: clean links out to the tools teams already work in, from product trackers and chat to second brains like Notion.
 
 ## Features
 
@@ -202,13 +202,19 @@ An agent calls `get_plan_config` to learn where plans go, then `create_plan_file
 
 ## Roadmap
 
-Flanner is local-first today. Planned next:
+Shipped in 0.9.0: peer-to-peer sync, shared workspaces, and review between
+teammates. Plans move directly between machines; nothing is uploaded. See
+[Flanner Mesh](https://flanner.io/mesh) for how that works and what it costs.
 
-- Cloud-hosted plans: a PostgreSQL catalog and S3-backed storage for effectively unlimited history
-- Shared workspaces for team collaboration
+Planned next:
+
 - Full-text search across plans
 - Links out to product trackers, chat, and second brains like Notion
 - Real-time updates in the web UI
+- Relay fallback for peers that cannot reach each other directly
+
+There is no plan to host plan contents. The catalog stays on your machine.
+That is a design decision, not a milestone waiting to be funded.
 
 ## Contributing
 

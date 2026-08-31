@@ -7,6 +7,7 @@ get_claude_config_path so the real Claude config is never written.
 
 import json
 import os
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -102,7 +103,11 @@ def claude_config(tmp_path, monkeypatch):
 def test_commands_require_db(runner, args):
     result = runner.invoke(cli, args)
     assert result.exit_code == 1
-    assert "Database not initialized" in result.output
+    # Asserts the refusal explains itself, not its exact prose. The previous
+    # wording named `init` and nothing else, which is how somebody following
+    # our own instructions ended up stuck at it.
+    assert "no flanner store yet" in result.output
+    assert "adopts the repository" in result.output
 
 
 # --- init ---
@@ -1284,3 +1289,138 @@ def test_import_of_an_empty_review_changes_nothing(runner, written_plan, git_rep
     result = runner.invoke(cli, ["review", "import", str(path), "--project", "proj"])
     assert result.exit_code == 0, result.output
     assert "no notes" in result.output
+
+
+def test_join_without_an_id_says_where_to_find_one(runner):
+    """The refusal a person actually hits. A workspace id is not guessable
+    and nothing prints it by accident, so a message that only says one is
+    missing leaves them searching a console they may not have access to."""
+    result = runner.invoke(cli, ["join", "--project", "anything"])
+
+    assert result.exit_code == 1
+    # Names the surface that has the answer, not merely the omission.
+    assert "not signed in" in result.output or "workspace access" in result.output
+    assert "flanner login" in result.output or "flanner whoami" in result.output
+
+
+def test_accept_creates_the_store_so_the_next_step_works(runner, monkeypatch):
+    """The failure everybody hit: `accept` printed "run flanner join" and
+    `join` refused because nothing had made a database. Accepting is the
+    moment a machine commits to being used with a team, and the store is
+    machine-wide, so it is made here."""
+    import flanner.account as account
+    from flanner import session as cache
+    from flanner.cli import get_mcp_dir
+
+    fake = cache.Session(
+        endpoint="https://cp.test",
+        device_id="dev_x",
+        organization_id="org_1",
+        user_id="sam",
+        entitlement="",
+        keyring={},
+    )
+    monkeypatch.setattr(account, "accept_invitation", lambda *a, **kw: fake)
+
+    result = runner.invoke(cli, ["accept", "tok", "--as", "sam"])
+
+    assert result.exit_code == 0, result.output
+    assert (get_mcp_dir() / "data.db").exists(), "accept left no store behind"
+
+
+def test_accept_names_both_remaining_steps(runner, monkeypatch):
+    """`join` needs a project as well as a store, and a project is per
+    repository — so `init` is still required once per repo, and saying only
+    "run join" sends people back into the same wall."""
+    import flanner.account as account
+    from flanner import session as cache
+
+    fake = cache.Session(
+        endpoint="https://cp.test",
+        device_id="dev_x",
+        organization_id="org_1",
+        user_id="sam",
+        entitlement="",
+        keyring={},
+    )
+    monkeypatch.setattr(account, "accept_invitation", lambda *a, **kw: fake)
+
+    result = runner.invoke(cli, ["accept", "tok", "--as", "sam"])
+
+    assert "flanner init" in result.output
+    assert "flanner join" in result.output
+
+
+def test_the_store_refusal_says_what_init_does(runner):
+    """Naming a command is not explaining it, and people reach this by
+    following our own instructions."""
+    result = runner.invoke(cli, ["join", "ws_core"])
+
+    assert result.exit_code == 1
+    assert "no flanner store yet" in result.output
+    assert "adopts the repository" in result.output
+
+
+# --- the help screen --------------------------------------------------------
+
+
+def test_every_command_appears_in_a_section():
+    """Thirty-four commands in one alphabetical list said nothing about
+    which of them a reader needs. Grouping only helps if it is complete —
+    a command missing from the table would vanish from the help entirely,
+    so `Sectioned` falls back to "Other" and this proves it."""
+    from click.testing import CliRunner
+
+    from flanner.cli import cli
+
+    output = CliRunner().invoke(cli, ["--help"]).output
+    declared = {name for name, c in cli.commands.items() if not c.hidden}
+    shown = set(re.findall(r"^  ([a-z][a-z-]+)\s", output, re.M))
+
+    assert declared <= shown, f"missing from help: {sorted(declared - shown)}"
+
+
+def test_the_first_split_is_local_versus_networked():
+    """The one somebody deciding whether to run this on a private
+    repository needs: everything above the line works with no account and
+    no network."""
+    from flanner.cli import Sectioned
+
+    titles = [title for title, _ in Sectioned.SECTIONS]
+    local = next(i for i, t in enumerate(titles) if "no network" in t)
+    team = next(i for i, t in enumerate(titles) if "control plane" in t)
+    assert local < team
+
+
+@pytest.mark.parametrize("path", sorted(__import__("flanner.cli", fromlist=["EXAMPLES"]).EXAMPLES))
+def test_every_example_names_a_real_command(path):
+    """An example for a command that no longer exists is worse than none:
+    it is confidently wrong, and nothing else would catch it."""
+    from flanner.cli import cli
+
+    node = cli
+    for part in path.split(" "):
+        assert part in getattr(node, "commands", {}), f"{path}: no command {part!r}"
+        node = node.commands[part]
+
+
+@pytest.mark.parametrize("path", sorted(__import__("flanner.cli", fromlist=["EXAMPLES"]).EXAMPLES))
+def test_every_example_starts_with_the_command_it_illustrates(path):
+    """Guards against an example drifting onto the wrong entry — a copied
+    line under the wrong key reads as correct until somebody runs it."""
+    from flanner.cli import EXAMPLES
+
+    first = EXAMPLES[path][0]
+    assert first.startswith(f"flanner {path}"), f"{path}: example begins {first!r}"
+
+
+def test_examples_reach_the_help_screen():
+    """They are attached to the built commands, and that pass has to run
+    after every command is registered."""
+    from click.testing import CliRunner
+
+    from flanner.cli import cli
+
+    for args in (["join"], ["review", "comment"], ["peer", "pull"]):
+        output = CliRunner().invoke(cli, [*args, "--help"]).output
+        assert "Examples:" in output, f"{' '.join(args)} has no examples"

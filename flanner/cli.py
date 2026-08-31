@@ -42,7 +42,88 @@ def get_pid_file() -> Path:
     return get_mcp_dir() / "server.pid"
 
 
-@click.group()
+class Sectioned(click.Group):
+    """A help screen grouped by what a command is for.
+
+    Thirty-four commands in one alphabetical list put `accept` beside
+    `claude-info` and `diff` beside `devices`, which tells a reader nothing
+    about which of them they need. The order they are declared in is no
+    better; only the grouping carries meaning.
+
+    The split that matters most is the first one: everything above the line
+    works with no account and no network, and the sections below it talk to
+    a control plane, to other machines, or to a third party. Somebody
+    deciding whether flanner is safe to run on a private repository should
+    be able to see that from the help text.
+    """
+
+    #: Title, then the commands under it, in the order a person meets them
+    #: rather than alphabetically. A command missing from here still shows —
+    #: see `format_commands` — because a help screen that silently omits a
+    #: command is worse than one that is untidy.
+    SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+        (
+            "Start here",
+            ("init", "list", "web", "doctor"),
+        ),
+        (
+            "Plans on this machine (no account, no network)",
+            ("sync", "history", "diff", "config", "delete", "setup-gitignore"),
+        ),
+        (
+            "Is a plan still true (local, reads your git history)",
+            ("freshness", "why"),
+        ),
+        (
+            "Review and retire (signed locally; syncs only if you have a team)",
+            ("review", "retire"),
+        ),
+        (
+            "Your team (talks to the control plane)",
+            ("login", "accept", "whoami", "logout", "invite", "members", "devices", "join"),
+        ),
+        (
+            "Syncing with other machines",
+            ("peer", "mesh"),
+        ),
+        (
+            "Agent integration",
+            ("setup", "register", "unregister", "claude-info", "start", "stop", "status"),
+        ),
+        (
+            "Issue trackers (talks to Jira or Linear)",
+            ("jira", "linear"),
+        ),
+    )
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        listed: set[str] = set()
+        for title, names in self.SECTIONS:
+            rows = []
+            for name in names:
+                command = self.get_command(ctx, name)
+                if command is None or command.hidden:
+                    continue
+                listed.add(name)
+                rows.append((name, (command.get_short_help_str(66))))
+            if rows:
+                with formatter.section(title):
+                    formatter.write_dl(rows)
+
+        # Anything added since this list was written. Falling back rather
+        # than dropping it: a new command should look out of place here,
+        # not vanish.
+        rest = [
+            (name, self.get_command(ctx, name).get_short_help_str(66))  # type: ignore[union-attr]
+            for name in sorted(self.list_commands(ctx))
+            if name not in listed and not getattr(self.get_command(ctx, name), "hidden", False)
+        ]
+        if rest:
+            with formatter.section("Other"):
+                formatter.write_dl(rest)
+
+
+@click.group(cls=Sectioned)
 @click.version_option(package_name="flanner")
 @click.option("--verbose", is_flag=True, help="Show debug output")
 @click.option("--quiet", is_flag=True, help="Only show errors")
@@ -344,15 +425,7 @@ def list_cmd(project: str | None, output: str) -> None:
     """List all projects or plan files"""
     import json as json_module
 
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
-
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
-
-    init_database(str(db_path))
-    session = get_session()
+    session = _require_session()
 
     if project:
         # List plan files for a specific project
@@ -456,15 +529,8 @@ def config(
     project_name: str, project_root: str | None, plan_dir: str | None, auto_gitignore: bool | None
 ) -> None:
     """Configure a project's settings"""
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
 
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
-
-    init_database(str(db_path))
-    session = get_session()
+    session = _require_session()
 
     # Get project
     project = get_project_by_name(session, project_name)
@@ -497,15 +563,8 @@ def config(
 @click.argument("project_name")
 def setup_gitignore(project_name: str) -> None:
     """Manually update .gitignore for a project"""
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
 
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
-
-    init_database(str(db_path))
-    session = get_session()
+    session = _require_session()
 
     # Get project
     project = get_project_by_name(session, project_name)
@@ -532,15 +591,8 @@ def setup_gitignore(project_name: str) -> None:
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
 def delete(project_name: str, force: bool) -> None:
     """Delete a project and all its plan files"""
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
 
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
-
-    init_database(str(db_path))
-    session = get_session()
+    session = _require_session()
 
     # Get project
     project = get_project_by_name(session, project_name)
@@ -618,12 +670,8 @@ def _open_browser_when_ready(host: str, port: int) -> None:
 @click.option("--open-browser", is_flag=True, help="Open browser automatically")
 def web(port: int, host: str, open_browser: bool) -> None:
     """Launch web interface"""
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
 
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
+    _require_store()
 
     if host not in ("127.0.0.1", "localhost", "::1"):
         console.print(
@@ -993,15 +1041,8 @@ def sync(project: str | None, dry_run: bool) -> None:
     if dry_run:
         tui.note("Dry run. Nothing will be written.")
 
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
-
-    init_database(str(db_path))
-    init_storage(str(mcp_dir))
-    session = get_session()
+    session = _require_session()
+    init_storage(str(get_mcp_dir()))
 
     if project:
         project_model = get_project_by_name(session, project)
@@ -1536,12 +1577,7 @@ def jira_config(project_name: str, url: str, project_key: str | None) -> None:
     """Configure JIRA integration for a project"""
     from .jira_utils import is_valid_jira_url, normalize_jira_url
 
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
-
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
+    _require_store()
 
     # Validate JIRA URL
     if not is_valid_jira_url(url):
@@ -1549,8 +1585,7 @@ def jira_config(project_name: str, url: str, project_key: str | None) -> None:
         console.print("  Expected format: https://company.atlassian.net", style="yellow")
         raise SystemExit(1)
 
-    init_database(str(db_path))
-    session = get_session()
+    session = _require_session()
 
     # Get project
     project = get_project_by_name(session, project_name)
@@ -1593,12 +1628,7 @@ def jira_link(
     from .database import get_jira_config
     from .jira_utils import format_jira_issue_key, generate_jira_issue_url, is_valid_jira_issue_key
 
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
-
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
+    _require_store()
 
     # Validate issue key
     formatted_issue = format_jira_issue_key(issue)
@@ -1609,8 +1639,7 @@ def jira_link(
         )
         raise SystemExit(1)
 
-    init_database(str(db_path))
-    session = get_session()
+    session = _require_session()
 
     # Get project
     if project:
@@ -1686,15 +1715,7 @@ def jira_unlink(plan_name: str, issue: str | None, unlink_all: bool, project: st
     """Unlink a plan file from JIRA issue(s)"""
     from .jira_utils import format_jira_issue_key
 
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
-
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
-
-    init_database(str(db_path))
-    session = get_session()
+    session = _require_session()
 
     # Get project
     if project:
@@ -1761,15 +1782,7 @@ def jira_links(project: str | None) -> None:
     """List all JIRA links"""
     from .database import get_jira_config, list_all_jira_links
 
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
-
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
-
-    init_database(str(db_path))
-    session = get_session()
+    session = _require_session()
 
     # Get projects
     if project:
@@ -1820,15 +1833,7 @@ def jira_show(plan_name: str, project: str | None) -> None:
     from .database import get_jira_config, get_jira_links
     from .jira_utils import generate_jira_issue_url
 
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
-
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
-
-    init_database(str(db_path))
-    session = get_session()
+    session = _require_session()
 
     # Get project
     if project:
@@ -1907,13 +1912,39 @@ def _write(op: str, **args: Any) -> dict[str, Any]:
     return result
 
 
+def _ensure_store() -> None:
+    """Create the machine-wide store if it is not there yet.
+
+    Idempotent. `init` does this too, along with adopting a repository and
+    registering the MCP server; this is only the part every command needs.
+    """
+    mcp_dir = get_mcp_dir()
+    init_storage(str(mcp_dir))
+    init_database(str(mcp_dir / "data.db"))
+
+
+def _require_store() -> None:
+    """Refuse, in one voice, when this machine has no store yet.
+
+    Eleven commands wrote this refusal out themselves, so improving it
+    meant improving it eleven times, and the wording had already drifted
+    from what `init` actually does.
+    """
+    if (get_mcp_dir() / "data.db").exists():
+        return
+    # Naming the command was not enough. People reach this by following our
+    # own instructions, so it says what the command does and that hitting
+    # it once is expected.
+    tui.bad("This machine has no flanner store yet.")
+    tui.note("`flanner init` creates it, and adopts the repository you run it in.")
+    tui.hint(f"  {tui.command('flanner init')}")
+    raise SystemExit(1)
+
+
 def _require_session() -> Session:
-    """Open the flanner database or exit 1 if it isn't initialized."""
-    db_path = get_mcp_dir() / "data.db"
-    if not db_path.exists():
-        console.print("ERROR Database not initialized. Run 'flanner init' first.", style="red")
-        raise SystemExit(1)
-    init_database(str(db_path))
+    """Open the flanner database, or refuse if there is not one yet."""
+    _require_store()
+    init_database(str(get_mcp_dir() / "data.db"))
     return get_session()
 
 
@@ -2433,7 +2464,11 @@ def join(
     the user's behalf.
     """
     if not workspace_id and not clear_binding:
-        console.print("ERROR Give a workspace id, or --clear to leave.", style="red")
+        tui.bad("Give a workspace id, or --clear to leave.")
+        # The id is not guessable and nothing prints it by accident, so a
+        # refusal that does not name where to find one leaves somebody
+        # searching a console they may not have access to.
+        _print_workspaces_hint()
         raise SystemExit(1)
 
     session = _require_session()
@@ -2498,6 +2533,37 @@ def join(
         console.print(f"No access yet: {authorization.reason}", style="yellow")
 
 
+def _print_workspaces_hint() -> None:
+    """Name the workspaces this device may enter, or say why there are none.
+
+    Three surfaces already hold this — `whoami`, the local Mesh page and the
+    console — and the one place somebody is standing when they need it
+    listed none of them.
+    """
+    from . import session as cache
+
+    current = cache.load()
+    if current is None:
+        tui.note("This device is not signed in, so it holds no workspace access.")
+        tui.hint(f"Run {tui.command('flanner login <code>')} with an invitation first.")
+        return
+
+    claims = current.status().claims
+    grants = getattr(claims, "workspace_capabilities", ()) if claims else ()
+    if not grants:
+        tui.note("Your account has no workspace access yet.")
+        tui.hint("An admin grants it from the console, then run")
+        tui.hint(f"  {tui.command('flanner whoami --refresh')} to pick it up.")
+        return
+
+    tui.note("Workspaces this device may enter:")
+    table = tui.table("Workspace", "Role")
+    for grant in grants:
+        table.add_row(grant.workspace_id, grant.role)
+    console.print(table)
+    tui.hint(f"Also shown by {tui.command('flanner whoami')} and on the Mesh page.")
+
+
 @cli.command()
 @click.argument("token")
 @click.option("--as", "user_id", required=True, help="The user id to join as")
@@ -2519,10 +2585,25 @@ def accept(token: str, user_id: str, endpoint: str | None, label: str | None) ->
         console.print(f"ERROR {e}", style="red")
         raise SystemExit(1) from None
 
+    # The store is machine-wide, and accepting an invitation is the moment
+    # this machine commits to being used with a team. Creating it here
+    # removes the failure everybody hit: the next instruction we print is
+    # `flanner join`, and until now that refused because nothing had made a
+    # database yet.
+    #
+    # It does not make `init` unnecessary. `join` also needs a project, and
+    # a project is per repository — so `init` still runs once per repo, and
+    # the message below says so.
+    _ensure_store()
+
     console.print(f"OK Joined as {current.user_id} ({current.device_id})", style="green")
     _print_entitlement(current)
     console.print(
-        "\nRun 'flanner join <workspace-id>' in a project to make its review binding.",
+        "\nThis machine is ready. In each repository you want to share plans\n"
+        "from, run:\n"
+        "    flanner init          adopts that repository\n"
+        "    flanner join <id>     binds it to a workspace\n\n"
+        "The workspace ids are listed above, and by 'flanner whoami'.",
         style="dim",
     )
 
@@ -3523,3 +3604,122 @@ def why(ctx: click.Context, plan_name: str, project: str | None) -> None:
     have, and it is not obvious that a command called freshness answers it.
     """
     ctx.invoke(freshness, plan_name=plan_name, project=project, output="table")
+
+
+# --- worked examples ----------------------------------------------------------
+#
+# `--project TEXT` tells a reader the flag exists and nothing about what goes
+# in it. `--project checkout-service` answers that, so these use real-looking
+# values rather than <placeholders>.
+#
+# Attached to the built commands in one pass rather than as a decorator on
+# each, so the whole set is readable together and a test can check every key
+# against a command that exists.
+
+EXAMPLES: dict[str, tuple[str, ...]] = {
+    "init": (
+        "flanner init                     adopt the repository you are in",
+        "flanner init --plan-dir docs/plans",
+        "flanner init --skip-claude       do not register the MCP server",
+    ),
+    "list": (
+        "flanner list                     every project on this machine",
+        "flanner list --project checkout-service",
+    ),
+    "web": (
+        "flanner web                      the local UI on 8080",
+        "flanner web --port 8090 --open-browser",
+    ),
+    "doctor": ("flanner doctor                   catalog against the files on disk",),
+    "sync": (
+        "flanner sync                     import .plans files already there",
+        "flanner sync --dry-run           show what it would import",
+    ),
+    "history": ("flanner history payment-webhooks --project checkout-service",),
+    "diff": (
+        "flanner diff payment-webhooks 3 5 --project checkout-service",
+        "flanner diff payment-webhooks 5  against the version before it",
+    ),
+    "freshness": (
+        "flanner freshness                every plan, worst first",
+        "flanner freshness payment-webhooks",
+        "flanner freshness --output json  for a script",
+    ),
+    "why": ("flanner why payment-webhooks --project checkout-service",),
+    "config": ("flanner config checkout-service --plan-dir docs/plans",),
+    "delete": ("flanner delete old-service --force",),
+    "setup-gitignore": ("flanner setup-gitignore checkout-service",),
+    "retire": (
+        "flanner retire anchor-demo --reason 'superseded by v2'",
+        "flanner retire anchor-demo --restore",
+    ),
+    "login": (
+        "flanner login K7QP2M4X           code from your team console",
+        "flanner login K7QP2M4X --endpoint https://app.flanner.io",
+    ),
+    "accept": (
+        "flanner accept Aitkkm46g6MXnk15 --as jayson \\",
+        "        --endpoint https://app.flanner.io",
+    ),
+    "whoami": (
+        "flanner whoami                   identity, access, workspaces",
+        "flanner whoami --refresh         renew, to pick up a new grant now",
+    ),
+    "logout": ("flanner logout",),
+    "invite": ("flanner invite raj@acme.test",),
+    "members": ("flanner members",),
+    "join": (
+        "flanner join ws_f24dca1f15b391e1 bind this repository",
+        "flanner join                     lists the ids you may use",
+        "flanner join --clear             leave the workspace",
+    ),
+    "review status": ("flanner review status payment-webhooks --project checkout-service",),
+    "review propose": ("flanner review propose payment-webhooks --message 'retry budget raised'",),
+    "review decide": (
+        "flanner review decide payment-webhooks --accept",
+        "flanner review decide payment-webhooks --reject",
+    ),
+    "review comment": (
+        "flanner review comment payment-webhooks \\",
+        "        --on 'The retry budget is three attempts' \\",
+        "        -m 'Is three enough under load?'",
+    ),
+    "review pack": ("flanner review pack payment-webhooks --out review.html",),
+    "review import": ("flanner review import payment-webhooks --from review.notes.json",),
+    "peer serve": (
+        "flanner peer serve               reachable with no open port",
+        "flanner peer serve --http --port 8776",
+    ),
+    "peer pull": (
+        "flanner peer pull dev_7ab74afd93b09861",
+        "flanner peer pull http://192.168.1.20:8776",
+    ),
+    "peer push": ("flanner peer push dev_7ab74afd93b09861",),
+    "peer status": (
+        "flanner peer status              how peers reach this machine",
+        "flanner peer status dev_7ab74afd93b09861",
+    ),
+    "devices list": ("flanner devices list",),
+    "devices revoke": ("flanner devices revoke dev_7ab74afd93b09861",),
+    "mesh status": ("flanner mesh status",),
+}
+
+
+def _attach_examples(group: click.Group, prefix: str = "") -> None:
+    r"""Hang the worked examples off each command's help screen.
+
+    The leading ``\b`` is click's marker for "do not rewrap what follows".
+    Without it the examples are reflowed into a paragraph, which turns a
+    column of commands into prose and loses the alignment that makes them
+    scannable.
+    """
+    for name, command in group.commands.items():
+        path = f"{prefix}{name}"
+        lines = EXAMPLES.get(path)
+        if lines:
+            command.epilog = "Examples:\n\n\b\n" + "\n".join(f"  {line}" for line in lines)
+        if isinstance(command, click.Group):
+            _attach_examples(command, f"{path} ")
+
+
+_attach_examples(cli)
