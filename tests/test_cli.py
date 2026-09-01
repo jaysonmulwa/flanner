@@ -937,9 +937,53 @@ def test_doctor_reports_missing_file(runner, plan):
 def test_doctor_json_output(runner, plan):
     result = runner.invoke(cli, ["doctor", "--project", "proj", "--output", "json"])
     assert result.exit_code == 0, result.output
-    findings = json.loads(result.output)
-    assert findings[0]["kind"] == "missing_file"
-    assert findings[0]["repairable"] is False
+    report = json.loads(result.output)
+    assert report["project"] == "proj"
+    assert report["catalog"][0]["kind"] == "missing_file"
+    assert report["catalog"][0]["repairable"] is False
+
+
+def test_doctor_json_carries_enrollment(runner, plan):
+    """The half a setup script actually reads."""
+    result = runner.invoke(cli, ["doctor", "--project", "proj", "--output", "json"])
+    report = json.loads(result.output)
+    codes = [c["code"] for c in report["enrollment"]]
+    assert "not_enrolled" in codes
+    # Every check carries the command that resolves it, or nothing to do.
+    for check in report["enrollment"]:
+        assert check["level"] in {"ok", "info", "action", "problem"}
+
+
+def test_doctor_says_a_local_only_device_is_fine(runner, plan):
+    """Not enrolled is information, not a fault: local work needs no account."""
+    result = runner.invoke(cli, ["doctor", "--project", "proj", "--output", "json"])
+    report = json.loads(result.output)
+    not_enrolled = next(c for c in report["enrollment"] if c["code"] == "not_enrolled")
+    assert not_enrolled["level"] == "info"
+    assert "needs no account" in not_enrolled["detail"]
+
+
+def test_doctor_flags_a_binding_with_no_account(runner, plan):
+    """A repository bound to a workspace by a device that cannot enter one."""
+    from flanner.database import ProjectModel, get_session
+
+    db = get_session()
+    project = db.query(ProjectModel).filter_by(name="proj").one()
+    project.workspace_id = "ws_orphaned"
+    db.commit()
+
+    result = runner.invoke(cli, ["doctor", "--project", "proj", "--output", "json"])
+    report = json.loads(result.output)
+    flagged = next(c for c in report["enrollment"] if c["code"] == "bound_without_account")
+    assert flagged["level"] == "problem"
+    assert "ws_orphaned" in flagged["detail"]
+
+
+def test_doctor_table_always_reports_the_team_section(runner, plan):
+    """Printed on success too, so it can be used to confirm setup worked."""
+    result = runner.invoke(cli, ["doctor", "--project", "proj"])
+    assert result.exit_code == 0, result.output
+    assert "Team" in result.output
 
 
 def test_doctor_repair_adopts_orphan(runner, written_plan, git_repo):
@@ -1424,3 +1468,81 @@ def test_examples_reach_the_help_screen():
     for args in (["join"], ["review", "comment"], ["peer", "pull"]):
         output = CliRunner().invoke(cli, [*args, "--help"]).output
         assert "Examples:" in output, f"{' '.join(args)} has no examples"
+
+
+# --- peer serve opens the store it hands to other threads ---
+
+
+def test_peer_serve_initialises_the_database(runner, project, monkeypatch):
+    """`peer serve` gives `get_session` away instead of calling it.
+
+    It passes the factory to a catch-up thread and to the request handler, so
+    unlike every other command it never opens a session on the way in. It also
+    never initialised one, and the thread died on its first query while the
+    command printed that it was serving. Reproduced the way it happened: a
+    process where nothing else has touched the database yet.
+    """
+    import flanner.database as database
+    from flanner.cli import cli
+
+    monkeypatch.setattr(database, "_SessionLocal", None)
+
+    started: dict[str, object] = {}
+
+    def fake_serve(session_factory, load, refresher):
+        # What the real server does on its first request, and what the
+        # background catch-up thread does immediately.
+        with session_factory() as session:
+            started["projects"] = len(database.list_projects(session))
+
+    fake_endpoint = type(
+        "E",
+        (),
+        {
+            "ready": staticmethod(lambda: None),
+            "close": staticmethod(lambda: None),
+            "serve": staticmethod(fake_serve),
+        },
+    )()
+    monkeypatch.setattr("flanner.peer_iroh.shared_endpoint", lambda: fake_endpoint)
+    monkeypatch.setattr("flanner.cli._catch_up_in_background", lambda dial: None)
+    monkeypatch.setattr("flanner.session.load", lambda: object())
+
+    result = runner.invoke(cli, ["peer", "serve"])
+
+    assert "Database not initialized" not in result.output, result.output
+    assert started.get("projects") == 1, result.output
+
+
+# --- the message you meet when join arrives before init ---
+
+
+def test_join_in_an_unadopted_repo_names_init(runner, initialized, git_repo, monkeypatch):
+    """The common case: a store exists, this repository was never adopted.
+
+    It used to say "run this from inside a project", which sends somebody
+    somewhere else when the answer is to adopt where they already are.
+    """
+    monkeypatch.chdir(git_repo)
+    result = runner.invoke(cli, ["join", "ws_abc"])
+
+    assert result.exit_code == 1
+    assert "has not been adopted" in result.output
+    assert "flanner init" in result.output
+
+
+def test_no_project_outside_a_repo_says_so(runner, initialized, tmp_path, monkeypatch):
+    """A different situation, and it used to share the same message."""
+    outside = tmp_path / "not-a-repo"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    result = runner.invoke(cli, ["join", "ws_abc"])
+
+    assert result.exit_code == 1
+    assert "Not inside a git repository" in result.output
+
+
+def test_join_help_states_the_prerequisite(runner):
+    """Documented on the website, and absent where somebody actually fails."""
+    result = runner.invoke(cli, ["join", "--help"])
+    assert "flanner init" in result.output

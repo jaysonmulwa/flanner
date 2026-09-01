@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -1351,6 +1352,147 @@ _FINDING_STYLES = {
 }
 
 
+@dataclass(frozen=True)
+class EnrollmentCheck:
+    """One statement about where this device and project stand with a team.
+
+    Separate from a reconcile finding because the two answer different
+    questions. A finding is about a plan file; this is about whether team
+    features can work here at all, which is the question somebody actually
+    has when review or sync is not behaving.
+    """
+
+    code: str
+    level: str  # ok | info | action | problem
+    detail: str
+    fix: str = ""
+
+
+_ENROLLMENT_STYLES = {"ok": "green", "info": "dim", "action": "yellow", "problem": "red"}
+
+
+def _enrollment_report(project: Any) -> list[EnrollmentCheck]:
+    """Where this device stands: enrolled, entitled, granted, and bound.
+
+    Four separate things, in the order they gate each other. Reporting them
+    apart matters because the failures look identical from the outside — a
+    push that does nothing is the same silence whether the device was never
+    enrolled, the entitlement lapsed, an admin has not granted a workspace
+    yet, or this repository was never joined to one.
+
+    The last check is the one worth having. A project bound to a workspace
+    the account may not enter is invisible in every other command: `whoami`
+    lists the grants, `join` reports the binding, and neither notices that
+    they disagree.
+    """
+    from . import entitlements
+    from . import session as cache
+
+    bound = getattr(project, "workspace_id", None)
+    current = cache.load()
+
+    if current is None:
+        checks = [
+            EnrollmentCheck(
+                "not_enrolled",
+                "info",
+                "Not enrolled with a team. Local plan work needs no account.",
+                "flanner accept <token> --as your-handle",
+            )
+        ]
+        if bound:
+            checks.append(
+                EnrollmentCheck(
+                    "bound_without_account",
+                    "problem",
+                    f"This project is bound to workspace {bound}, but the device is not "
+                    "enrolled, so review here counts for nobody.",
+                    "flanner accept <token> --as your-handle",
+                )
+            )
+        return checks
+
+    checks = [
+        EnrollmentCheck(
+            "enrolled",
+            "ok",
+            f"Enrolled as {current.user_id} in {current.organization_id}.",
+        )
+    ]
+
+    verdict = current.status()
+    # Against the module's own constant, not a literal. The first version of
+    # this compared with "VALID" while the constant is "valid", so a healthy
+    # entitlement was reported as being in grace — a doctor that lies about
+    # the thing it exists to check.
+    if verdict.status == entitlements.VALID:
+        checks.append(EnrollmentCheck("entitlement_valid", "ok", "Entitlement is current."))
+    elif verdict.usable:
+        checks.append(
+            EnrollmentCheck(
+                "entitlement_grace",
+                "action",
+                f"Entitlement is in grace: {verdict.reason or 'not renewed recently'}. "
+                "Reads still work; pushing is refused until it renews.",
+                "flanner whoami --refresh",
+            )
+        )
+    else:
+        checks.append(
+            EnrollmentCheck(
+                "entitlement_expired",
+                "problem",
+                f"Entitlement is {verdict.status}: {verdict.reason or 'no longer valid'}. "
+                "Team features are off until it renews.",
+                "flanner whoami --refresh",
+            )
+        )
+
+    capabilities = verdict.claims.workspace_capabilities if verdict.claims else ()
+    granted = {c.workspace_id: c.role for c in capabilities}
+    if not granted:
+        checks.append(
+            EnrollmentCheck(
+                "no_grants",
+                "action",
+                "No workspace access granted yet. An admin has to grant it, and it "
+                "arrives when the entitlement next renews.",
+                "flanner whoami --refresh",
+            )
+        )
+    elif not bound:
+        listed = ", ".join(sorted(granted))
+        checks.append(
+            EnrollmentCheck(
+                "not_bound",
+                "action",
+                f"This project is not bound to a workspace, so review here does not "
+                f"count for the team. You may enter: {listed}.",
+                "flanner join <workspace-id>",
+            )
+        )
+    elif bound in granted:
+        checks.append(
+            EnrollmentCheck(
+                "bound",
+                "ok",
+                f"Bound to {bound} as {granted[bound]}.",
+            )
+        )
+    else:
+        listed = ", ".join(sorted(granted))
+        checks.append(
+            EnrollmentCheck(
+                "bound_without_grant",
+                "problem",
+                f"Bound to workspace {bound}, which this account may not enter. "
+                f"Access covers: {listed}. Either an admin revoked it, or the id is wrong.",
+                "flanner join <workspace-id>  # or --clear to unbind",
+            )
+        )
+    return checks
+
+
 @cli.command()
 @click.option("--project", default=None, help="Project name")
 @click.option("--repair", is_flag=True, help="Adopt orphan files and fix stale version counters")
@@ -1372,20 +1514,32 @@ def doctor(project: str | None, repair: bool, output: str) -> None:
         _no_project(project)
 
     findings = reconcile_project(session, proj, repair=repair)
+    enrollment = _enrollment_report(proj)
 
     if output == "json":
+        # An object, not the bare array this used to print. The array could
+        # only ever describe plan files, and "this device is not enrolled" is
+        # not a plan file. A caller reading the enrollment state should not
+        # have to filter it out of a list of missing-file findings.
         click.echo(
             json_module.dumps(
-                [
-                    {
-                        "kind": f.kind,
-                        "plan": f.plan,
-                        "detail": f.detail,
-                        "path": f.path,
-                        "repairable": f.repairable,
-                    }
-                    for f in findings
-                ],
+                {
+                    "project": proj.name,
+                    "catalog": [
+                        {
+                            "kind": f.kind,
+                            "plan": f.plan,
+                            "detail": f.detail,
+                            "path": f.path,
+                            "repairable": f.repairable,
+                        }
+                        for f in findings
+                    ],
+                    "enrollment": [
+                        {"code": c.code, "level": c.level, "detail": c.detail, "fix": c.fix}
+                        for c in enrollment
+                    ],
+                },
                 indent=2,
             )
         )
@@ -1395,6 +1549,7 @@ def doctor(project: str | None, repair: bool, output: str) -> None:
         console.print(
             f"OK Catalog, files, and signatures all agree for '{proj.name}'", style="green"
         )
+        _print_enrollment(enrollment)
         return
 
     table = tui.table("Issue", "Plan", "Detail")
@@ -1410,6 +1565,7 @@ def doctor(project: str | None, repair: bool, output: str) -> None:
             "this device; the note above says why.",
             style="green",
         )
+        _print_enrollment(enrollment)
         return
 
     if repair:
@@ -1426,6 +1582,23 @@ def doctor(project: str | None, repair: bool, output: str) -> None:
         console.print(
             "\nRun 'flanner doctor --repair' to fix the repairable ones.", style="yellow"
         )
+
+    _print_enrollment(enrollment)
+
+
+def _print_enrollment(checks: list[EnrollmentCheck]) -> None:
+    """The team half of the report, printed whichever way the catalog went.
+
+    Always printed, including when everything is fine. A check that only
+    appears on failure cannot be used to confirm success, and confirming
+    success is most of what somebody wants after running four setup commands.
+    """
+    console.print("\nTeam")
+    for check in checks:
+        style = _ENROLLMENT_STYLES.get(check.level, "white")
+        console.print(f"  {check.detail}", style=style)
+        if check.fix:
+            console.print(f"    {tui.command(check.fix)}", style="dim")
 
 
 _FRESHNESS_STYLES = {"fresh": "green", "aging": "yellow", "suspect": "dark_orange", "stale": "red"}
@@ -1941,10 +2114,21 @@ def _require_store() -> None:
     raise SystemExit(1)
 
 
-def _require_session() -> Session:
-    """Open the flanner database, or refuse if there is not one yet."""
+def _open_store() -> None:
+    """Make the local catalog usable in this process, or refuse.
+
+    Separate from `_require_session` for the commands that hand `get_session`
+    to something else — a background thread, or a server that opens one per
+    request — rather than opening one here. `peer serve` did neither and so
+    initialised nothing, which its own catch-up thread then discovered.
+    """
     _require_store()
     init_database(str(get_mcp_dir() / "data.db"))
+
+
+def _require_session() -> Session:
+    """Open the flanner database, or refuse if there is not one yet."""
+    _open_store()
     return get_session()
 
 
@@ -1954,13 +2138,28 @@ def _no_project(project: str | None) -> NoReturn:
     Telling somebody to "pass --project" when they just passed --project is
     the kind of message that makes a tool feel like it is not listening. The
     name they gave is the useful thing to echo back.
+
+    Three different situations used to share one message. Standing in a
+    repository that has simply never been adopted is by far the most common,
+    and it was being told to "run this from inside a project" — advice to go
+    somewhere else, when the answer is to adopt where you already are. It is
+    what somebody following the join sequence meets if they reach for
+    `flanner join` before `flanner init`.
     """
     if project:
         console.print(f"ERROR No project named '{project}'.", style="red")
         tui.hint("Run flanner list to see the projects this machine knows about.")
+        raise SystemExit(1)
+
+    git_root = find_git_root(os.getcwd())
+    if git_root:
+        console.print("ERROR This repository has not been adopted by flanner yet.", style="red")
+        tui.note(f"Found a git repository at {git_root}, but no project for it.")
+        tui.hint(f"  {tui.command('flanner init')}   adopt it, then run this again")
     else:
-        console.print("ERROR Not inside a known project.", style="red")
-        tui.hint("Run this from inside a project, or name one with --project.")
+        console.print("ERROR Not inside a git repository.", style="red")
+        tui.note("flanner works per repository, and finds one by looking for its git root.")
+        tui.hint("Change to a repository first, or name a project with --project.")
     raise SystemExit(1)
 
 
@@ -2456,6 +2655,9 @@ def join(
 ) -> None:
     """Bind a project to a control-plane workspace, making review binding
 
+    Run `flanner init` first in a repository flanner has not seen before:
+    joining binds an existing project, and does not create one.
+
     Until a project joins one, review runs but authorizes nothing. After it
     joins, roles come from the signed entitlement this device holds.
 
@@ -2841,6 +3043,12 @@ def peer_serve(host: str, port: int | None, http: bool) -> None:
     from . import peer as peer_transport
     from . import peer_iroh
     from . import session as cache
+
+    # Before anything else: this command hands `get_session` to a background
+    # thread and to the request handler rather than opening one itself, so
+    # nothing here would otherwise initialise the database. The thread then
+    # died on its first query while the server reported itself as serving.
+    _open_store()
 
     if cache.load() is None:
         console.print("ERROR Not signed in, so no peer can be authorised.", style="red")

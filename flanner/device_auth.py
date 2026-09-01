@@ -133,7 +133,16 @@ def verify_request(
     moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     drift = abs((moment - issued).total_seconds())
     if drift > max_skew.total_seconds():
-        return AuthResult(False, f"request is {int(drift)}s out of date")
+        # Naming the cause, not just the measurement. This refusal is almost
+        # never an attack and almost always two machines disagreeing about
+        # the time, but "request is 246s out of date" reads like a bug in
+        # flanner to the person holding both machines.
+        allowed = int(max_skew.total_seconds())
+        return AuthResult(
+            False,
+            f"request is {int(drift)}s out of date: the two machines' clocks "
+            f"disagree by more than {allowed}s. Sync the clock on both and retry.",
+        )
 
     if not request.nonce:
         return AuthResult(False, "request has no nonce")

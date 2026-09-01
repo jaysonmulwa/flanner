@@ -208,6 +208,9 @@ def test_a_captured_request_stops_working(home):
     later = datetime.now(timezone.utc) + timedelta(hours=1)
     result = verify_request(request, identity.device_public_key_b64(), now=later)
     assert not result and "out of date" in result.reason
+    # The reason has to name the cause, not only the measurement: this
+    # refusal is nearly always two clocks disagreeing, not an attack.
+    assert "clocks" in result.reason and "Sync the clock" in result.reason
 
 
 def test_a_request_without_a_nonce_is_refused(home):
