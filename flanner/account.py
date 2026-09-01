@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -48,7 +49,7 @@ def login(code: str, *, endpoint: str = DEFAULT_ENDPOINT, label: str | None = No
             "enrollment_code": code.strip(),
             "public_key": identity.device_public_key_b64(),
             "label": label or _default_label(),
-            "platform": os.name,
+            "platform": platform.system() or os.name,
         },
     )
     session = _session_from(endpoint, body)
@@ -176,7 +177,7 @@ def accept_invitation(
             "user_id": user_id.strip(),
             "public_key": identity.device_public_key_b64(),
             "label": label or _default_label(),
-            "platform": os.name,
+            "platform": platform.system() or os.name,
         },
     )
     session = _session_from(endpoint, body)
