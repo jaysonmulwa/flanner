@@ -505,6 +505,35 @@ def _project_accepted_heads(
     return valid
 
 
+def _proposal_state(
+    *,
+    target: str,
+    actions: set[Any],
+    base: tuple[str, ...],
+    accepted_targets: set[str],
+    state: WorkflowState,
+) -> str:
+    """Which state a proposal is in, by the first rule that applies.
+
+    The order is the precedence, and it is the whole content of this
+    function. Withdrawal and rejection outrank everything, because both are
+    the proposer or a reviewer ending the discussion. An accepted target
+    outranks a change request, because the change was evidently made. Being
+    stale is checked last, since it only matters for a proposal still open.
+    """
+    if WITHDRAW in actions:
+        return WITHDRAWN
+    if REJECT in actions:
+        return REJECTED
+    if target in accepted_targets:
+        return ACCEPTED if target == state.accepted_artifact_id else SUPERSEDED
+    if REQUEST_CHANGES in actions:
+        return CHANGES_REQUESTED
+    if _is_stale(base, state):
+        return STALE
+    return OPEN
+
+
 def _project_proposals(
     proposals: dict[str, Event],
     decisions: dict[str, list[Event]],
@@ -524,18 +553,13 @@ def _project_proposals(
         )
         base = tuple(proposal.payload.get("base_accepted_event_ids") or ())
 
-        if WITHDRAW in actions:
-            projected = WITHDRAWN
-        elif REJECT in actions:
-            projected = REJECTED
-        elif target in accepted_targets:
-            projected = ACCEPTED if target == state.accepted_artifact_id else SUPERSEDED
-        elif REQUEST_CHANGES in actions:
-            projected = CHANGES_REQUESTED
-        elif _is_stale(base, state):
-            projected = STALE
-        else:
-            projected = OPEN
+        projected = _proposal_state(
+            target=target,
+            actions=actions,
+            base=base,
+            accepted_targets=accepted_targets,
+            state=state,
+        )
 
         state.proposals[proposal_id] = ProposalView(
             proposal_id=proposal_id,

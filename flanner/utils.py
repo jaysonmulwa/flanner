@@ -128,41 +128,33 @@ def format_datetime(dt: datetime | None, format_str: str = "%Y-%m-%d %H:%M:%S") 
     return dt.strftime(format_str)
 
 
+# Largest first, so the first unit that yields a whole number wins. A month
+# is 30 days and a year 365: this is for reading, not for arithmetic.
+_RELATIVE_UNITS: tuple[tuple[int, str], ...] = (
+    (31536000, "year"),
+    (2592000, "month"),
+    (604800, "week"),
+    (86400, "day"),
+    (3600, "hour"),
+    (60, "minute"),
+)
+
+
 def format_relative_time(dt: datetime) -> str:
-    """
-    Format datetime as relative time (e.g., "2 hours ago").
+    """How long ago, in the largest unit that gives a whole number.
 
     Args:
-        dt: Datetime object
+        dt: the moment to describe, in UTC.
 
     Returns:
-        Relative time string
+        A phrase like "2 hours ago", or "just now" under a minute.
     """
-    now = utcnow()
-    diff = now - dt
-
-    seconds = diff.total_seconds()
-
-    if seconds < 60:
-        return "just now"
-    elif seconds < 3600:
-        minutes = int(seconds / 60)
-        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
-    elif seconds < 86400:
-        hours = int(seconds / 3600)
-        return f"{hours} hour{'s' if hours != 1 else ''} ago"
-    elif seconds < 604800:
-        days = int(seconds / 86400)
-        return f"{days} day{'s' if days != 1 else ''} ago"
-    elif seconds < 2592000:
-        weeks = int(seconds / 604800)
-        return f"{weeks} week{'s' if weeks != 1 else ''} ago"
-    elif seconds < 31536000:
-        months = int(seconds / 2592000)
-        return f"{months} month{'s' if months != 1 else ''} ago"
-    else:
-        years = int(seconds / 31536000)
-        return f"{years} year{'s' if years != 1 else ''} ago"
+    seconds = (utcnow() - dt).total_seconds()
+    for size, unit in _RELATIVE_UNITS:
+        if seconds >= size:
+            count = int(seconds / size)
+            return f"{count} {unit}{'s' if count != 1 else ''} ago"
+    return "just now"
 
 
 def ensure_directory_exists(directory: str) -> None:

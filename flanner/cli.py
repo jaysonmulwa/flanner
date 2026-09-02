@@ -136,6 +136,80 @@ def cli(verbose: bool, quiet: bool) -> None:
     )
 
 
+def _register_with_claude_desktop() -> None:
+    """Add the MCP server to Claude Desktop's config, and say how it went.
+
+    Failure is reported, never raised. Registration is a convenience on top
+    of a store that has already been created successfully, and taking `init`
+    down because one editor's config file could not be written would undo
+    work that did succeed.
+    """
+    from .claude_integration import auto_register_on_init
+
+    console.print("\n[MCP] Registering MCP server with Claude Desktop...", style="cyan")
+    success, message = auto_register_on_init()
+    if success:
+        console.print(f"OK {message}", style="green")
+        console.print(
+            "  You may need to restart Claude Code for changes to take effect", style="yellow"
+        )
+        return
+    console.print(f"WARN {message}", style="yellow")
+    console.print("  You can manually register later with: flanner register", style="white")
+
+
+def _adopt_repository(project_root: str, plan_dir: str, force_new_project: bool) -> None:
+    """Make this repository a project, or report the one already here.
+
+    Prompts for a name only when creating, so re-running `init` on an adopted
+    repository is silent and safe — which is what makes it fair to tell people
+    it can be re-run at any time.
+    """
+    from .database import get_project_by_root
+
+    try:
+        existing = get_project_by_root(get_session(), project_root)
+    except Exception as e:  # noqa: BLE001 - reported, not swallowed; see below
+        # Deliberately broad, and deliberately not fatal. The store exists by
+        # now, so the useful outcome is to say what failed and leave the rest
+        # of `init` intact rather than abort a half-finished setup.
+        console.print(f"WARN Could not check for an existing project: {e}", style="yellow")
+        console.print("  Skipping project creation to be safe", style="yellow")
+        return
+
+    if existing and not force_new_project:
+        console.print(f"OK Project already exists: {existing.name}", style="green")
+        console.print(f"  Plan directory: {existing.plan_directory}", style="white")
+        console.print(f"  Plan files: {len(existing.plan_files)}", style="white")
+        console.print("\n  Tip: MCP server registration still completed above.", style="cyan")
+        console.print(
+            "  You can run 'flanner init' anytime to ensure everything is set up!", style="cyan"
+        )
+        return
+
+    if existing:
+        console.print(f"WARN Project '{existing.name}' already exists here", style="yellow")
+        console.print("  Creating a new project anyway (--force-new-project)", style="yellow")
+
+    project_name = click.prompt("Enter project name", default=Path(project_root).name)
+
+    from .server import create_project_tool
+
+    result = create_project_tool(
+        name=project_name, project_root=project_root, plan_directory=plan_dir
+    )
+    if result.get("error"):
+        console.print(f"ERROR Error: {result['message']}", style="red")
+        return
+
+    console.print(f"OK Created project: {project_name}", style="green")
+    console.print(f"OK Plan directory: {result['full_plan_path']}", style="green")
+    if result.get("gitignore_updated"):
+        console.print("OK Updated .gitignore to exclude plan files", style="green")
+    else:
+        console.print("OK .gitignore already excludes plan files", style="green")
+
+
 @cli.command()
 @click.option("--project-root", default=None, help="Project root path")
 @click.option("--plan-dir", default=".plans", help="Plan directory name")
@@ -162,79 +236,11 @@ def init(
     # Register with Claude Desktop (unless skipped). Claude Code (the CLI) is
     # handled separately via .mcp.json in _setup_agent_integration below.
     if not skip_claude:
-        console.print("\n[MCP] Registering MCP server with Claude Desktop...", style="cyan")
-        from .claude_integration import auto_register_on_init
+        _register_with_claude_desktop()
 
-        success, message = auto_register_on_init()
-
-        if success:
-            console.print(f"OK {message}", style="green")
-            console.print(
-                "  You may need to restart Claude Code for changes to take effect", style="yellow"
-            )
-        else:
-            console.print(f"WARN {message}", style="yellow")
-            console.print(
-                "  You can manually register later with: flanner register", style="white"
-            )
-
-    # If project root specified or can be auto-detected, handle project setup
     if project_root or (project_root := find_git_root(os.getcwd())):
         console.print(f"\nOK Detected git repository at: {project_root}", style="green")
-
-        # Check if this project_root already has a project in database
-        try:
-            from .database import get_project_by_root
-
-            session = get_session()
-            existing_project = get_project_by_root(session, project_root)
-
-            if existing_project and not force_new_project:
-                console.print(f"OK Project already exists: {existing_project.name}", style="green")
-                console.print(
-                    f"  Plan directory: {existing_project.plan_directory}", style="white"
-                )
-                console.print(f"  Plan files: {len(existing_project.plan_files)}", style="white")
-                console.print(
-                    "\n  Tip: MCP server registration still completed above.", style="cyan"
-                )
-                console.print(
-                    "  You can run 'flanner init' anytime to ensure everything is set up!",
-                    style="cyan",
-                )
-            else:
-                if existing_project and force_new_project:
-                    console.print(
-                        f"WARN Project '{existing_project.name}' already exists here",
-                        style="yellow",
-                    )
-                    console.print(
-                        "  Creating a new project anyway (--force-new-project)", style="yellow"
-                    )
-
-                # Prompt for project name
-                project_name = click.prompt("Enter project name", default=Path(project_root).name)
-
-                # Create project
-                from .server import create_project_tool
-
-                result = create_project_tool(
-                    name=project_name, project_root=project_root, plan_directory=plan_dir
-                )
-
-                if result.get("error"):
-                    console.print(f"ERROR Error: {result['message']}", style="red")
-                else:
-                    console.print(f"OK Created project: {project_name}", style="green")
-                    console.print(f"OK Plan directory: {result['full_plan_path']}", style="green")
-                    if result.get("gitignore_updated"):
-                        console.print("OK Updated .gitignore to exclude plan files", style="green")
-                    else:
-                        console.print("OK .gitignore already excludes plan files", style="green")
-        except Exception as e:
-            console.print(f"WARN Could not check for existing project: {e}", style="yellow")
-            console.print("  Skipping project creation to be safe", style="yellow")
-
+        _adopt_repository(project_root, plan_dir, force_new_project)
         _setup_agent_integration(project_root)
 
 
@@ -1438,6 +1444,74 @@ def _clock_check(endpoint: str) -> list[EnrollmentCheck]:
     ]
 
 
+def _entitlement_check(verdict: Any) -> EnrollmentCheck:
+    """Where the entitlement stands, and what that permits.
+
+    Grace is deliberately its own state rather than a flavour of failure:
+    reads keep working, pushes do not, and telling somebody "expired" when
+    they can still pull would send them chasing the wrong problem.
+    """
+    from . import entitlements
+
+    # Against the module constant, not a literal. The first version compared
+    # with "VALID" while the constant is "valid", so a healthy entitlement was
+    # reported as being in grace — a doctor that lies about the thing it
+    # exists to check.
+    if verdict.status == entitlements.VALID:
+        return EnrollmentCheck("entitlement_valid", "ok", "Entitlement is current.")
+    if verdict.usable:
+        return EnrollmentCheck(
+            "entitlement_grace",
+            "action",
+            f"Entitlement is in grace: {verdict.reason or 'not renewed recently'}. "
+            "Reads still work; pushing is refused until it renews.",
+            "flanner whoami --refresh",
+        )
+    return EnrollmentCheck(
+        "entitlement_expired",
+        "problem",
+        f"Entitlement is {verdict.status}: {verdict.reason or 'no longer valid'}. "
+        "Team features are off until it renews.",
+        "flanner whoami --refresh",
+    )
+
+
+def _binding_check(bound: str | None, granted: dict[str, str]) -> EnrollmentCheck:
+    """Whether this repository is joined to a workspace the account may enter.
+
+    Four outcomes, and the last is the one worth having: a project bound to a
+    workspace the account cannot enter is invisible everywhere else. `whoami`
+    lists the grants, `join` reports the binding, and neither notices that the
+    two disagree.
+    """
+    if not granted:
+        return EnrollmentCheck(
+            "no_grants",
+            "action",
+            "No workspace access granted yet. An admin has to grant it, and it "
+            "arrives when the entitlement next renews.",
+            "flanner whoami --refresh",
+        )
+    listed = ", ".join(sorted(granted))
+    if not bound:
+        return EnrollmentCheck(
+            "not_bound",
+            "action",
+            "This project is not bound to a workspace, so review here does not "
+            f"count for the team. You may enter: {listed}.",
+            "flanner join <workspace-id>",
+        )
+    if bound in granted:
+        return EnrollmentCheck("bound", "ok", f"Bound to {bound} as {granted[bound]}.")
+    return EnrollmentCheck(
+        "bound_without_grant",
+        "problem",
+        f"Bound to workspace {bound}, which this account may not enter. "
+        f"Access covers: {listed}. Either an admin revoked it, or the id is wrong.",
+        "flanner join <workspace-id>  # or --clear to unbind",
+    )
+
+
 def _enrollment_report(project: Any) -> list[EnrollmentCheck]:
     """Where this device stands: enrolled, entitled, granted, and bound.
 
@@ -1452,7 +1526,6 @@ def _enrollment_report(project: Any) -> list[EnrollmentCheck]:
     lists the grants, `join` reports the binding, and neither notices that
     they disagree.
     """
-    from . import entitlements
     from . import session as cache
 
     bound = getattr(project, "workspace_id", None)
@@ -1489,75 +1562,11 @@ def _enrollment_report(project: Any) -> list[EnrollmentCheck]:
     checks.extend(_clock_check(current.endpoint))
 
     verdict = current.status()
-    # Against the module's own constant, not a literal. The first version of
-    # this compared with "VALID" while the constant is "valid", so a healthy
-    # entitlement was reported as being in grace — a doctor that lies about
-    # the thing it exists to check.
-    if verdict.status == entitlements.VALID:
-        checks.append(EnrollmentCheck("entitlement_valid", "ok", "Entitlement is current."))
-    elif verdict.usable:
-        checks.append(
-            EnrollmentCheck(
-                "entitlement_grace",
-                "action",
-                f"Entitlement is in grace: {verdict.reason or 'not renewed recently'}. "
-                "Reads still work; pushing is refused until it renews.",
-                "flanner whoami --refresh",
-            )
-        )
-    else:
-        checks.append(
-            EnrollmentCheck(
-                "entitlement_expired",
-                "problem",
-                f"Entitlement is {verdict.status}: {verdict.reason or 'no longer valid'}. "
-                "Team features are off until it renews.",
-                "flanner whoami --refresh",
-            )
-        )
+    checks.append(_entitlement_check(verdict))
 
     capabilities = verdict.claims.workspace_capabilities if verdict.claims else ()
     granted = {c.workspace_id: c.role for c in capabilities}
-    if not granted:
-        checks.append(
-            EnrollmentCheck(
-                "no_grants",
-                "action",
-                "No workspace access granted yet. An admin has to grant it, and it "
-                "arrives when the entitlement next renews.",
-                "flanner whoami --refresh",
-            )
-        )
-    elif not bound:
-        listed = ", ".join(sorted(granted))
-        checks.append(
-            EnrollmentCheck(
-                "not_bound",
-                "action",
-                f"This project is not bound to a workspace, so review here does not "
-                f"count for the team. You may enter: {listed}.",
-                "flanner join <workspace-id>",
-            )
-        )
-    elif bound in granted:
-        checks.append(
-            EnrollmentCheck(
-                "bound",
-                "ok",
-                f"Bound to {bound} as {granted[bound]}.",
-            )
-        )
-    else:
-        listed = ", ".join(sorted(granted))
-        checks.append(
-            EnrollmentCheck(
-                "bound_without_grant",
-                "problem",
-                f"Bound to workspace {bound}, which this account may not enter. "
-                f"Access covers: {listed}. Either an admin revoked it, or the id is wrong.",
-                "flanner join <workspace-id>  # or --clear to unbind",
-            )
-        )
+    checks.append(_binding_check(bound, granted))
     return checks
 
 

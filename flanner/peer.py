@@ -203,6 +203,82 @@ _pushes = push_rules.RateLimiter()
 _keyring_cooldown = push_rules.Cooldown()
 
 
+def _requested(operation: str, body: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+    """What this operation asks for, bounded before anyone is authorised.
+
+    Batch limits belong here rather than after the signature check: an
+    oversized request is refusable without knowing who sent it, and parsing a
+    large body only to reject it is work an unauthenticated caller can ask
+    for. Refusing early keeps that cheap.
+
+    Returns the ids asked for and the artifacts offered. Only one is ever
+    populated; which depends on the operation.
+    """
+    wanted: list[str] = []
+    items: list[dict[str, Any]] = []
+
+    if operation == FETCH:
+        wanted = [str(x) for x in (body.get("artifact_ids") or [])]
+        if len(wanted) > sync.MAX_FETCH_BATCH:
+            raise PeerError(f"at most {sync.MAX_FETCH_BATCH} artifacts per request", status=413)
+        return wanted, items
+
+    if operation == MANIFEST:
+        return wanted, items
+
+    if operation not in WRITES:
+        raise PeerError(f"unknown operation: {operation}", status=404)
+
+    # Answered before authorising, because "I do not accept pushes" is not a
+    # secret and making a sender prove itself only to be told no wastes both
+    # sides' time. It is a 200-level fact expressed as a refusal, not a
+    # failure: the device is healthy and still serves every read.
+    if not accepting_pushes():
+        raise PeerError("this device is not accepting pushes", status=403)
+
+    if operation == OFFER:
+        wanted = [str(x) for x in (body.get("artifact_ids") or [])]
+        if len(wanted) > sync.MAX_PUSH_BATCH:
+            raise PeerError(f"at most {sync.MAX_PUSH_BATCH} artifacts per offer", status=413)
+        return wanted, items
+
+    items = [x for x in (body.get("artifacts") or []) if isinstance(x, dict)]
+    too_big = push_rules.check_batch(items)
+    if too_big:
+        raise PeerError(too_big, status=413)
+    return wanted, items
+
+
+def _serve_fetch(
+    session: Any, *, wanted: list[str], workspace_id: str, hidden: Any
+) -> dict[str, Any]:
+    """Hand over what was asked for, minus what this caller may not have.
+
+    Both filters are withholding rules, not display rules, which is why they
+    run here and not in the manifest alone: a caller can ask for an id it was
+    never offered.
+    """
+    out = []
+    for envelope, blob in sync.LocalPeer(session).fetch(wanted):
+        # The caller proved access to one workspace, so anything belonging to
+        # another is withheld even if asked for by id. Ids are guessable in
+        # principle; access is not.
+        if envelope.get("workspace_id") != workspace_id:
+            continue
+        # Asked for despite not being offered, which an older peer or a stale
+        # manifest will do. Withheld here too, or the manifest filter would be
+        # advisory.
+        retired = (
+            envelope.get("plan_file_id") in hidden
+            and envelope.get("artifact_type") != artifacts.PLAN_TOMBSTONE
+        )
+        if retired:
+            continue
+        payload = blob.decode("utf-8", errors="replace") if blob is not None else None
+        out.append({"envelope": envelope, "payload": payload})
+    return {"artifacts": out}
+
+
 def serve_request(
     operation: str,
     payload: dict[str, Any],
@@ -232,31 +308,7 @@ def serve_request(
     if not workspace_id:
         raise PeerError("workspace_id is required", status=400)
 
-    wanted: list[str] = []
-    items: list[dict[str, Any]] = []
-    if operation == FETCH:
-        wanted = [str(x) for x in (body.get("artifact_ids") or [])]
-        if len(wanted) > sync.MAX_FETCH_BATCH:
-            raise PeerError(f"at most {sync.MAX_FETCH_BATCH} artifacts per request", status=413)
-    elif operation in WRITES:
-        # Answered before authorising, because "I do not accept pushes" is
-        # not a secret and making a sender prove itself only to be told no
-        # wastes both sides' time. It is a 200-level fact expressed as a
-        # refusal, not a failure: the device is healthy and still serves
-        # every read.
-        if not accepting_pushes():
-            raise PeerError("this device is not accepting pushes", status=403)
-        if operation == OFFER:
-            wanted = [str(x) for x in (body.get("artifact_ids") or [])]
-            if len(wanted) > sync.MAX_PUSH_BATCH:
-                raise PeerError(f"at most {sync.MAX_PUSH_BATCH} artifacts per offer", status=413)
-        else:
-            items = [x for x in (body.get("artifacts") or []) if isinstance(x, dict)]
-            too_big = push_rules.check_batch(items)
-            if too_big:
-                raise PeerError(too_big, status=413)
-    elif operation != MANIFEST:
-        raise PeerError(f"unknown operation: {operation}", status=404)
+    wanted, items = _requested(operation, body)
 
     caller = authorize(payload, workspace_id, dict(current.keyring), strict=operation in WRITES)
 
@@ -299,31 +351,7 @@ def serve_request(
                 refresh_keys,
             )
 
-        local = sync.LocalPeer(session)
-        out = []
-        for envelope, blob in local.fetch(wanted):
-            # The caller proved access to one workspace, so anything
-            # belonging to another is withheld even if it was asked for
-            # by id. Ids are guessable in principle; access is not.
-            if envelope.get("workspace_id") != workspace_id:
-                continue
-            # Asked for by id despite not being offered, which an older
-            # peer or a stale manifest will do. Withheld here too, or the
-            # manifest filter would be advisory.
-            if (
-                envelope.get("plan_file_id") in hidden
-                and envelope.get("artifact_type") != artifacts.PLAN_TOMBSTONE
-            ):
-                continue
-            out.append(
-                {
-                    "envelope": envelope,
-                    "payload": blob.decode("utf-8", errors="replace")
-                    if blob is not None
-                    else None,
-                }
-            )
-        return {"artifacts": out}
+        return _serve_fetch(session, wanted=wanted, workspace_id=workspace_id, hidden=hidden)
 
 
 def _serve_write(
