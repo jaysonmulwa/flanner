@@ -49,6 +49,10 @@ uv run pytest --cov=flanner --cov-fail-under=80
 - New dependencies must justify their weight over the stdlib or an existing dep
 - Keep user-facing changes in `CHANGELOG.md` under `[Unreleased]`
 - Architecture decisions get an ADR in `docs/adr/`
+- Anything user-facing that goes away warns first: `deprecation.warn(...)`
+  names the replacement and the version it stops working in, and it keeps
+  working for at least one minor release. `doctor --output json` changed
+  shape in 0.9.2 without this, which is why the rule is written down
 
 ## Running the app
 

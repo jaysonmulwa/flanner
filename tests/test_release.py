@@ -78,3 +78,36 @@ def test_the_cli_module_does_not_import_sqlalchemy() -> None:
             offenders += [a.name for a in node.names if a.name.startswith("sqlalchemy")]
 
     assert not offenders, f"cli.py imports {offenders} at module level; import them lazily"
+
+
+# --- deprecation has a mechanism, and the mechanism has rules --------------
+
+
+def test_a_deprecation_must_name_a_replacement() -> None:
+    """A deprecation without one is a removal with extra steps."""
+    import pytest
+
+    from flanner import deprecation
+
+    with pytest.raises(ValueError, match="needs a replacement"):
+        deprecation.warn("--old-flag", instead="", removed_in="1.0", since="0.9")
+
+
+def test_a_deprecation_says_what_when_and_instead_of_what() -> None:
+    import warnings
+
+    from flanner import deprecation
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        deprecation.warn(
+            "doctor --output json returning an array",
+            instead="the object form, which carries `catalog` and `enrollment`",
+            removed_in="1.0.0",
+            since="0.9.2",
+        )
+
+    assert len(caught) == 1
+    assert issubclass(caught[0].category, DeprecationWarning)
+    message = str(caught[0].message)
+    assert "0.9.2" in message and "1.0.0" in message and "Use " in message

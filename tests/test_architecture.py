@@ -13,6 +13,9 @@ PACKAGE = Path(__file__).resolve().parent.parent / "flanner"
 
 FOUNDATION = {
     "exceptions",
+    # Announcing that something is going away. Imports only `warnings`, so
+    # anything may reach for it without dragging a dependency along.
+    "deprecation",
     "utils",
     "frontmatter",
     "git_integration",
