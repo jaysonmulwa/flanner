@@ -58,6 +58,124 @@ class Finding:
         return self.kind in INFORMATIONAL
 
 
+def _adopt(
+    session: Session,
+    owner: Any,
+    path: Path,
+    body: str,
+    fm_data: dict[str, Any],
+    version_num: int,
+) -> bool:
+    """Record a file that exists on disk as a version of the plan it names.
+
+    Never overwrites: adoption only adds a row for content that is already
+    there, so a mistaken --repair cannot lose anybody's work.
+
+    Returns whether the plan's current version moved.
+    """
+    create_version(
+        session,
+        plan_file_id=owner.id,
+        version=version_num,
+        file_path=str(path),
+        content_hash=hash_content(body),
+        created_by=str(fm_data.get("created_by", "unknown")),
+        notes="Adopted by reconcile",
+    )
+    if version_num <= owner.current_version:
+        return False
+    owner.current_version = version_num
+    return True
+
+
+def _reconcile_catalog(
+    session: Session,
+    plans: list[Any],
+    known_paths: set[str],
+    *,
+    repair: bool,
+) -> tuple[list[Finding], bool]:
+    """Check what the catalog claims against the files it names.
+
+    Also records every path it saw in `known_paths`, so the disk pass can
+    tell an orphan from a file that is simply already recorded.
+
+    Returns the findings and whether anything was changed.
+    """
+    findings: list[Finding] = []
+    dirty = False
+
+    for plan in plans:
+        versions = list_versions(session, plan.id)
+        for version in versions:
+            findings.extend(_check_version(session, plan, version, known_paths))
+        if not versions:
+            continue
+
+        highest = max(v.version for v in versions)
+        if plan.current_version == highest:
+            continue
+        findings.append(
+            Finding(
+                "stale_current_version",
+                plan.name,
+                f"catalog says v{plan.current_version}, highest recorded is v{highest}",
+            )
+        )
+        if repair:
+            plan.current_version = highest
+            dirty = True
+
+    return findings, dirty
+
+
+def _reconcile_disk(
+    session: Session,
+    plan_dir: Path,
+    plans: list[Any],
+    known_paths: set[str],
+    *,
+    repair: bool,
+) -> tuple[list[Finding], bool]:
+    """Check for plan files on disk that the catalog does not know about.
+
+    An orphan is normal rather than alarming: an agent or a person wrote a
+    version directly. Adopting it is the repair, and it never overwrites,
+    so a mistaken run cannot lose one.
+    """
+    findings: list[Finding] = []
+    dirty = False
+    if not plan_dir.is_dir():
+        return findings, dirty
+
+    for path, fm_data, body in _find_orphans(plan_dir, known_paths):
+        owner = _plan_for(session, plans, fm_data)
+        if owner is None:
+            findings.append(
+                Finding(
+                    "unknown_plan",
+                    str(fm_data.get("plan_name", "?")),
+                    "file references a plan that is not in this catalog; run 'flanner sync'",
+                    str(path),
+                )
+            )
+            continue
+
+        version_num = fm_data.get("version")
+        findings.append(
+            Finding(
+                "orphan_file",
+                owner.name,
+                f"v{version_num} exists on disk but not in the catalog",
+                str(path),
+            )
+        )
+        if repair and isinstance(version_num, int):
+            dirty |= _adopt(session, owner, path, body, fm_data, version_num)
+
+    return findings, dirty
+
+
 def reconcile_project(
     session: Session, project: ProjectModel, *, repair: bool = False
 ) -> list[Finding]:
@@ -68,70 +186,24 @@ def reconcile_project(
     Never deletes rows or files, and never overwrites a file, so a mistaken
     run cannot lose a plan.
     """
-    findings: list[Finding] = []
     root = project.project_root
     if not root:
         return [Finding("no_project_root", "-", f"Project '{project.name}' has no project_root")]
 
-    plan_dir = Path(root) / project.plan_directory
     plans = db_list_plan_files(session, project.id)
     known_paths: set[str] = set()
-    dirty = False
 
-    for plan in plans:
-        versions = list_versions(session, plan.id)
-        for version in versions:
-            findings.extend(_check_version(session, plan, version, known_paths))
-        if versions:
-            highest = max(v.version for v in versions)
-            if plan.current_version != highest:
-                findings.append(
-                    Finding(
-                        "stale_current_version",
-                        plan.name,
-                        f"catalog says v{plan.current_version}, highest recorded is v{highest}",
-                    )
-                )
-                if repair:
-                    plan.current_version = highest
-                    dirty = True
+    # Catalog first: it fills `known_paths`, which is how the disk pass knows
+    # which files are already accounted for. Reversing them would report every
+    # recorded file as an orphan.
+    findings, catalog_dirty = _reconcile_catalog(session, plans, known_paths, repair=repair)
 
-    if plan_dir.is_dir():
-        for orphan in _find_orphans(plan_dir, known_paths):
-            path, fm_data, body = orphan
-            owner = _plan_for(session, plans, fm_data)
-            if owner is None:
-                findings.append(
-                    Finding(
-                        "unknown_plan",
-                        str(fm_data.get("plan_name", "?")),
-                        "file references a plan that is not in this catalog; run 'flanner sync'",
-                        str(path),
-                    )
-                )
-                continue
-            version_num = fm_data.get("version")
-            findings.append(
-                Finding(
-                    "orphan_file",
-                    owner.name,
-                    f"v{version_num} exists on disk but not in the catalog",
-                    str(path),
-                )
-            )
-            if repair and isinstance(version_num, int):
-                create_version(
-                    session,
-                    plan_file_id=owner.id,
-                    version=version_num,
-                    file_path=str(path),
-                    content_hash=hash_content(body),
-                    created_by=str(fm_data.get("created_by", "unknown")),
-                    notes="Adopted by reconcile",
-                )
-                if version_num > owner.current_version:
-                    owner.current_version = version_num
-                    dirty = True
+    plan_dir = Path(root) / project.plan_directory
+    disk_findings, disk_dirty = _reconcile_disk(
+        session, plan_dir, plans, known_paths, repair=repair
+    )
+    findings.extend(disk_findings)
+    dirty = catalog_dirty or disk_dirty
 
     if dirty:
         session.commit()
@@ -173,6 +245,29 @@ def _check_version(
     return findings
 
 
+def _rehydrate(stored: Any) -> artifacts.Artifact:
+    """Rebuild the signed envelope from its stored row, field for field.
+
+    Every field is copied unchanged because the signature covers all of them:
+    a value reconstructed rather than restored would fail to verify, and the
+    failure would look like tampering instead of like a bug here.
+    """
+    return artifacts.Artifact(
+        artifact_type=stored.artifact_type,
+        workspace_id=stored.workspace_id,
+        content_hash=stored.content_hash,
+        actor_device_id=stored.actor_device_id,
+        created_at=stored.created_at,
+        artifact_id=stored.artifact_id,
+        signature=stored.signature,
+        protocol_version=stored.protocol_version,
+        organization_id=stored.organization_id,
+        plan_file_id=stored.plan_file_id,
+        actor_user_id=stored.actor_user_id,
+        parents=_stored_parents(stored),
+    )
+
+
 def _check_signature(
     session: Session, plan: PlanFileModel, version: VersionModel
 ) -> list[Finding]:
@@ -208,21 +303,7 @@ def _check_signature(
             )
         ]
 
-    envelope = artifacts.Artifact(
-        artifact_type=stored.artifact_type,
-        workspace_id=stored.workspace_id,
-        content_hash=stored.content_hash,
-        actor_device_id=stored.actor_device_id,
-        created_at=stored.created_at,
-        artifact_id=stored.artifact_id,
-        signature=stored.signature,
-        protocol_version=stored.protocol_version,
-        organization_id=stored.organization_id,
-        plan_file_id=stored.plan_file_id,
-        actor_user_id=stored.actor_user_id,
-        parents=_stored_parents(stored),
-    )
-    verdict = artifacts.verify_artifact(envelope, identity.device_public_key_b64())
+    verdict = artifacts.verify_artifact(_rehydrate(stored), identity.device_public_key_b64())
     if not verdict:
         return [
             Finding(

@@ -12,7 +12,7 @@ import signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 import click
 from rich.text import Text
@@ -21,6 +21,8 @@ from . import tui
 from .exceptions import DatabaseError, FlannerError, StorageError
 
 if TYPE_CHECKING:  # annotations only; `from __future__` makes them strings
+    from uuid import UUID
+
     from sqlalchemy.orm import Session
 
     from .database import ProjectModel
@@ -963,106 +965,149 @@ def claude_info() -> None:
         console.print(registration_instructions(), style="white")
 
 
-def _sync_file(session: Session, proj: ProjectModel, file_path: Path, dry_run: bool) -> str:
-    """Import one plan file into the database. Returns 'imported', 'skipped', or 'error'."""
-    from uuid import UUID
+class _Parsed(NamedTuple):
+    """One plan file on disk, after its frontmatter has been read and checked."""
 
-    from .database import PlanFileModel, VersionModel, get_plan_file, get_version
-    from .frontmatter import parse_frontmatter, validate_frontmatter
+    path: Path
+    plan_file_id: UUID
+    plan_name: str
+    version: int
+    created_by: str
+    body: str
+
+    @property
+    def name(self) -> str:
+        return self.path.name
+
+
+def _version_row(fm: _Parsed) -> Any:
+    """The version row for an imported file.
+
+    Built in one place because the update and create paths write an identical
+    row, and a field that drifted between them would produce two versions of
+    the same file that disagree about their own content hash.
+    """
+    from .database import VersionModel
     from .utils import hash_content, utcnow
 
-    file_name = file_path.name
-    with open(file_path, encoding="utf-8") as f:
-        content = f.read()
-    fm_data, body = parse_frontmatter(content)
+    return VersionModel(
+        plan_file_id=fm.plan_file_id,
+        version=fm.version,
+        file_path=str(fm.path),
+        content_hash=hash_content(fm.body),
+        created_by=fm.created_by,
+        created_at=utcnow(),
+        notes=f"Imported version {fm.version}",
+    )
 
+
+def _parse_for_sync(file_path: Path) -> _Parsed | str:
+    """Read one file, or say why it cannot be imported.
+
+    Returns the parsed file, or the outcome string to report for it.
+    """
+    from uuid import UUID
+
+    from .frontmatter import parse_frontmatter, validate_frontmatter
+
+    fm_data, body = parse_frontmatter(file_path.read_text(encoding="utf-8"))
     if not fm_data.get("mcp_plan_file"):
-        console.print(f"  SKIP {file_name} - Not an MCP plan file", style="yellow")
+        console.print(f"  SKIP {file_path.name} - Not an MCP plan file", style="yellow")
         return "skipped"
     if not validate_frontmatter(fm_data):
-        console.print(f"  ERROR {file_name} - Invalid frontmatter", style="red")
+        console.print(f"  ERROR {file_path.name} - Invalid frontmatter", style="red")
         return "error"
 
-    plan_file_id = UUID(fm_data["plan_file_id"])
-    plan_name = fm_data["plan_name"]
-    version = fm_data["version"]
-    created_by = fm_data.get("created_by", "unknown")
+    return _Parsed(
+        path=file_path,
+        plan_file_id=UUID(fm_data["plan_file_id"]),
+        plan_name=fm_data["plan_name"],
+        version=fm_data["version"],
+        created_by=fm_data.get("created_by", "unknown"),
+        body=body,
+    )
 
-    existing = get_plan_file(session, plan_file_id)
-    if existing:
-        old_version = existing.current_version
-        if version <= old_version:
-            console.print(
-                f"  SKIP {file_name} - Version {version} already in database "
-                f"(current: v{old_version})",
-                style="white",
-            )
-            return "skipped"
-        if dry_run:
-            console.print(
-                f"  WOULD UPDATE {file_name} (plan: {plan_name}, v{old_version} -> v{version})",
-                style="green",
-            )
-            return "imported"
-        if get_version(session, plan_file_id, version):
-            console.print(f"  SKIP {file_name} - Version {version} already exists", style="white")
-            return "skipped"
 
-        session.add(
-            VersionModel(
-                plan_file_id=plan_file_id,
-                version=version,
-                file_path=str(file_path),
-                content_hash=hash_content(body),
-                created_by=created_by,
-                created_at=utcnow(),
-                notes=f"Imported version {version}",
-            )
-        )
-        existing.current_version = version
-        existing.updated_at = utcnow()
-        session.commit()
+def _sync_update(session: Session, existing: Any, fm: _Parsed, dry_run: bool) -> str:
+    """Add a newer version of a plan the catalog already knows about."""
+    from .database import get_version
+    from .utils import utcnow
+
+    old_version = existing.current_version
+    if fm.version <= old_version:
         console.print(
-            f"  OK UPDATED {file_name} (plan: {plan_name}, v{old_version} -> v{version})",
+            f"  SKIP {fm.name} - Version {fm.version} already in database "
+            f"(current: v{old_version})",
+            style="white",
+        )
+        return "skipped"
+    if dry_run:
+        console.print(
+            f"  WOULD UPDATE {fm.name} (plan: {fm.plan_name}, v{old_version} -> v{fm.version})",
+            style="green",
+        )
+        return "imported"
+    if get_version(session, fm.plan_file_id, fm.version):
+        console.print(f"  SKIP {fm.name} - Version {fm.version} already exists", style="white")
+        return "skipped"
+
+    session.add(_version_row(fm))
+    existing.current_version = fm.version
+    existing.updated_at = utcnow()
+    session.commit()
+    console.print(
+        f"  OK UPDATED {fm.name} (plan: {fm.plan_name}, v{old_version} -> v{fm.version})",
+        style="green",
+    )
+    return "imported"
+
+
+def _sync_create(session: Session, proj: ProjectModel, fm: _Parsed, dry_run: bool) -> str:
+    """Record a plan this catalog has never seen, keeping the id from its file."""
+    from .database import PlanFileModel
+    from .utils import utcnow
+
+    if dry_run:
+        console.print(
+            f"  WOULD IMPORT {fm.name} (plan: {fm.plan_name}, version: {fm.version})",
             style="green",
         )
         return "imported"
 
-    if dry_run:
-        console.print(
-            f"  WOULD IMPORT {file_name} (plan: {plan_name}, version: {version})", style="green"
-        )
-        return "imported"
-
-    # Create PlanFileModel directly (it has a specific UUID from frontmatter)
+    # The uuid comes from the frontmatter rather than being generated, so a
+    # file synced on two machines lands as one plan rather than two.
     session.add(
         PlanFileModel(
-            id=plan_file_id,
+            id=fm.plan_file_id,
             project_id=proj.id,
-            name=plan_name,
-            description=f"Imported from {file_name}",
-            current_version=version,
+            name=fm.plan_name,
+            description=f"Imported from {fm.name}",
+            current_version=fm.version,
             auto_version=True,
             created_at=utcnow(),
             updated_at=utcnow(),
         )
     )
-    session.add(
-        VersionModel(
-            plan_file_id=plan_file_id,
-            version=version,
-            file_path=str(file_path),
-            content_hash=hash_content(body),
-            created_by=created_by,
-            created_at=utcnow(),
-            notes=f"Imported version {version}",
-        )
-    )
+    session.add(_version_row(fm))
     session.commit()
     console.print(
-        f"  OK IMPORTED {file_name} (plan: {plan_name}, version: {version})", style="green"
+        f"  OK IMPORTED {fm.name} (plan: {fm.plan_name}, version: {fm.version})", style="green"
     )
     return "imported"
+
+
+def _sync_file(session: Session, proj: ProjectModel, file_path: Path, dry_run: bool) -> str:
+    """Import one plan file into the database. Returns 'imported', 'skipped', or 'error'."""
+    from .database import get_plan_file
+
+    fm = _parse_for_sync(file_path)
+    if isinstance(fm, str):
+        return fm
+
+    existing = get_plan_file(session, fm.plan_file_id)
+    if existing:
+        return _sync_update(session, existing, fm, dry_run)
+    return _sync_create(session, proj, fm, dry_run)
 
 
 def _sync_project(
@@ -1747,10 +1792,7 @@ def freshness(plan_name: str | None, project: str | None, output: str) -> None:
     """Freshness status for plans, with the evidence behind it"""
     import json as json_module
 
-    from .database import get_version
     from .database import list_plan_files as db_list_plan_files
-    from .freshness import compute_freshness
-    from .storage import load_plan_file
 
     session = _require_session()
     proj = _resolve_project_or_cwd(session, project)
@@ -1770,6 +1812,39 @@ def freshness(plan_name: str | None, project: str | None, output: str) -> None:
         console.print(f"ERROR Project '{proj.name}' has no project_root configured", style="red")
         raise SystemExit(1)
 
+    results = _freshness_results(session, proj, plans)
+
+    if output == "json":
+        click.echo(
+            json_module.dumps(
+                [{"plan": p.name, "version": v.version, **e} for p, v, e in results],
+                indent=2,
+            )
+        )
+        return
+
+    # One plan named: the full case for the verdict, which is what somebody
+    # asking about a single plan wants. The table is for scanning.
+    if plan_name and len(results) == 1:
+        _print_freshness_detail(*results[0])
+        return
+
+    _print_freshness_table(results)
+
+
+def _freshness_results(
+    session: Session, proj: ProjectModel, plans: list[Any]
+) -> list[tuple[Any, Any, dict[str, Any]]]:
+    """Judge each plan's newest version against the repository.
+
+    A plan whose file is gone is reported as stale rather than skipped. It is
+    the most stale a plan can be, and dropping it from the list would make the
+    worst case invisible in the summary.
+    """
+    from .database import get_version
+    from .freshness import compute_freshness
+    from .storage import load_plan_file
+
     results: list[tuple[Any, Any, dict[str, Any]]] = []
     for plan in plans:
         version_obj = get_version(session, plan.id, None)
@@ -1782,59 +1857,58 @@ def freshness(plan_name: str | None, project: str | None, output: str) -> None:
                 (plan, version_obj, {"status": "stale", "reasons": ["plan file missing on disk"]})
             )
             continue
-        evidence = compute_freshness(proj.project_root, body, version_obj.created_at)
+        evidence = compute_freshness(proj.project_root or "", body, version_obj.created_at)
         results.append((plan, version_obj, evidence))
+    return results
 
-    if output == "json":
-        click.echo(
-            json_module.dumps(
-                [{"plan": p.name, "version": v.version, **e} for p, v, e in results],
-                indent=2,
-            )
-        )
-        return
 
-    # One plan named: the full case for the verdict, which is what someone
-    # asking about a single plan wants. The table below is for scanning.
-    if plan_name and len(results) == 1:
-        plan, version_obj, evidence = results[0]
+# Label and evidence key, in the order a reader wants them: what it was
+# anchored to, how far the code has moved since, then the citations.
+_FRESHNESS_DETAIL = (
+    ("Anchor", "anchored_at_commit"),
+    ("Commits since", "commits_since_anchor"),
+    ("Age (days)", "age_days"),
+    ("Dead refs", "invalid_refs"),
+    ("Cited paths", "referenced_paths"),
+    ("Cited symbols", "referenced_symbols"),
+)
+
+
+def _print_freshness_detail(plan: Any, version_obj: Any, evidence: dict[str, Any]) -> None:
+    """The whole case for one plan's verdict, evidence included."""
+    console.print()
+    headline = Text()
+    headline.append_text(tui.dot(evidence["status"]))
+    headline.append("  ")
+    headline.append(f"{plan.name}.md", style="value")
+    headline.append(f"  v{version_obj.version}", style="muted")
+    console.print(headline)
+    console.print()
+
+    for reason in evidence["reasons"]:
+        tui.bad(reason) if evidence["status"] == "stale" else tui.warn(reason)
+    if not evidence["reasons"]:
+        tui.ok("nothing has drifted since this was written")
+
+    rows = []
+    for label, key in _FRESHNESS_DETAIL:
+        got = evidence.get(key)
+        if got in (None, [], ""):
+            continue
+        shown = ", ".join(str(x) for x in got) if isinstance(got, list) else str(got)
+        rows.append((label, Text(shown, style="code")))
+    if rows:
         console.print()
-        headline = Text()
-        headline.append_text(tui.dot(evidence["status"]))
-        headline.append("  ")
-        headline.append(f"{plan.name}.md", style="value")
-        headline.append(f"  v{version_obj.version}", style="muted")
-        console.print(headline)
-        console.print()
-        for reason in evidence["reasons"]:
-            if evidence["status"] == "stale":
-                tui.bad(reason)
-            else:
-                tui.warn(reason)
-        if not evidence["reasons"]:
-            tui.ok("nothing has drifted since this was written")
+        console.print(tui.fields(rows))
+    console.print()
 
-        detail = [
-            ("Anchor", "anchored_at_commit"),
-            ("Commits since", "commits_since_anchor"),
-            ("Age (days)", "age_days"),
-            ("Dead refs", "invalid_refs"),
-            ("Cited paths", "referenced_paths"),
-            ("Cited symbols", "referenced_symbols"),
-        ]
-        rows = []
-        for label, key in detail:
-            got = evidence.get(key)
-            if got in (None, [], ""):
-                continue
-            shown = ", ".join(str(x) for x in got) if isinstance(got, list) else str(got)
-            rows.append((label, Text(shown, style="code")))
-        if rows:
-            console.print()
-            console.print(tui.fields(rows))
-        console.print()
-        return
 
+def _print_freshness_table(results: list[tuple[Any, Any, dict[str, Any]]]) -> None:
+    """Every plan at a glance, and a pointer at the worst one.
+
+    The summary names an example rather than only counting, because "3 stale"
+    leaves somebody to find which three.
+    """
     listing = tui.table(
         "Plan",
         ("Ver", {"justify": "right"}),

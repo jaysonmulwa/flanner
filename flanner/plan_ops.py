@@ -335,6 +335,164 @@ def _conflict_name(plan_name: str, version: int, artifact_id: str) -> str:
     return generate_file_name(f"{plan_name}__conflict-{digest}", version)
 
 
+class _Unusable(Exception):
+    """Why an incoming plan file cannot be written here.
+
+    An exception rather than five early returns: each check answers the same
+    question — is this file usable — and the caller does the same thing with
+    every answer. Collapsing them puts the refusal in one place instead of
+    interleaving it with the work.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class _Incoming:
+    """A peer's plan version, parsed and checked, before anything is written.
+
+    A record rather than a tuple because five values travel together through
+    every step of materializing, and threading them as separate arguments is
+    what pushed the helpers past a readable signature.
+    """
+
+    fm_data: dict[str, Any]
+    body: str
+    plan_name: str
+    version: int
+    plan_uuid: UUID
+    artifact_id: str
+
+    @property
+    def author(self) -> str:
+        """Who wrote the version, defaulting to the fact that a peer sent it."""
+        return str(self.fm_data.get("created_by") or "peer")
+
+
+def _read_incoming(envelope: dict[str, Any], managed_file: bytes) -> _Incoming:
+    """Parse and check a peer's plan file before anything is written.
+
+    The content-hash check is the load-bearing one: the envelope was signed
+    over the hash, so a body that does not match it is either corrupt or
+    substituted, and either way must not reach the working tree.
+
+    Raises:
+        _Unusable: with a reason the caller can report verbatim.
+    """
+    try:
+        fm_data, body = read_managed(managed_file.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as e:
+        raise _Unusable(f"unreadable plan file: {e}") from None
+
+    if artifacts.hash_text(body) != envelope.get("content_hash"):
+        raise _Unusable("body does not match the signed content hash")
+
+    plan_name = str(fm_data.get("plan_name") or "")
+    raw_version = fm_data.get("version")
+    if not plan_name or not isinstance(raw_version, int):
+        raise _Unusable("plan file is missing its name or version")
+
+    try:
+        plan_uuid = UUID(str(fm_data.get("plan_file_id")))
+    except (ValueError, TypeError):
+        raise _Unusable("plan file has no usable plan_file_id") from None
+
+    return _Incoming(
+        fm_data=fm_data,
+        body=body,
+        plan_name=plan_name,
+        version=raw_version,
+        plan_uuid=plan_uuid,
+        artifact_id=str(envelope.get("artifact_id", "")),
+    )
+
+
+def _plan_for_incoming(
+    session: Session,
+    *,
+    project: ProjectModel,
+    plan_uuid: UUID,
+    plan_name: str,
+    description: str,
+) -> PlanFileModel:
+    """Find the plan this version belongs to, creating it if it is new here.
+
+    Identity is the uuid, never the name. Two plans can share a human name
+    and be unrelated, so a name collision on a different id is refused rather
+    than merged — fusing two histories is not recoverable, and refusing is.
+
+    Raises:
+        _Unusable: when the name collides, or the plan is another project's.
+    """
+    plan_file = get_plan_file(session, plan_uuid)
+    if plan_file is not None:
+        if plan_file.project_id != project.id:
+            raise _Unusable("plan belongs to a different project on this device")
+        return plan_file
+
+    clash = session.query(PlanFileModel).filter_by(project_id=project.id, name=plan_name).first()
+    if clash is not None:
+        raise _Unusable(f"a different plan named '{plan_name}' already exists here")
+
+    return db_create_plan_file(
+        session,
+        project_id=project.id,
+        name=plan_name,
+        description=description,
+        plan_file_id=plan_uuid,
+    )
+
+
+def _frontmatter_for(
+    project: ProjectModel,
+    plan_file: PlanFileModel,
+    incoming: _Incoming,
+    envelope: dict[str, Any],
+) -> str:
+    """Rebuild the header for this device rather than copying the peer's.
+
+    The project ids are ours; the artifact identity, name, version, author
+    and timestamp belong to the version and are carried over exactly.
+    """
+    return generate_frontmatter(
+        project_id=project.id,
+        project_name=project.name,
+        plan_file_id=plan_file.id,
+        plan_name=incoming.plan_name,
+        version=incoming.version,
+        created_by=incoming.author,
+        created_at=_parse_stamp(incoming.fm_data.get("created_at")),
+        artifact_id=incoming.artifact_id,
+        parents=envelope.get("parents") or None,
+        workspace_id=str(envelope.get("workspace_id") or ""),
+        actor_device_id=str(envelope.get("actor_device_id") or ""),
+    )
+
+
+def _target_name(plan_dir: Path, incoming: _Incoming) -> tuple[str, str | None]:
+    """Where this version goes, and whether it had to go somewhere else.
+
+    Never overwrites. A file already sitting on this version number is either
+    this same artifact or a concurrent one somebody wrote, and both are worth
+    keeping, so a clash lands beside it under a conflict name.
+
+    Returns the file name and the conflict path, or None if there was no clash.
+    """
+    file_name = generate_file_name(incoming.plan_name, incoming.version)
+    target = plan_dir / file_name
+    if not target.exists():
+        return file_name, None
+
+    here = artifacts.hash_text(read_managed(target.read_text("utf-8"))[1])
+    if here == artifacts.hash_text(incoming.body):
+        return file_name, None
+
+    file_name = _conflict_name(incoming.plan_name, incoming.version, incoming.artifact_id)
+    return file_name, str(plan_dir / file_name)
+
+
 def materialize_version(
     session: Session,
     *,
@@ -357,100 +515,53 @@ def materialize_version(
     if root is None:
         return MaterializeResult(reason=f"Project '{project.name}' has no project_root configured")
 
-    artifact_id = str(envelope.get("artifact_id", ""))
     try:
-        fm_data, body = read_managed(managed_file.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as e:
-        return MaterializeResult(reason=f"unreadable plan file: {e}")
+        incoming = _read_incoming(envelope, managed_file)
+    except _Unusable as e:
+        return MaterializeResult(reason=e.reason)
 
-    if artifacts.hash_text(body) != envelope.get("content_hash"):
-        return MaterializeResult(reason="body does not match the signed content hash")
-
-    plan_name = str(fm_data.get("plan_name") or "")
-    raw_version = fm_data.get("version")
-    if not plan_name or not isinstance(raw_version, int):
-        return MaterializeResult(reason="plan file is missing its name or version")
-    try:
-        plan_uuid = UUID(str(fm_data.get("plan_file_id")))
-    except (ValueError, TypeError):
-        return MaterializeResult(reason="plan file has no usable plan_file_id")
-
-    with plan_write_lock(root, project.plan_directory, plan_uuid):
+    with plan_write_lock(root, project.plan_directory, incoming.plan_uuid):
         existing = (
-            session.query(VersionModel).filter_by(artifact_id=artifact_id).first()
-            if artifact_id
+            session.query(VersionModel).filter_by(artifact_id=incoming.artifact_id).first()
+            if incoming.artifact_id
             else None
         )
         if existing is not None:
             return MaterializeResult(version=existing, reason="already materialized")
 
-        plan_file = get_plan_file(session, plan_uuid)
-        if plan_file is None:
-            clash = (
-                session.query(PlanFileModel)
-                .filter_by(project_id=project.id, name=plan_name)
-                .first()
-            )
-            if clash is not None:
-                # Same human name, different identity: two unrelated plans.
-                # Merging them would silently fuse separate histories.
-                return MaterializeResult(
-                    reason=f"a different plan named '{plan_name}' already exists here"
-                )
-            plan_file = db_create_plan_file(
+        try:
+            plan_file = _plan_for_incoming(
                 session,
-                project_id=project.id,
-                name=plan_name,
-                description=str(fm_data.get("description") or ""),
-                plan_file_id=plan_uuid,
+                project=project,
+                plan_uuid=incoming.plan_uuid,
+                plan_name=incoming.plan_name,
+                description=str(incoming.fm_data.get("description") or ""),
             )
-        elif plan_file.project_id != project.id:
-            return MaterializeResult(reason="plan belongs to a different project on this device")
+        except _Unusable as e:
+            return MaterializeResult(reason=e.reason)
 
-        frontmatter_str = generate_frontmatter(
-            project_id=project.id,
-            project_name=project.name,
-            plan_file_id=plan_file.id,
-            plan_name=plan_name,
-            version=raw_version,
-            created_by=str(fm_data.get("created_by") or "peer"),
-            created_at=_parse_stamp(fm_data.get("created_at")),
-            artifact_id=artifact_id,
-            parents=envelope.get("parents") or None,
-            workspace_id=str(envelope.get("workspace_id") or ""),
-            actor_device_id=str(envelope.get("actor_device_id") or ""),
-        )
-
-        # Never overwrite: a file already sitting on this version number is
-        # either this very artifact or a concurrent one worth keeping.
         plan_dir = Path(root) / project.plan_directory
-        file_name = generate_file_name(plan_name, raw_version)
-        conflict_path = None
-        target = plan_dir / file_name
-        if target.exists() and artifacts.hash_text(read_managed(target.read_text("utf-8"))[1]) != (
-            artifacts.hash_text(body)
-        ):
-            file_name = _conflict_name(plan_name, raw_version, artifact_id)
-            conflict_path = str(plan_dir / file_name)
-
+        file_name, conflict_path = _target_name(plan_dir, incoming)
         file_path = save_plan_file_with_frontmatter(
             project_root=root,
             plan_directory=project.plan_directory,
             file_name=file_name,
-            content=create_plan_file_content(frontmatter_str, body),
+            content=create_plan_file_content(
+                _frontmatter_for(project, plan_file, incoming, envelope), incoming.body
+            ),
         )
         version = create_version(
             session,
             plan_file_id=plan_file.id,
-            version=raw_version,
+            version=incoming.version,
             file_path=file_path,
-            content_hash=hash_content(body),
-            created_by=str(fm_data.get("created_by") or "peer"),
-            notes=str(fm_data.get("notes") or ""),
-            artifact_id=artifact_id or None,
+            content_hash=hash_content(incoming.body),
+            created_by=incoming.author,
+            notes=str(incoming.fm_data.get("notes") or ""),
+            artifact_id=incoming.artifact_id or None,
         )
-        if raw_version > (plan_file.current_version or 0) and conflict_path is None:
-            plan_file.current_version = raw_version
+        if incoming.version > (plan_file.current_version or 0) and conflict_path is None:
+            plan_file.current_version = incoming.version
             plan_file.updated_at = utcnow()
         session.commit()
 
@@ -478,6 +589,52 @@ class Adoption:
     @property
     def moved(self) -> int:
         return len(self.adopted)
+
+
+def _resign_into(
+    session: Session,
+    plan_file: PlanFileModel,
+    latest: VersionModel,
+    workspace_id: str,
+    content_hash: str,
+) -> None:
+    """Sign this plan's head afresh into a workspace, and point the row at it.
+
+    `content_hash` is passed rather than read off `latest` so that "the head
+    actually has a hash" is a precondition in the signature, checked by the
+    caller that knows how to report a plan it cannot adopt.
+
+    Signed with **no parents**: see `adopt_into_workspace` for why a lineage
+    is not carried across a workspace boundary.
+
+    Repointing the version row is the load-bearing half. A plan version's
+    payload is reached through that row, so until it names the new artifact
+    the content is not reachable to a peer, and the next version would chain
+    back across the boundary rather than into the workspace.
+    """
+    artifact = artifacts.make_artifact(
+        artifact_type=artifacts.PLAN_VERSION,
+        workspace_id=workspace_id,
+        content_hash=content_hash,
+        plan_file_id=str(plan_file.id),
+        parents=(),
+        actor_user_id=latest.created_by or "user",
+    )
+    save_artifact(
+        session,
+        artifact_id=artifact.artifact_id,
+        artifact_type=artifact.artifact_type,
+        workspace_id=artifact.workspace_id,
+        content_hash=artifact.content_hash,
+        plan_file_id=artifact.plan_file_id,
+        parents=list(artifact.parents),
+        created_at=artifact.created_at,
+        actor_device_id=artifact.actor_device_id,
+        actor_user_id=artifact.actor_user_id,
+        signature=artifact.signature,
+        organization_id=artifact.organization_id,
+    )
+    latest.artifact_id = artifact.artifact_id
 
 
 def adopt_into_workspace(
@@ -523,7 +680,8 @@ def adopt_into_workspace(
         if latest is None:
             skipped.append((plan_file.name, "no versions"))
             continue
-        if not latest.content_hash:
+        content_hash = latest.content_hash
+        if not content_hash:
             skipped.append((plan_file.name, "no content hash"))
             continue
 
@@ -536,35 +694,7 @@ def adopt_into_workspace(
             already.append(plan_file.name)
             continue
 
-        artifact = artifacts.make_artifact(
-            artifact_type=artifacts.PLAN_VERSION,
-            workspace_id=workspace_id,
-            content_hash=latest.content_hash,
-            plan_file_id=str(plan_file.id),
-            parents=(),
-            actor_user_id=latest.created_by or "user",
-        )
-        save_artifact(
-            session,
-            artifact_id=artifact.artifact_id,
-            artifact_type=artifact.artifact_type,
-            workspace_id=artifact.workspace_id,
-            content_hash=artifact.content_hash,
-            plan_file_id=artifact.plan_file_id,
-            parents=list(artifact.parents),
-            created_at=artifact.created_at,
-            actor_device_id=artifact.actor_device_id,
-            actor_user_id=artifact.actor_user_id,
-            signature=artifact.signature,
-            organization_id=artifact.organization_id,
-        )
-        # The version row names the artifact that speaks for this version,
-        # and after adoption that is the new one. Repointing it is what
-        # makes the content reachable to a peer, because a plan version's
-        # payload is found through this row, and what makes the *next*
-        # version chain into the workspace rather than back across the
-        # boundary.
-        latest.artifact_id = artifact.artifact_id
+        _resign_into(session, plan_file, latest, workspace_id, content_hash)
         adopted.append(plan_file.name)
 
     session.commit()
