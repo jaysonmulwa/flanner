@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Callable, Collection
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import (
     Boolean,
@@ -856,6 +856,83 @@ def list_versions(session: Session, plan_file_id: uuid.UUID) -> list[VersionMode
         .filter_by(plan_file_id=plan_file_id)
         .order_by(VersionModel.version.desc())
         .all()
+    )
+
+
+class SignedEnvelope(Protocol):
+    """The shape `save_artifact` needs, without naming the class that has it.
+
+    `artifacts.Artifact` satisfies this, but this module may not import that
+    one: `database` is the bottom layer and the boundary test holds it to
+    `exceptions` alone. That constraint is why this function used to take
+    fourteen loose keyword arguments — every caller unpacked an Artifact
+    field by field because the signature could not say "an Artifact".
+
+    A structural type says it anyway. mypy checks the caller passes something
+    with these fields; nothing is imported, so the layering is unchanged.
+    """
+
+    # Properties, not plain attributes: `Artifact` is a frozen dataclass, so
+    # its fields are read-only, and a Protocol declaring them writable does
+    # not match it. Read-only is also the truth about what this function
+    # does with them — mypy refusing the frozen type was the check working.
+    @property
+    def artifact_id(self) -> str: ...
+    @property
+    def artifact_type(self) -> str: ...
+    @property
+    def workspace_id(self) -> str: ...
+    @property
+    def content_hash(self) -> str: ...
+    @property
+    def actor_device_id(self) -> str: ...
+    @property
+    def created_at(self) -> str: ...
+    @property
+    def signature(self) -> str: ...
+    @property
+    def protocol_version(self) -> int: ...
+    @property
+    def organization_id(self) -> str | None: ...
+    @property
+    def plan_file_id(self) -> str | None: ...
+    @property
+    def actor_user_id(self) -> str | None: ...
+    @property
+    def parents(self) -> tuple[str, ...]: ...
+
+
+def save_envelope(
+    session: Session,
+    envelope: SignedEnvelope,
+    *,
+    plan_file_id: str | None = None,
+    payload: str | None = None,
+) -> ArtifactModel:
+    """Store a signed envelope, or return the one already held.
+
+    The four-argument form of `save_artifact`. Callers hold an Artifact; this
+    saves them restating its twelve fields at every call site, which is where
+    a field gets forgotten.
+
+    `plan_file_id` is separate because a caller sometimes knows the plan a
+    payload belongs to when the envelope itself does not carry it.
+    """
+    return save_artifact(
+        session,
+        artifact_id=envelope.artifact_id,
+        artifact_type=envelope.artifact_type,
+        workspace_id=envelope.workspace_id,
+        content_hash=envelope.content_hash,
+        actor_device_id=envelope.actor_device_id,
+        created_at=envelope.created_at,
+        signature=envelope.signature,
+        protocol_version=envelope.protocol_version,
+        organization_id=envelope.organization_id,
+        plan_file_id=plan_file_id if plan_file_id is not None else envelope.plan_file_id,
+        parents=list(envelope.parents),
+        actor_user_id=envelope.actor_user_id,
+        payload=payload,
     )
 
 

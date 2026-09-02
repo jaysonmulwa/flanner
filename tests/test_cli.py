@@ -1617,3 +1617,31 @@ def test_an_unreachable_server_is_not_an_alarm(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", refuse)
     assert _clock_check("https://api.flanner.io") == []
+
+
+# --- machine-readable output where a script would actually read it ---------
+
+
+def test_whoami_json_says_signed_out_explicitly(runner, initialized):
+    """`signed_in: false` rather than a missing key.
+
+    A caller should not have to decide whether an absent account means "local
+    only" or "something went wrong reading it".
+    """
+    result = runner.invoke(cli, ["whoami", "--output", "json"])
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["signed_in"] is False
+    assert report["device_id"].startswith("dev_")
+
+
+def test_whoami_json_is_parseable_not_decorated(runner, initialized):
+    """Nothing but JSON on stdout, or `jq` chokes on the banner."""
+    result = runner.invoke(cli, ["whoami", "--output", "json"])
+    json.loads(result.output)  # raises if anything else was printed
+
+
+def test_whoami_table_still_shows_the_device(runner, initialized):
+    """The human default is unchanged by adding a machine one."""
+    result = runner.invoke(cli, ["whoami"])
+    assert "Device" in result.output

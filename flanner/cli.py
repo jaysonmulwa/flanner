@@ -2638,14 +2638,28 @@ def logout() -> None:
 
 @cli.command()
 @click.option("--refresh", "do_refresh", is_flag=True, help="Renew the entitlement first")
-def whoami(do_refresh: bool) -> None:
-    """Show this device's identity and what it is currently entitled to"""
+@click.option(
+    "--output",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+def whoami(do_refresh: bool, output: str) -> None:
+    """Show this device's identity and what it is currently entitled to
+
+    `--output json` is the machine-readable form. This is the command a
+    setup script asks "am I actually set up?", and parsing the table for an
+    answer means parsing prose that exists to be read by a person.
+    """
+    import json as json_module
+
     from . import account
     from . import identity as device
     from . import session as cache
 
-    console.print(f"Device  {device.device_id()}")
-    _print_store()
+    if output == "table":
+        console.print(f"Device  {device.device_id()}")
+        _print_store()
 
     current: cache.Session | None
     if do_refresh:
@@ -2659,6 +2673,10 @@ def whoami(do_refresh: bool) -> None:
             current = cache.load()
     else:
         current = cache.load()
+    if output == "json":
+        click.echo(json_module.dumps(_whoami_report(device.device_id(), current), indent=2))
+        return
+
     if current is None:
         console.print("Account not signed in", style="dim")
         console.print("Local plan work needs no account. Run 'flanner login' to join a team.")
@@ -2667,6 +2685,34 @@ def whoami(do_refresh: bool) -> None:
     console.print(f"Account {current.user_id} in {current.organization_id}")
     console.print(f"Server  {current.endpoint}")
     _print_entitlement(current)
+
+
+def _whoami_report(device_id: str, current: Any) -> dict[str, Any]:
+    """The same facts the table shows, in a shape a script can branch on.
+
+    `signed_in` is stated rather than left to be inferred from a null, so a
+    caller does not have to decide whether a missing account means "local
+    only" or "something went wrong reading it".
+    """
+    if current is None:
+        return {"device_id": device_id, "signed_in": False}
+
+    verdict = current.status()
+    capabilities = verdict.claims.workspace_capabilities if verdict.claims else ()
+    return {
+        "device_id": device_id,
+        "signed_in": True,
+        "user_id": current.user_id,
+        "organization_id": current.organization_id,
+        "endpoint": current.endpoint,
+        "entitlement": {
+            "status": verdict.status,
+            "usable": verdict.usable,
+            "reason": verdict.reason or None,
+            "expires_at": verdict.claims.expires_at if verdict.claims else None,
+        },
+        "workspaces": [{"workspace_id": c.workspace_id, "role": c.role} for c in capabilities],
+    }
 
 
 def _print_store() -> None:
@@ -2893,11 +2939,29 @@ def devices() -> None:
 
 
 @devices.command("list")
-def devices_list() -> None:
-    """Show every machine enrolled under your account"""
+@click.option(
+    "--output",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+def devices_list(output: str) -> None:
+    """Show every machine enrolled under your account
+
+    `--output json` returns the control plane's own records unflattened, so a
+    caller reading them does not have to undo the table's truncation of the
+    timestamps.
+    """
+    import json as json_module
+
     from . import account
 
     enrolled = _console_call(account.list_devices)
+
+    if output == "json":
+        click.echo(json_module.dumps(enrolled, indent=2))
+        return
+
     if not enrolled:
         console.print("No devices enrolled.", style="dim")
         return

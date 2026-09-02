@@ -53,11 +53,15 @@ def main() -> None:
             f"(n={N_PLANS}, ~2.4 KB body each)"
         )
 
+        # `limit` is passed explicitly: the tool defaults to 50 because that is
+        # a sane page for a model to read, and this benchmark measures listing
+        # every plan. Left implicit, it silently measured half the work and
+        # then failed its own assertion.
         list_times = []
         for _ in range(20):
-            ms, files = timed(list_plan_files_tool, project["id"])
+            ms, files = timed(list_plan_files_tool, project["id"], limit=N_PLANS)
             list_times.append(ms)
-        assert len(files) == N_PLANS
+        assert len(files) == N_PLANS, f"listed {len(files)} of {N_PLANS}"
         print(
             f"list_plan_files:       {statistics.median(list_times):8.1f} ms median "
             f"({N_PLANS} plans, n=20)"

@@ -6,6 +6,71 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Peer requests now spend their nonce, so a captured request cannot be
+  answered twice. The control plane has done this since revocation shipped;
+  between two devices the freshness window was the only defence, which meant
+  it could not be widened for drifting clocks without widening the replay
+  window by the same amount.
+- `flanner doctor` reports how far this machine's clock is from the server's,
+  before the drift is large enough to make peers refuse each other.
+- Property-based tests over the protocol invariants, and fault-injection
+  tests over the deserialisation boundaries.
+
+### Changed
+
+- The signed-request freshness window is 5 minutes, up from 2. Now that the
+  nonce refuses replays, the window only has to tolerate clock drift — and on
+  Windows the time service ships stopped, so minutes of drift is the default
+  state rather than an edge case.
+- A system failure exits 2; a user error still exits 1. Both are documented
+  in the README. Previously everything exited 1 and a disk error arrived as a
+  traceback, so a script could not tell "fix your command" from "retrying
+  will not help".
+- `server.json` no longer has to be remembered on release: a test fails if it
+  disagrees with `pyproject.toml`.
+
+### Fixed
+
+- `flanner init` could hang indefinitely if `claude mcp add` blocked. It is
+  now bounded at 30 seconds.
+- `server.json` said 0.7.1 while the package was 0.9.3 — four releases of
+  drift in the file the MCP registry reads. The same class of bug 0.9.1 fixed
+  for `__version__`, in the one place that fix did not reach.
+
+## [0.9.3] - 2026-09-01
+
+### Fixed
+
+- The console listed every Windows machine as `nt`, because enrolment sent
+  `os.name`. That value is `nt` on Windows and `posix` everywhere else, so it
+  could not tell Linux from macOS at all. It now sends `platform.system()`.
+
+## [0.9.2] - 2026-09-01
+
+### Fixed
+
+- `flanner peer serve` never initialised the database. It printed that it was
+  serving while its catch-up thread died on the first query, and a real
+  request would have failed the same way. It is the only command that hands
+  `get_session` to something else instead of calling it, so it was also the
+  only one that never opened the store.
+- `flanner join` in a repository flanner had not seen said "run this from
+  inside a project" — advice to go elsewhere, when the answer is to adopt
+  where you are. It now names `flanner init`, as does `join --help`.
+- A refusal over clock skew reported a number and no cause. It now says the
+  two machines' clocks disagree, and what to do about it.
+
+### Added
+
+- `flanner doctor` reports enrollment: whether this device is enrolled, the
+  state of its entitlement, which workspaces it may enter, and whether this
+  repository is bound to one of them. The last check finds a project bound to
+  a workspace the account may not enter, which no other command notices.
+- `doctor --output json` returns an object with `project`, `catalog` and
+  `enrollment` rather than a bare array of catalog findings.
+
 ## [0.9.1] - 2026-08-22
 
 ### Fixed

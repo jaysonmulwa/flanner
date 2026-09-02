@@ -37,6 +37,7 @@ from .database import (
     get_plan_file,
     get_version,
     save_artifact,
+    save_envelope,
 )
 from .database import create_plan_file as db_create_plan_file
 from .exceptions import DatabaseError
@@ -292,19 +293,7 @@ def _write_version_unlocked(
         file_name=file_name,
         content=full_content,
     )
-    save_artifact(
-        session,
-        artifact_id=artifact.artifact_id,
-        artifact_type=artifact.artifact_type,
-        workspace_id=artifact.workspace_id,
-        content_hash=artifact.content_hash,
-        actor_device_id=artifact.actor_device_id,
-        created_at=artifact.created_at,
-        signature=artifact.signature,
-        plan_file_id=artifact.plan_file_id,
-        parents=list(artifact.parents),
-        actor_user_id=artifact.actor_user_id,
-    )
+    save_envelope(session, artifact)
     # The artifact id goes in with the INSERT. Assigning it afterwards would
     # leave it unflushed behind create_version's own commit, and a caller that
     # never commits (the create path does not) would silently lose the link,

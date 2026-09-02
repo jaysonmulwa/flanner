@@ -192,6 +192,35 @@ Decisions are recorded in [docs/adr/](docs/adr/), with more guides in [docs/](do
 
 </details>
 
+## Performance
+
+Measured on Windows AMD64, Python 3.13.1, SQLite on a local SSD. Reproduce
+with `python benchmarks/bench.py`.
+
+| Operation | Median | Scale |
+|-----------|--------|-------|
+| `create_project` | 44 ms | one project |
+| `create_plan_file` | 79 ms | n=100, ~2.4 KB body each |
+| `list_plan_files` | 4.7 ms | 100 plans, n=20 |
+
+**Cold start is slower than it should be, and this is the honest number:**
+
+| Command | Median (n=5) |
+|---------|--------------|
+| `flanner --version` | 1470 ms |
+| `flanner --help` | 1470 ms |
+| `flanner list` | 1760 ms |
+
+A CLI should answer a simple command in under 500 ms, and this does not.
+Profiled with `python -X importtime`, the cost is import time before any
+command runs: 182 ms is the Python interpreter, ~120 ms click and rich,
+~680 ms SQLAlchemy, and the remaining ~1.2 s is flanner's own modules being
+imported eagerly whether a command needs them or not.
+
+Fixing it means loading command implementations on demand rather than at
+import. That is a structural change and it has not been made, so the number
+above is what you get today.
+
 ## Exit codes
 
 Scripts need to tell "fix your command" from "this machine is broken", so

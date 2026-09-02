@@ -33,7 +33,7 @@ from .database import (
     PlanFileModel,
     ProjectModel,
     get_version,
-    save_artifact,
+    save_envelope,
 )
 from .plan_ops import workspace_id_for
 from .storage import load_plan_file
@@ -65,20 +65,10 @@ class ReviewResult:
 def save_event(session: Session, event: Event, plan_file_id: str) -> None:
     """Store a signed event as an artifact, payload alongside."""
     artifact = event.artifact
-    save_artifact(
+    save_envelope(
         session,
-        artifact_id=artifact.artifact_id,
-        artifact_type=artifact.artifact_type,
-        workspace_id=artifact.workspace_id,
-        content_hash=artifact.content_hash,
-        actor_device_id=artifact.actor_device_id,
-        created_at=artifact.created_at,
-        signature=artifact.signature,
-        protocol_version=artifact.protocol_version,
-        organization_id=artifact.organization_id,
+        artifact,
         plan_file_id=plan_file_id,
-        parents=list(artifact.parents),
-        actor_user_id=artifact.actor_user_id,
         payload=json.dumps(event.payload),
     )
 
