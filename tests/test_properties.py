@@ -29,6 +29,14 @@ from hypothesis import strategies as st
 
 from flanner import anchors, artifacts, identity
 
+# Hypothesis times each example and fails one that exceeds 200ms. That
+# deadline measures the machine, not the code: the first call into a cold
+# module paid import cost and took 683ms, the next took 3ms, and the run
+# failed as flaky. These properties are about correctness, not latency, so
+# the deadline is off. Timing has its own benchmark.
+settings.register_profile("properties", deadline=None)
+settings.load_profile("properties")
+
 # Envelope fields are protocol strings, not prose: no surrogates, and nothing
 # that json cannot round-trip. Text that cannot cross the wire is a separate
 # concern from text that serialises inconsistently.
