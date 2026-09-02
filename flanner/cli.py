@@ -4,30 +4,81 @@ CLI tool for Flanner
 Provides command-line interface for managing the Flanner server and projects.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import click
 from rich.text import Text
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
 
-from . import identity, tui
-from .database import (
-    ProjectModel,
-    get_project_by_name,
-    get_session,
-    init_database,
-)
-from .database import list_projects as db_list_projects
+from . import tui
 from .exceptions import DatabaseError, FlannerError, StorageError
-from .git_integration import find_git_root, update_gitignore
-from .storage import init_storage
+
+if TYPE_CHECKING:  # annotations only; `from __future__` makes them strings
+    from sqlalchemy.orm import Session
+
+    from .database import ProjectModel
+
+
+# --- deferred database access -----------------------------------------------
+#
+# `flanner --version` took 1.5 seconds, and 630 ms of that was importing
+# SQLAlchemy for a command that prints a string. Every command paid it,
+# including the ones that never open a store.
+#
+# These wrappers exist so the import happens on first use instead of at
+# module load. They are deliberately thin and deliberately named exactly
+# like the functions they forward to, so the forty-odd call sites in this
+# file did not have to change and cannot drift from the real signatures.
+
+
+def init_storage(base_path: str) -> None:
+    from .storage import init_storage as _init_storage
+
+    _init_storage(base_path)
+
+
+def find_git_root(start_path: str) -> str | None:
+    from .git_integration import find_git_root as _find_git_root
+
+    return _find_git_root(start_path)
+
+
+def update_gitignore(repo_root: str, pattern: str, comment: str | None = None) -> bool:
+    from .git_integration import update_gitignore as _update_gitignore
+
+    return _update_gitignore(repo_root, pattern, comment)
+
+
+def get_session() -> Session:
+    from .database import get_session as _get_session
+
+    return _get_session()
+
+
+def init_database(db_path: str | None = None) -> None:
+    from .database import init_database as _init_database
+
+    _init_database(db_path)
+
+
+def get_project_by_name(session: Session, name: str) -> ProjectModel | None:
+    from .database import get_project_by_name as _by_name
+
+    return _by_name(session, name)
+
+
+def db_list_projects(session: Session) -> list[ProjectModel]:
+    from .database import list_projects as _list_projects
+
+    return _list_projects(session)
+
 
 # One console for the whole CLI, carrying the palette in tui.THEME.
 console = tui.console
@@ -349,6 +400,8 @@ def stop() -> None:
 @cli.command()
 def status() -> None:
     """Show server status"""
+    from sqlalchemy.exc import SQLAlchemyError
+
     pid_file = get_pid_file()
     mcp_dir = get_mcp_dir()
     db_path = mcp_dir / "data.db"
@@ -3306,6 +3359,7 @@ def _print_arrivals(limit: int = 8) -> None:
     refuses to hold. A list you can look at when you want one is what is
     left, and it turns out to be enough.
     """
+    from . import identity
     from .database import recent_arrivals
     from .utils import format_relative_time
 

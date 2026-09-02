@@ -203,23 +203,23 @@ with `python benchmarks/bench.py`.
 | `create_plan_file` | 79 ms | n=100, ~2.4 KB body each |
 | `list_plan_files` | 4.7 ms | 100 plans, n=20 |
 
-**Cold start is slower than it should be, and this is the honest number:**
+Cold start, measured the same way:
 
-| Command | Median (n=5) |
-|---------|--------------|
-| `flanner --version` | 1470 ms |
-| `flanner --help` | 1470 ms |
-| `flanner list` | 1760 ms |
+| Command | Median (n=7) | Before |
+|---------|--------------|--------|
+| `flanner --version` | 434 ms | 1470 ms |
+| `flanner --help` | 539 ms | 1470 ms |
+| `flanner list` | 1445 ms | 1760 ms |
 
-A CLI should answer a simple command in under 500 ms, and this does not.
-Profiled with `python -X importtime`, the cost is import time before any
-command runs: 182 ms is the Python interpreter, ~120 ms click and rich,
-~680 ms SQLAlchemy, and the remaining ~1.2 s is flanner's own modules being
-imported eagerly whether a command needs them or not.
+SQLAlchemy was being imported by every command, including the ones that
+never open a store, and cost 630 ms of a 1.1 s import. It is now reached
+through thin wrappers that import it on first use, so a command that does
+not touch the database does not pay for it. `flanner list` does open the
+store, so its cost is real work rather than overhead.
 
-Fixing it means loading command implementations on demand rather than at
-import. That is a structural change and it has not been made, so the number
-above is what you get today.
+`--help` is still 39 ms over the 500 ms bar, and these numbers are from an
+editable install, which adds roughly 80 ms of import-finder overhead that a
+normal `pip install` does not have.
 
 ## Exit codes
 

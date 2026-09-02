@@ -55,3 +55,26 @@ def test_the_changelog_mentions_the_version_being_released() -> None:
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     version = _declared_version()
     assert version in changelog, f"CHANGELOG.md has no entry for {version}"
+
+
+def test_the_cli_module_does_not_import_sqlalchemy() -> None:
+    """Cold start is a feature, and this is the regression that would undo it.
+
+    Importing SQLAlchemy at module level cost 630 ms on every invocation,
+    including `flanner --version`. The database is reached through the thin
+    wrappers in cli.py, which import it on first use. A future edit that adds
+    `from .database import ...` back to the top of the file would silently
+    restore the old start time; this fails instead.
+    """
+    import ast
+
+    tree = ast.parse((ROOT / "flanner" / "cli.py").read_text(encoding="utf-8"))
+    offenders = []
+    for node in tree.body:  # module level only; imports inside functions are the point
+        if isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.startswith("sqlalchemy") or node.module.endswith("database"):
+                offenders.append(node.module)
+        if isinstance(node, ast.Import):
+            offenders += [a.name for a in node.names if a.name.startswith("sqlalchemy")]
+
+    assert not offenders, f"cli.py imports {offenders} at module level; import them lazily"
