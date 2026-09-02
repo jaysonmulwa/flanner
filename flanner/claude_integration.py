@@ -374,18 +374,24 @@ def check_server_status() -> dict[str, Any]:
     return status
 
 
-def print_registration_instructions() -> None:
-    """
-    Print manual registration instructions for Claude Code.
+def registration_instructions() -> str:
+    """Manual registration steps for Claude Code, as text.
+
+    Returns rather than prints. A library that writes to stdout has decided
+    for its caller how the output is styled, whether `--quiet` applies, and
+    where it goes — and this one has a caller that already owns all three.
     """
     server_config = get_local_server_config()
-
-    print("\n" + "=" * 60)
-    print("CLAUDE CODE MCP SERVER CONFIGURATION")
-    print("=" * 60)
-    print("\nTo manually add the MCP server to Claude Code:")
-    print("\n1. Open Claude Code settings")
-    print("2. Add the following to your MCP settings:\n")
-    print(json.dumps({"mcpServers": {"flanner": server_config}}, indent=2))
-    print("\n3. Restart Claude Code")
-    print("=" * 60 + "\n")
+    block = json.dumps({"mcpServers": {"flanner": server_config}}, indent=2)
+    return "\n".join(
+        [
+            "To add the MCP server to Claude Code by hand:",
+            "",
+            "  1. Open Claude Code settings",
+            "  2. Add this to your MCP settings:",
+            "",
+            block,
+            "",
+            "  3. Restart Claude Code",
+        ]
+    )

@@ -109,8 +109,7 @@ class NetBirdRuntime:
             ) from None
         except subprocess.TimeoutExpired:
             raise MeshUnavailableError(
-                f"{self.binary} {args[0] if args else ''} did not finish in "
-                f"{self.timeout:.0f}s"
+                f"{self.binary} {args[0] if args else ''} did not finish in {self.timeout:.0f}s"
             ) from None
         except OSError as e:
             raise MeshUnavailableError(f"could not run {self.binary}: {e}") from None

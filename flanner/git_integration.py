@@ -223,7 +223,7 @@ def is_path_ignored(repo_root: str, path: str) -> bool:
     try:
         # Use git check-ignore command
         result = subprocess.run(  # noqa: S603,S607 - fixed git command, no user input in argv[0]
-            ["git", "check-ignore", path],  # noqa: S607
+            ["git", "check-ignore", path],  # noqa: S607 - git resolved from PATH on purpose; fixed argv, no shell
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -290,7 +290,7 @@ def get_git_status() -> str | None:
     """
     try:
         result = subprocess.run(  # noqa: S603,S607 - fixed git command, no user input in argv[0]
-            ["git", "status", "--short"],  # noqa: S607
+            ["git", "status", "--short"],  # noqa: S607 - git resolved from PATH on purpose; fixed argv, no shell
             capture_output=True,
             text=True,
             check=True,

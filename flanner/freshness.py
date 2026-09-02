@@ -50,8 +50,8 @@ def _git(project_root: str, *args: str) -> str | None:
     """Run a read-only git command; None on any failure (fail open)."""
     try:
         # Fixed argument list, no shell, and git is resolved from PATH by design.
-        result = subprocess.run(  # noqa: S603
-            ["git", *args],  # noqa: S607
+        result = subprocess.run(  # noqa: S603 - fixed argv, no shell, no untrusted input
+            ["git", *args],  # noqa: S607 - git resolved from PATH on purpose; fixed argv, no shell
             cwd=project_root,
             capture_output=True,
             text=True,

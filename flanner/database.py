@@ -22,6 +22,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     cast,
     create_engine,
     func,
@@ -340,6 +341,31 @@ class LinearLinkModel(Base):
             f"<LinearLink(id={self.id}, plan_file_id={self.plan_file_id}, "
             f"issue_id='{self.linear_issue_id}')>"
         )
+
+
+class SeenNonceModel(Base):
+    """A signed peer request that has already been answered (PRD §21.1).
+
+    The control plane has had one of these since revocation shipped. The peer
+    path did not, so between two devices the timestamp window was the only
+    thing standing between a captured request and a replay of it — and a
+    window is a poor sole defence, because widening it for drifting clocks
+    widens the attack with it.
+
+    Rows live for minutes, not as history: past the window `device_auth`
+    refuses the request on age anyway, so forgetting a nonce reopens nothing.
+    """
+
+    __tablename__ = "seen_nonces"
+    __table_args__ = (UniqueConstraint("device_id", "nonce", name="uq_nonce_per_device"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    device_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    nonce: Mapped[str] = mapped_column(String, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+
+    def __repr__(self) -> str:
+        return f"<SeenNonce(device_id={self.device_id}, expires_at={self.expires_at})>"
 
 
 # Database session management

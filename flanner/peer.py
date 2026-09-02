@@ -50,7 +50,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from . import artifacts, entitlements, identity, sync
+from . import artifacts, entitlements, identity, replay, sync
 from . import push as push_rules
 from .assurance import retired_plan_ids
 from .device_auth import SignedRequest, sign_request, verify_request
@@ -85,6 +85,10 @@ class PeerIdentity:
     user_id: str
     organization_id: str
     role: str
+    # Carried so the serving path can spend it. Authorising proves the
+    # request was signed by this device; spending the nonce proves it is not
+    # the same request twice.
+    nonce: str = ""
 
 
 def authorize(
@@ -149,6 +153,7 @@ def authorize(
         raise PeerError("no access to this workspace")
 
     return PeerIdentity(
+        nonce=request.nonce,
         device_id=request.device_id,
         user_id=verdict.claims.user_id,
         organization_id=verdict.claims.organization_id,
@@ -261,6 +266,18 @@ def serve_request(
         raise PeerError("too many pushes; try again shortly", status=429)
 
     with sessions() as session:
+        # Spend the nonce, after the signature and never before: recording it
+        # first would let any caller fill the table, or burn a nonce for a
+        # request they had not authored.
+        #
+        # This is what makes the freshness window a clock tolerance rather
+        # than the sole replay defence. Without it, widening the window for
+        # machines whose clocks drift would widen the replay window by the
+        # same amount, and there would be no way to have one without the
+        # other.
+        if not replay.remember(session, device_id=caller.device_id, nonce=caller.nonce):
+            raise PeerError("this request has already been answered", status=409)
+
         # Plans this device has been asked to stop showing. Computed once
         # per request and used by both read paths, so a retired plan is
         # neither advertised nor handed over. The tombstones themselves
@@ -440,7 +457,7 @@ def http_transport(address: str, *, timeout: float = REQUEST_TIMEOUT) -> Transpo
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - scheme checked before the call
                 return dict(json.loads(response.read().decode("utf-8")))
         except urllib.error.HTTPError as e:
             raise PeerError(_detail(e), status=e.code) from None

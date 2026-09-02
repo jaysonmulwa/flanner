@@ -87,7 +87,7 @@ def call_daemon(path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     )
     try:
         # URL is built here as http://127.0.0.1:<port>; no caller-supplied scheme.
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310 - scheme checked before the call
             body = json.loads(response.read().decode("utf-8"))
         return body if isinstance(body, dict) else None
     except urllib.error.HTTPError:

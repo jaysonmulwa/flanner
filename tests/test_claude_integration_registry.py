@@ -179,8 +179,8 @@ def test_get_claude_config_info_path_none(monkeypatch):
     assert info["config_exists"] is False
 
 
-def test_print_registration_instructions(capsys):
-    ci.print_registration_instructions()
-    out = capsys.readouterr().out
-    assert "CLAUDE CODE MCP SERVER CONFIGURATION" in out
-    assert "flanner" in out
+def test_registration_instructions_are_returned_not_printed():
+    """The library hands text back; the CLI decides how to show it."""
+    text = ci.registration_instructions()
+    assert "Restart Claude Code" in text
+    assert "flanner" in text

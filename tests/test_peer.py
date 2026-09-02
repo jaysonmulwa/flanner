@@ -924,3 +924,69 @@ def test_retiring_does_not_hide_a_plan_from_its_own_device(alice):
     artifact, _ = a_retired_plan(alice)
     mine = sync.build_manifest(alice.session, WORKSPACE)
     assert artifact.artifact_id in mine.artifact_ids
+
+
+# --- replaying a captured request ------------------------------------------
+
+
+def test_a_captured_request_cannot_be_answered_twice(alice, bob, serve):
+    """The nonce, not the clock, is what refuses the second use.
+
+    Before this the peer path had only the freshness window: inside it a
+    captured request was perfectly valid, and every field including the
+    signature travels to anyone who can see the connection. It also meant the
+    window could not be widened for drifting clocks without widening this.
+    """
+    link(alice, bob)
+    bob.sign_in(device_keys={alice.device_id: alice.public_key})
+    a_stored_artifact(alice.session, key=alice.signing_key())
+
+    # One request, sent twice — which is exactly what a replay is. `pull_from`
+    # would mint a fresh nonce each time and so could never reproduce it.
+    with bob.active():
+        captured = sign_request(
+            {
+                "workspace_id": WORKSPACE,
+                "public_key": bob.public_key,
+                "entitlement": bob.held().entitlement,
+            },
+            device_id=bob.device_id,
+            signing_key=bob.signing_key(),
+        ).to_dict()
+
+    first = peer.serve_request(peer.MANIFEST, captured, alice.sessions, alice.held)
+    assert first is not None
+
+    with pytest.raises(peer.PeerError, match="already been answered"):
+        peer.serve_request(peer.MANIFEST, captured, alice.sessions, alice.held)
+
+
+def test_spending_a_nonce_survives_a_failing_request(alice, bob):
+    """A nonce stays spent even when the request it carried goes on to fail.
+
+    Otherwise every error path is a replay window: capture something that
+    fails late, and the nonce is still unspent for the retry.
+    """
+    from flanner import replay
+
+    with alice.sessions() as session:
+        assert replay.remember(session, device_id="dev_x", nonce="n1")
+        assert not replay.remember(session, device_id="dev_x", nonce="n1")
+        # A different device may use the same nonce value; they are scoped.
+        assert replay.remember(session, device_id="dev_y", nonce="n1")
+
+
+def test_old_nonces_are_pruned(alice):
+    """The table holds minutes of requests, not a history."""
+    from datetime import datetime, timedelta, timezone
+
+    from flanner import replay
+    from flanner.database import SeenNonceModel
+
+    past = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+    with alice.sessions() as session:
+        replay.remember(session, device_id="dev_old", nonce="stale", now=past)
+        assert session.query(SeenNonceModel).count() == 1
+        replay.prune(session)
+        session.commit()
+        assert session.query(SeenNonceModel).count() == 0

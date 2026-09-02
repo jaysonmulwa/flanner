@@ -192,6 +192,17 @@ Decisions are recorded in [docs/adr/](docs/adr/), with more guides in [docs/](do
 
 </details>
 
+## Exit codes
+
+Scripts need to tell "fix your command" from "this machine is broken", so
+the two are different codes:
+
+| Code | Means | Retrying helps? |
+|------|-------|-----------------|
+| `0` | It worked | — |
+| `1` | You asked for something that cannot be done: no such project, no access, a workspace id that is not yours | Only after you change the command |
+| `2` | The machine underneath failed: disk, permissions, a store that will not open | No |
+
 ## How it works
 
 An agent calls `get_plan_config` to learn where plans go, then `create_plan_file_tool` or `update_plan_file_tool` to write them. Flanner places the file in the project's plan directory, adds the header, and bumps the version. Files stay in `.plans/` (git-ignored), so they never land in a commit by accident.

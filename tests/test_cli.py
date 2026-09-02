@@ -1546,3 +1546,74 @@ def test_join_help_states_the_prerequisite(runner):
     """Documented on the website, and absent where somebody actually fails."""
     result = runner.invoke(cli, ["join", "--help"])
     assert "flanner init" in result.output
+
+
+# --- clock drift, caught during setup rather than mid-sync ---
+
+
+def _served_at(offset_seconds: int):
+    """A fake /health whose Date header is `offset` from now."""
+    import email.utils
+    from datetime import datetime, timedelta, timezone
+
+    moment = datetime.now(timezone.utc) + timedelta(seconds=offset_seconds)
+
+    class _Response:
+        headers = {"Date": email.utils.format_datetime(moment)}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    return lambda request, timeout=None: _Response()
+
+
+def test_a_clock_in_step_says_nothing(monkeypatch):
+    """A diagnostic that fires when nothing is wrong trains people to ignore it."""
+    import urllib.request
+
+    from flanner.cli import _clock_check
+
+    monkeypatch.setattr(urllib.request, "urlopen", _served_at(5))
+    assert _clock_check("https://api.flanner.io") == []
+
+
+def test_a_drifted_clock_is_reported_before_it_bites(monkeypatch):
+    import urllib.request
+
+    from flanner.cli import _clock_check
+
+    monkeypatch.setattr(urllib.request, "urlopen", _served_at(600))
+    checks = _clock_check("https://api.flanner.io")
+
+    assert [c.code for c in checks] == ["clock_drift"]
+    assert checks[0].level == "problem"
+    assert "syncing will fail" in checks[0].detail
+
+
+def test_drift_approaching_the_limit_is_a_warning(monkeypatch):
+    """Past half the window, before requests actually start failing."""
+    import urllib.request
+
+    from flanner.cli import _clock_check
+
+    monkeypatch.setattr(urllib.request, "urlopen", _served_at(200))
+    checks = _clock_check("https://api.flanner.io")
+
+    assert [c.level for c in checks] == ["action"]
+
+
+def test_an_unreachable_server_is_not_an_alarm(monkeypatch):
+    """Being offline is not a clock problem, and must not be reported as one."""
+    import urllib.error
+    import urllib.request
+
+    from flanner.cli import _clock_check
+
+    def refuse(request, timeout=None):
+        raise urllib.error.URLError("offline")
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    assert _clock_check("https://api.flanner.io") == []

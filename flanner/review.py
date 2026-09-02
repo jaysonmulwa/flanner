@@ -392,8 +392,7 @@ def _try_accept(
         return None, "already the accepted baseline"
     if len(proposal.approvals) < policy.approvals_required:
         return None, (
-            f"{len(proposal.approvals)} of {policy.approvals_required} "
-            "required approvals recorded"
+            f"{len(proposal.approvals)} of {policy.approvals_required} required approvals recorded"
         )
     if roles.get(actor) != MAINTAINER:
         return None, f"{actor} may not advance the baseline"

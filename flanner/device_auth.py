@@ -11,9 +11,18 @@ client builds requests here, and the control plane verifies them with this
 same code. A format only one side could compute would be a format only one
 side could get right.
 
-Freshness is enforced by a bounded timestamp plus a nonce. The window is
-deliberately small but not zero, because clocks drift and a request that
-crossed a slow network is not an attack.
+Freshness is enforced by a bounded timestamp plus a nonce. Both callers now
+spend the nonce — the control plane in `flanner_cloud.replay`, a peer in
+`flanner.replay` — so the timestamp is not the thing stopping a replay. It
+bounds how long a nonce must be remembered, and gives clocks room to be
+wrong.
+
+That separation is what sets the size. While the window was the only
+defence, every second of tolerance for a drifting clock was a second of
+tolerance for a replay, and two minutes was already generous. It can now be
+sized for the problem people actually have: machines whose clocks are minutes
+apart, which on Windows is the default state, since the time service ships
+stopped.
 """
 
 from __future__ import annotations
@@ -26,9 +35,10 @@ from typing import Any
 from . import identity
 from .artifacts import canonical_bytes
 
-# How far apart the two clocks may be. Small enough that a captured request
-# is useless within a minute, wide enough to survive ordinary drift.
-MAX_SKEW = timedelta(minutes=2)
+# How far apart the two clocks may be. Sized for drift, not for replay:
+# uniqueness of the nonce is what refuses a second use, so this only has to
+# be short enough to keep the nonce table small.
+MAX_SKEW = timedelta(minutes=5)
 
 
 @dataclass(frozen=True)

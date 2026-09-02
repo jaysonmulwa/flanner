@@ -25,7 +25,7 @@ from .database import (
     init_database,
 )
 from .database import list_projects as db_list_projects
-from .exceptions import FlannerError
+from .exceptions import DatabaseError, FlannerError, StorageError
 from .git_integration import find_git_root, update_gitignore
 from .storage import init_storage
 
@@ -752,11 +752,23 @@ def setup() -> None:
 
     claude_bin = shutil.which("claude")
     if claude_bin:
-        proc = subprocess.run(  # noqa: S603 (fixed argv, no shell, no untrusted input)
-            [claude_bin, "mcp", "add", "-s", "user", "flanner", "--", "flanner-mcp"],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            proc = subprocess.run(  # noqa: S603 (fixed argv, no shell, no untrusted input)
+                [claude_bin, "mcp", "add", "-s", "user", "flanner", "--", "flanner-mcp"],
+                capture_output=True,
+                text=True,
+                # Every other subprocess call in the package is bounded; this
+                # one was not. `claude` is somebody else's binary, and if it
+                # blocks on a prompt or a network call it takes `flanner init`
+                # down with it — during the one command a new user runs first.
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            console.print("WARN Claude Code: registration timed out after 30s", style="yellow")
+            console.print(
+                "  Add it manually:  claude mcp add -s user flanner -- flanner-mcp", style="white"
+            )
+            return
         if proc.returncode == 0:
             console.print("OK Claude Code: registered flanner-mcp at user scope", style="green")
         else:
@@ -860,7 +872,7 @@ def claude_info() -> None:
     """Show Claude Code integration information"""
     console.print()
 
-    from .claude_integration import get_claude_config_info, print_registration_instructions
+    from .claude_integration import get_claude_config_info, registration_instructions
 
     info = get_claude_config_info()
 
@@ -889,7 +901,7 @@ def claude_info() -> None:
     else:
         console.print()
         tui.note("Not registered. Run flanner register to add it.")
-        print_registration_instructions()
+        console.print(registration_instructions(), style="white")
 
 
 def _sync_file(session: Session, proj: ProjectModel, file_path: Path, dry_run: bool) -> str:
@@ -1371,6 +1383,61 @@ class EnrollmentCheck:
 _ENROLLMENT_STYLES = {"ok": "green", "info": "dim", "action": "yellow", "problem": "red"}
 
 
+def _clock_check(endpoint: str) -> list[EnrollmentCheck]:
+    """Compare this machine's clock against the control plane's.
+
+    Peers refuse each other's requests once their clocks are further apart
+    than `device_auth.MAX_SKEW`, and the refusal arrives mid-sync with a
+    number rather than a cause. This turns it into a line read during setup.
+
+    The control plane is used as the reference because it is the one clock
+    both devices already agree to talk to, and its `Date` header comes free
+    with a request the device makes anyway. Silent when the network is
+    unavailable: a diagnostic that fails because a laptop is on a train
+    should say nothing, not raise an alarm.
+    """
+    import email.utils
+    import urllib.error
+    import urllib.request
+    from datetime import datetime, timezone
+
+    from .device_auth import MAX_SKEW
+
+    url = endpoint.rstrip("/") + "/health"
+    if not url.startswith(("http://", "https://")):
+        return []
+    try:
+        request = urllib.request.Request(url, method="HEAD")  # noqa: S310 - scheme checked above
+        with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310 - scheme checked before the call
+            served = response.headers.get("Date")
+    except (urllib.error.URLError, OSError, ValueError):
+        return []
+    if not served:
+        return []
+
+    try:
+        theirs = email.utils.parsedate_to_datetime(served)
+    except (TypeError, ValueError):
+        return []
+    if theirs.tzinfo is None:
+        theirs = theirs.replace(tzinfo=timezone.utc)
+
+    drift = abs((datetime.now(timezone.utc) - theirs).total_seconds())
+    allowed = MAX_SKEW.total_seconds()
+    if drift <= allowed / 2:
+        return []
+    level = "problem" if drift > allowed else "action"
+    return [
+        EnrollmentCheck(
+            "clock_drift",
+            level,
+            f"This machine's clock is {int(drift)}s from the server's. Peers refuse "
+            f"each other past {int(allowed)}s, so syncing will fail.",
+            "w32tm /resync /force   # Windows, as administrator",
+        )
+    ]
+
+
 def _enrollment_report(project: Any) -> list[EnrollmentCheck]:
     """Where this device stands: enrolled, entitled, granted, and bound.
 
@@ -1419,6 +1486,7 @@ def _enrollment_report(project: Any) -> list[EnrollmentCheck]:
             f"Enrolled as {current.user_id} in {current.organization_id}.",
         )
     ]
+    checks.extend(_clock_check(current.endpoint))
 
     verdict = current.status()
     # Against the module's own constant, not a literal. The first version of
@@ -3022,7 +3090,7 @@ def _catch_up_in_background(dial: Any) -> None:
 
 
 @peer.command("serve")
-@click.option("--host", default="0.0.0.0", help="Address to listen on (--http only)")  # noqa: S104
+@click.option("--host", default="0.0.0.0", help="Address to listen on (--http only)")  # noqa: S104 - opt-in --http flag; the default path binds nothing
 @click.option("--port", default=None, type=int, help="Port to listen on (--http only)")
 @click.option(
     "--http",
@@ -3135,7 +3203,7 @@ def peer_status(device_id: str | None) -> None:
         console.print(f"ERROR {e}", style="red")
         if not peer_iroh.available():
             console.print(
-                "Everything else works. Only reaching a peer that has no " "address needs it.",
+                "Everything else works. Only reaching a peer that has no address needs it.",
                 style="dim",
             )
         raise SystemExit(1) from None
@@ -3928,6 +3996,29 @@ def _attach_examples(group: click.Group, prefix: str = "") -> None:
             command.epilog = "Examples:\n\n\b\n" + "\n".join(f"  {line}" for line in lines)
         if isinstance(command, click.Group):
             _attach_examples(command, f"{path} ")
+
+
+def main() -> None:
+    """Entry point, and the only place an exit code is decided for a fault.
+
+    Three codes, so a script can tell the two failures apart:
+
+    * 0 -- it worked
+    * 1 -- you asked for something that cannot be done (no such project, no
+      access, a workspace id that is not yours). Fix the command and retry.
+    * 2 -- the machine underneath failed (disk, permissions, a store that
+      will not open). Retrying the same command will not help.
+
+    Click already produces 0 and 1. Without this wrapper the second kind
+    arrived as a traceback, which tells a user nothing and a script less: an
+    unreadable store and a typo in a project name exited identically.
+    """
+    try:
+        cli.main(standalone_mode=True)
+    except (DatabaseError, StorageError, OSError) as e:
+        console.print(f"ERROR {e}", style="red")
+        tui.note("A failure on this machine, not a problem with the command itself.")
+        raise SystemExit(2) from None
 
 
 _attach_examples(cli)

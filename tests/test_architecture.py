@@ -72,7 +72,14 @@ ALLOWED = {
         "push",
         "assurance",
         "artifacts",
+        # Spending a nonce is part of authorising a request, not a detour
+        # through storage: without it the freshness window is the only thing
+        # standing between a captured request and a replay of it.
+        "replay",
     },
+    # Nonce bookkeeping. Reaches the table it writes and the module that
+    # defines the window it is sized against, and nothing else.
+    "replay": {"database", "device_auth"},
     # The transport carries what peer decides; it never decides anything
     # itself, so it reaches for peer and the device key and nothing else.
     "peer_iroh": {"identity", "peer", "session"},
@@ -171,6 +178,11 @@ ALLOWED = {
         "authz",
         "entitlements",
         "identity",
+        # `doctor` reports how far this machine's clock is from the server's,
+        # and the threshold it compares against is the peer freshness window.
+        # Naming the module that owns that rule is better than copying the
+        # number into a diagnostic that would then drift from it.
+        "device_auth",
     },
     "__main__": {"cli"},
     "__init__": set(),
@@ -271,6 +283,6 @@ def test_the_version_is_derived_rather_than_typed():
     guard that fires on correct code gets deleted rather than heeded.
     """
     source = (PACKAGE / "__init__.py").read_text(encoding="utf-8")
-    assert (
-        "_installed_version(" in source
-    ), "__version__ is no longer read from package metadata; it will drift again"
+    assert "_installed_version(" in source, (
+        "__version__ is no longer read from package metadata; it will drift again"
+    )

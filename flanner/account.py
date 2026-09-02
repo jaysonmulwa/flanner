@@ -124,7 +124,7 @@ def _post(endpoint: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:  # noqa: S310 - scheme checked before the call
             return dict(json.loads(response.read().decode("utf-8")))
     except urllib.error.HTTPError as e:
         raise SessionError(_detail(e)) from None
