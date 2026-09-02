@@ -2849,6 +2849,46 @@ def _print_entitlement(current: Any) -> None:
     console.print(table)
 
 
+def _report_adoption(report: Any) -> None:
+    """What joining did to the plans that were already here.
+
+    Says explicitly that earlier history stays local. Somebody who joins a
+    workspace and sees their plans appear will assume the versions came too,
+    and finding out later that they did not is worse than being told now.
+    """
+    if report.moved:
+        console.print(
+            f"Brought {report.moved} plan(s) into the workspace: " + ", ".join(report.adopted),
+            style="green",
+        )
+        console.print(
+            "      Their current content syncs from now on. Earlier history"
+            " stays on this machine, because it was signed for a workspace"
+            " nobody else can verify.",
+            style="dim",
+        )
+    if report.already_there:
+        console.print(f"already in this workspace: {len(report.already_there)}", style="dim")
+    for name, why in report.skipped:
+        console.print(f"skipped {name}: {why}", style="dim")
+
+
+def _report_access(proj: ProjectModel) -> None:
+    """What this device may now do in the workspace it just joined.
+
+    Joining binds the project; access is granted per person, so a successful
+    join with no access yet is normal and has to read that way rather than
+    as a failure.
+    """
+    from . import authz
+
+    authorization = authz.resolve(proj)
+    if authorization.roles:
+        console.print(f"You hold: {authorization.roles[authorization.actor]}", style="green")
+    else:
+        console.print(f"No access yet: {authorization.reason}", style="yellow")
+
+
 @cli.command()
 @click.argument("workspace_id", required=False)
 @click.option("--project", default=None, help="Project name (uses current directory if omitted)")
@@ -2917,30 +2957,8 @@ def join(
     # A workspace id is inside the signed envelope, so joining cannot move
     # what was written before it. Each plan's current content is signed
     # afresh into the workspace instead, as a root there.
-    report = adopt_into_workspace(session, project=proj, workspace_id=workspace_id)
-    if report.moved:
-        console.print(
-            f"Brought {report.moved} plan(s) into the workspace: " + ", ".join(report.adopted),
-            style="green",
-        )
-        console.print(
-            "      Their current content syncs from now on. Earlier history"
-            " stays on this machine, because it was signed for a workspace"
-            " nobody else can verify.",
-            style="dim",
-        )
-    if report.already_there:
-        console.print(f"already in this workspace: {len(report.already_there)}", style="dim")
-    for name, why in report.skipped:
-        console.print(f"skipped {name}: {why}", style="dim")
-
-    from . import authz
-
-    authorization = authz.resolve(proj)
-    if authorization.roles:
-        console.print(f"You hold: {authorization.roles[authorization.actor]}", style="green")
-    else:
-        console.print(f"No access yet: {authorization.reason}", style="yellow")
+    _report_adoption(adopt_into_workspace(session, project=proj, workspace_id=workspace_id))
+    _report_access(proj)
 
 
 def _print_workspaces_hint() -> None:
@@ -3786,6 +3804,32 @@ def review_pack(
     console.print()
 
 
+def _print_imported_notes(notes: list[dict[str, Any]], reviewer: str) -> None:
+    """What was just recorded, and the caveat that comes with it.
+
+    The unverified warning is not optional. These notes arrived in a file
+    rather than from a device with a key, so nothing in them is signed by
+    the person named, and a reader who mistook them for a real review would
+    be treating an unauthenticated claim as sign-off.
+    """
+    console.print()
+    tui.ok(f"Recorded {len(notes)} note{'' if len(notes) == 1 else 's'} from {reviewer}")
+    console.print()
+    listing = tui.table("On", ("Note", {"overflow": "fold"}))
+    for note in notes[:12]:
+        listing.add_row(
+            Text(str(note.get("quote", ""))[:44], style="muted"),
+            Text(str(note.get("body", "")), style="value"),
+        )
+    console.print(listing)
+    if len(notes) > 12:
+        console.print()
+        tui.note(f"{len(notes) - 12} more not shown.")
+    console.print()
+    tui.warn("Unverified: the reviewer has no device key, so nothing here is signed by them.")
+    console.print()
+
+
 @review.command("import")
 @click.argument("path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--project", default=None, help="Project name")
@@ -3843,22 +3887,43 @@ def review_import(path: str, project: str | None, plan_override: str | None) -> 
         source=str(payload.get("source") or "packet"),
     )
 
-    console.print()
-    tui.ok(f"Recorded {len(notes)} note{'' if len(notes) == 1 else 's'} from {reviewer}")
-    console.print()
-    listing = tui.table("On", ("Note", {"overflow": "fold"}))
-    for note in notes[:12]:
-        listing.add_row(
-            Text(str(note.get("quote", ""))[:44], style="muted"),
-            Text(str(note.get("body", "")), style="value"),
-        )
-    console.print(listing)
-    if len(notes) > 12:
-        console.print()
-        tui.note(f"{len(notes) - 12} more not shown.")
-    console.print()
-    tui.warn("Unverified: the reviewer has no device key, so nothing here is signed by them.")
-    console.print()
+    _print_imported_notes(notes, reviewer)
+
+
+def _history_row(
+    version: Any, bodies: dict[int, str], plan_file: Any, linked: dict[Any, Any]
+) -> tuple[Text, ...]:
+    """One version's row: how much changed, and anything worth saying about it.
+
+    The change column is measured against the previous version's body rather
+    than being stored, because a version adopted from disk or from a peer
+    never recorded one.
+    """
+    from .utils import format_relative_time
+
+    added, removed = _churn(bodies.get(version.version - 1), bodies.get(version.version, ""))
+    change = Text()
+    change.append(f"+{added}", style="ok")
+    if removed:
+        change.append(f" -{removed}", style="bad")
+
+    note = Text(version.notes or "", style="muted")
+    if version.version == 1 and not version.notes:
+        note = Text("created", style="muted")
+    if linked and version.version == plan_file.current_version:
+        note.append("  linked ", style="muted")
+        note.append(next(iter(linked.values())).linear_issue_id, style="accent")
+
+    return (
+        Text(f"v{version.version}", style="value"),
+        Text(
+            format_relative_time(version.created_at) if version.created_at else "unknown",
+            style="muted",
+        ),
+        Text(version.created_by or "user", style="muted"),
+        change,
+        note,
+    )
 
 
 @cli.command()
@@ -3868,7 +3933,6 @@ def review_import(path: str, project: str | None, plan_override: str | None) -> 
 def history(plan_name: str, project: str | None, limit: int) -> None:
     """Every version of a plan, newest first"""
     from .database import get_linear_links, list_versions
-    from .utils import format_relative_time
 
     session = _require_session()
     proj, plan_file = _resolve_plan(session, project, plan_name)
@@ -3890,33 +3954,8 @@ def history(plan_name: str, project: str | None, limit: int) -> None:
         ("Change", {"justify": "right"}),
         "Note",
     )
-    shown = versions[:limit] if limit > 0 else versions
-    for version in shown:
-        previous = bodies.get(version.version - 1)
-        added, removed = _churn(previous, bodies.get(version.version, ""))
-
-        change = Text()
-        change.append(f"+{added}", style="ok")
-        if removed:
-            change.append(f" -{removed}", style="bad")
-
-        note = Text(version.notes or "", style="muted")
-        if version.version == 1 and not version.notes:
-            note = Text("created", style="muted")
-        if linked and version.version == plan_file.current_version:
-            note.append("  linked ", style="muted")
-            note.append(next(iter(linked.values())).linear_issue_id, style="accent")
-
-        listing.add_row(
-            Text(f"v{version.version}", style="value"),
-            Text(
-                format_relative_time(version.created_at) if version.created_at else "unknown",
-                style="muted",
-            ),
-            Text(version.created_by or "user", style="muted"),
-            change,
-            note,
-        )
+    for version in versions[:limit] if limit > 0 else versions:
+        listing.add_row(*_history_row(version, bodies, plan_file, linked))
 
     console.print()
     console.print(listing)

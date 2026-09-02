@@ -280,6 +280,63 @@ def load_review_events(session: Session, plan_file_id: str) -> list[workflow.Eve
     return events
 
 
+def _judge(
+    *,
+    state: Any,
+    freshness: tuple[dict[str, Any], str, list[str]],
+    reviewed: bool,
+    asked_roles: bool,
+    authorization: Any,
+    policy: Policy,
+) -> tuple[list[str], list[str]]:
+    """Everything wrong with this plan, split into what blocks and what warns.
+
+    Which side a finding lands on is policy, except for a contested baseline:
+    two acceptances have no single answer, so that one is not configurable
+    (§20).
+
+    Keyword-only because eight of these are booleans and strings that would
+    be silently swappable positionally.
+    """
+    evidence, status, reasons = freshness
+    blockers: list[str] = []
+    warnings: list[str] = []
+
+    if state.conflicted:
+        blockers.append("the accepted baseline is contested; two acceptances must be merged first")
+
+    if status in _DOUBTFUL:
+        detail = f"plan is {status}: " + "; ".join(reasons)
+        (blockers if policy.stale_plans == BLOCK else warnings).append(detail)
+
+    if not reviewed:
+        detail = "no approval recorded for this plan"
+        (blockers if policy.unreviewed_plans == BLOCK else warnings).append(detail)
+
+    if not evidence.get("git_available"):
+        warnings.append("no git repository, so freshness was judged on age alone")
+
+    # Say so when a joined project cannot check authorization at all.
+    # Silence would read as "nobody approved this" when the truth is
+    # "this device cannot currently tell".
+    if not asked_roles and authorization.enforced and not authorization.roles:
+        warnings.append(f"review authorization is unavailable: {authorization.reason}")
+
+    # The mirror of the case above, and the one that misleads by looking
+    # settled. A solo project projects review against a role map anyone
+    # holding the machine can edit, so `reviewed` is true and authorizes
+    # nobody. An agent reading only `reviewed` would cite it as sign-off.
+    # Exclusive with the "no approval recorded" warning by construction:
+    # that one fires when `reviewed` is false, this one when it is true.
+    if not asked_roles and reviewed and not authorization.enforced:
+        warnings.append(
+            "this approval was recorded under local roles, which anyone holding "
+            "this machine can edit, so it authorizes nothing"
+        )
+
+    return blockers, warnings
+
+
 def assess(
     session: Session,
     *,
@@ -314,41 +371,14 @@ def assess(
     reviewed = state.accepted_artifact_id is not None
 
     evidence, status, reasons, anchor = _freshness_for(project, version)
-    blockers: list[str] = []
-    warnings: list[str] = []
-
-    # Not configurable: a contested baseline has no single answer (§20).
-    if state.conflicted:
-        blockers.append("the accepted baseline is contested; two acceptances must be merged first")
-
-    if status in _DOUBTFUL:
-        detail = f"plan is {status}: " + "; ".join(reasons)
-        (blockers if policy.stale_plans == BLOCK else warnings).append(detail)
-
-    if not reviewed:
-        detail = "no approval recorded for this plan"
-        (blockers if policy.unreviewed_plans == BLOCK else warnings).append(detail)
-
-    if not evidence.get("git_available"):
-        warnings.append("no git repository, so freshness was judged on age alone")
-
-    # Say so when a joined project cannot check authorization at all.
-    # Silence would read as "nobody approved this" when the truth is
-    # "this device cannot currently tell".
-    if roles is None and authorization.enforced and not authorization.roles:
-        warnings.append(f"review authorization is unavailable: {authorization.reason}")
-
-    # The mirror of the case above, and the one that misleads by looking
-    # settled. A solo project projects review against a role map anyone
-    # holding the machine can edit, so `reviewed` is true and authorizes
-    # nobody. An agent reading only `reviewed` would cite it as sign-off.
-    # Exclusive with the "no approval recorded" warning by construction:
-    # that one fires when `reviewed` is false, this one when it is true.
-    if roles is None and reviewed and not authorization.enforced:
-        warnings.append(
-            "this approval was recorded under local roles, which anyone holding "
-            "this machine can edit, so it authorizes nothing"
-        )
+    blockers, warnings = _judge(
+        state=state,
+        freshness=(evidence, status, reasons),
+        reviewed=reviewed,
+        asked_roles=roles is not None,
+        authorization=authorization,
+        policy=policy,
+    )
 
     return Assurance(
         plan_name=plan_file.name,

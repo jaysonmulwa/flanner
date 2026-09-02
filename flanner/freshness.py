@@ -168,6 +168,69 @@ def _check_symbol(project_root: str, symbol: str) -> list[str]:
     return out.splitlines() if out else []
 
 
+def _bad_refs(
+    project_root: str, paths: list[str], symbols: list[str]
+) -> tuple[list[str], list[str]]:
+    """References the plan makes that the repository no longer honours.
+
+    A path or symbol that is simply absent proves nothing — the plan may
+    describe work not started. It counts as invalid only if git history
+    shows it once existed, which is what distinguishes "not yet" from
+    "gone", and is why this needs a history budget rather than a stat call.
+
+    Returns the invalid references, and the files the live symbols were
+    found in (which widen the churn scope below).
+    """
+    invalid: list[str] = []
+    found_files: list[str] = []
+    budget = _HistoryBudget(project_root)
+
+    for path in paths:
+        if not os.path.exists(os.path.join(project_root, path)) and budget.ever_had_path(path):
+            invalid.append(path)
+
+    for symbol in symbols:
+        found_in = _check_symbol(project_root, symbol)
+        if found_in:
+            found_files.extend(f for f in found_in if f not in found_files)
+        elif budget.ever_had_symbol(symbol):
+            invalid.append(symbol)
+
+    return invalid, found_files
+
+
+def _churn_since(
+    project_root: str, anchor: str | None, scope_paths: list[str]
+) -> tuple[int | None, str]:
+    """How many commits landed since the plan was anchored.
+
+    Narrowed to the files the plan actually names where it names any, because
+    a repository-wide count says a plan is stale whenever anybody committed
+    anything. The scope is reported alongside the number so a reader can tell
+    which question was answered.
+    """
+    args = ["rev-list", "--count", f"{anchor}..HEAD" if anchor else "HEAD"]
+    if scope_paths:
+        out = _git(project_root, *args, "--", *scope_paths)
+        scope = "paths"
+    else:
+        out = _git(project_root, *args)
+        scope = "repo"
+    return (int(out) if out and out.isdigit() else None), scope
+
+
+def _age_days(authored_at: datetime | None) -> int | None:
+    """How long ago the version was written, in whole days."""
+    if authored_at is None:
+        return None
+    # utcnow() is naive (matches the SQLite columns); tool callers may pass
+    # aware datetimes, so normalize to whichever authored_at uses.
+    now = utcnow()
+    if authored_at.tzinfo is not None:
+        now = now.replace(tzinfo=timezone.utc)
+    return max(0, (now - authored_at).days)
+
+
 def compute_freshness(
     project_root: str, body: str, authored_at: datetime | None
 ) -> dict[str, Any]:
@@ -175,44 +238,15 @@ def compute_freshness(
     paths, symbols = extract_refs(body)
     git_available = _git(project_root, "rev-parse", "HEAD") is not None
 
-    invalid_refs: list[str] = []
-    symbol_files: list[str] = []
-    if git_available:
-        budget = _HistoryBudget(project_root)
-        for path in paths:
-            if not os.path.exists(os.path.join(project_root, path)):
-                if budget.ever_had_path(path):
-                    invalid_refs.append(path)
-        for symbol in symbols:
-            found_in = _check_symbol(project_root, symbol)
-            if found_in:
-                symbol_files.extend(f for f in found_in if f not in symbol_files)
-            elif budget.ever_had_symbol(symbol):
-                invalid_refs.append(symbol)
-
+    invalid_refs, symbol_files = (
+        _bad_refs(project_root, paths, symbols) if git_available else ([], [])
+    )
     anchor = resolve_anchor(project_root, authored_at) if git_available else None
     scope_paths = [p for p in paths if p not in invalid_refs] + symbol_files
-    commits_since = None
-    churn_scope = None
-    if git_available:
-        rev_range = f"{anchor}..HEAD" if anchor else "HEAD"
-        args = ["rev-list", "--count", rev_range]
-        if scope_paths:
-            churn_scope = "paths"
-            out = _git(project_root, *args, "--", *scope_paths)
-        else:
-            churn_scope = "repo"
-            out = _git(project_root, *args)
-        commits_since = int(out) if out and out.isdigit() else None
-
-    age_days = None
-    if authored_at is not None:
-        # utcnow() is naive (matches the SQLite columns); tool callers may
-        # pass aware datetimes, so normalize to whichever authored_at uses.
-        now = utcnow()
-        if authored_at.tzinfo is not None:
-            now = now.replace(tzinfo=timezone.utc)
-        age_days = max(0, (now - authored_at).days)
+    commits_since, churn_scope = (
+        _churn_since(project_root, anchor, scope_paths) if git_available else (None, None)
+    )
+    age_days = _age_days(authored_at)
 
     status, reasons = _status(
         invalid_refs, commits_since, churn_scope, age_days, anchor, git_available

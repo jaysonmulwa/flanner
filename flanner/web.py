@@ -758,6 +758,19 @@ async def new_project_form(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "project_new.html", {"request": request})
 
 
+def _new_project_error(request: Request, session: Any, error: str, **fields: Any) -> HTMLResponse:
+    """Re-render the new-project form with what went wrong.
+
+    `fields` carries back what was typed. A form that clears itself on a
+    validation error makes the person retype work the server already has.
+    """
+    return templates.TemplateResponse(
+        request,
+        "project_new.html",
+        {**_nav(session), "request": request, "error": error, **fields},
+    )
+
+
 @app.post("/projects/new")
 async def create_project_post(
     request: Request,
@@ -770,35 +783,20 @@ async def create_project_post(
     ensure_db()
     session = get_session()
 
-    # Auto-detect project root if not provided
     if not project_root or project_root.strip() == "":
         project_root = find_git_root(os.getcwd())
         if not project_root:
-            return templates.TemplateResponse(
+            return _new_project_error(
                 request,
-                "project_new.html",
-                {
-                    **_nav(session),
-                    "request": request,
-                    "error": (
-                        "Could not find git repository. Please specify project root manually."
-                    ),
-                },
+                session,
+                "Could not find git repository. Please specify project root manually.",
             )
 
-    # Validate git repository
     if not validate_git_repo(project_root):
-        return templates.TemplateResponse(
-            request,
-            "project_new.html",
-            {
-                **_nav(session),
-                "request": request,
-                "error": f"{project_root} is not a valid git repository",
-            },
+        return _new_project_error(
+            request, session, f"{project_root} is not a valid git repository"
         )
 
-    # Create project
     try:
         project = create_project(
             session,
@@ -808,30 +806,20 @@ async def create_project_post(
             plan_directory=plan_directory,
             auto_gitignore=True,
         )
-
-        # Create plan directory
-        ensure_plan_directory_exists(project_root, plan_directory)
-
-        # Update .gitignore
-        pattern = plan_directory.rstrip("/") + "/"
-        update_gitignore(project_root, pattern, comment="MCP Plan Manager")
-
-        return RedirectResponse(url=f"/projects/{project.id}", status_code=303)
-
     except ValueError as e:
-        return templates.TemplateResponse(
+        return _new_project_error(
             request,
-            "project_new.html",
-            {
-                **_nav(session),
-                "request": request,
-                "error": str(e),
-                "name": name,
-                "description": description,
-                "project_root": project_root,
-                "plan_directory": plan_directory,
-            },
+            session,
+            str(e),
+            name=name,
+            description=description,
+            project_root=project_root,
+            plan_directory=plan_directory,
         )
+
+    ensure_plan_directory_exists(project_root, plan_directory)
+    update_gitignore(project_root, plan_directory.rstrip("/") + "/", comment="MCP Plan Manager")
+    return RedirectResponse(url=f"/projects/{project.id}", status_code=303)
 
 
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
