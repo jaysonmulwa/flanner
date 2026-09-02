@@ -1010,6 +1010,27 @@ async def plan_download(plan_file_id: str, version: int | None = None) -> FileRe
     )
 
 
+def _linear_links_for(session: Any, plan_file_uuid: UUID, project_id: Any) -> list[dict[str, Any]]:
+    """The issues this plan is linked to, ready for the template.
+
+    Title and state are whatever the last link or refresh cached, because
+    reading them live would put a network call on every page render.
+    """
+    config = get_linear_config(session, project_id)
+    return [
+        {
+            "issue_id": link.linear_issue_id,
+            "title": link.issue_title,
+            "state": link.issue_state,
+            "notes": link.notes,
+            "url": generate_linear_issue_url(config.workspace, link.linear_issue_id)
+            if config
+            else None,
+        }
+        for link in get_linear_links(session, plan_file_uuid)
+    ]
+
+
 @app.get("/plans/{plan_file_id}", response_class=HTMLResponse)
 async def plan_view(
     request: Request,
@@ -1030,35 +1051,15 @@ async def plan_view(
     if not plan_file:
         raise HTTPException(status_code=404, detail="Plan file not found")
 
-    # Get project
     project = get_project(session, plan_file.project_id)
-
-    # Get version
     version_obj = get_version(session, plan_file_uuid, version)
     if not version_obj:
         raise HTTPException(
             status_code=404, detail=f"Version {version if version else 'latest'} not found"
         )
-
-    # Get all versions for version selector
     all_versions = list_versions(session, plan_file_uuid)
+    linear_links = _linear_links_for(session, plan_file_uuid, plan_file.project_id)
 
-    # Linked Linear issues (title/state are cached from the last link/refresh).
-    linear_config = get_linear_config(session, plan_file.project_id)
-    linear_links = [
-        {
-            "issue_id": link.linear_issue_id,
-            "title": link.issue_title,
-            "state": link.issue_state,
-            "notes": link.notes,
-            "url": generate_linear_issue_url(linear_config.workspace, link.linear_issue_id)
-            if linear_config
-            else None,
-        }
-        for link in get_linear_links(session, plan_file_uuid)
-    ]
-
-    # Load file content
     try:
         frontmatter_data, body = load_plan_file(version_obj.file_path)
     except FileNotFoundError:
@@ -1068,10 +1069,11 @@ async def plan_view(
 
     # Render off the event loop; a large document must not stall other clients.
     render_capped = len(body) > MAX_RENDER_CHARS
-    if render_capped:
-        content_html = ""
-    else:
-        content_html = await run_in_threadpool(render_plan_html, body, version_obj.content_hash)
+    content_html = (
+        ""
+        if render_capped
+        else await run_in_threadpool(render_plan_html, body, version_obj.content_hash)
+    )
 
     return templates.TemplateResponse(
         request,

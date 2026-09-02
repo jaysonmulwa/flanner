@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 from uuid import UUID
 
 from . import ipc
@@ -555,6 +555,49 @@ def configure_linear(project_id: str, workspace: str) -> dict[str, Any]:
         return {"error": True, "message": str(e)}
 
 
+class _IssueMeta(NamedTuple):
+    """What asking Linear about an issue told us, if we asked at all.
+
+    `error` is separate from `warning` on purpose. An issue that does not
+    exist is a mistake worth refusing; Linear being unreachable is not, and
+    linking without verification is still useful.
+    """
+
+    title: str | None = None
+    state: str | None = None
+    warning: str | None = None
+    error: dict[str, Any] | None = None
+
+
+def _verify_issue(issue_id: str, plan_name: str, attach_url: str | None) -> _IssueMeta:
+    """Confirm the issue exists and cache its title and state.
+
+    Needs LINEAR_API_KEY; without one this is link-only, which is the
+    documented behaviour rather than a failure.
+    """
+    from .exceptions import LinearError
+    from .linear_api import attach_url_to_issue, fetch_issue_by_identifier, get_api_key
+
+    api_key = get_api_key()
+    if not api_key:
+        return _IssueMeta()
+
+    try:
+        issue = fetch_issue_by_identifier(issue_id, api_key)
+    except LinearError as e:
+        return _IssueMeta(warning=f"Linked without verification: {e}")
+
+    if issue is None:
+        return _IssueMeta(error={"error": True, "message": f"Linear issue {issue_id} not found"})
+    try:
+        if attach_url and issue.get("id"):
+            attach_url_to_issue(issue["id"], attach_url, plan_name, api_key)
+    except LinearError as e:
+        return _IssueMeta(issue["title"], issue["state"], f"Linked without verification: {e}")
+
+    return _IssueMeta(issue["title"], issue["state"])
+
+
 def link_plan_to_linear(
     plan_file_id: str,
     linear_issue_id: str,
@@ -565,7 +608,6 @@ def link_plan_to_linear(
 ) -> dict[str, Any]:
     """Link a plan file to a Linear issue."""
     from .database import create_linear_link, get_linear_config
-    from .linear_api import attach_url_to_issue, fetch_issue_by_identifier, get_api_key
     from .linear_utils import (
         format_linear_issue_id,
         generate_linear_issue_url,
@@ -592,32 +634,17 @@ def link_plan_to_linear(
         return {"error": True, "message": f"Plan file with ID {plan_file_id} not found"}
 
     config = get_linear_config(session, plan_file.project_id)
-    api_key = get_api_key()
-    issue_title: str | None = None
-    issue_state: str | None = None
-    warning: str | None = None
-
-    if verify and api_key:
-        from .exceptions import LinearError
-
-        try:
-            issue = fetch_issue_by_identifier(issue_id, api_key)
-            if issue is None:
-                return {"error": True, "message": f"Linear issue {issue_id} not found"}
-            issue_title = issue["title"]
-            issue_state = issue["state"]
-            if attach_url and issue.get("id"):
-                attach_url_to_issue(issue["id"], attach_url, plan_file.name, api_key)
-        except LinearError as e:
-            warning = f"Linked without verification: {e}"
+    meta = _verify_issue(issue_id, plan_file.name, attach_url) if verify else _IssueMeta()
+    if meta.error is not None:
+        return meta.error
 
     try:
         link = create_linear_link(
             session,
             plan_file_uuid,
             issue_id,
-            issue_title=issue_title,
-            issue_state=issue_state,
+            issue_title=meta.title,
+            issue_state=meta.state,
             notes=notes,
             created_by=created_by,
         )
@@ -637,6 +664,7 @@ def link_plan_to_linear(
         "created_at": link.created_at.isoformat() if link.created_at else None,
         "message": f"Linked '{plan_file.name}' to {issue_id}",
     }
+    warning = meta.warning
     if warning:
         result["warning"] = warning
     return result

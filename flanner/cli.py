@@ -399,20 +399,13 @@ def stop() -> None:
             pid_file.unlink()
 
 
-@cli.command()
-def status() -> None:
-    """Show server status"""
-    from sqlalchemy.exc import SQLAlchemyError
+def _server_row(pid_file: Path) -> Text:
+    """Whether the MCP server is up, judged by signalling its recorded pid.
 
-    pid_file = get_pid_file()
-    mcp_dir = get_mcp_dir()
-    db_path = mcp_dir / "data.db"
-
-    from .claude_integration import check_server_status
-
-    rows: list[tuple[str, Any]] = []
-
-    # Server
+    A pid file whose process is gone is deleted rather than reported: it is
+    what a crash leaves behind, and treating it as "running" sends people
+    looking for a process that is not there.
+    """
     running_pid: int | None = None
     if pid_file.exists():
         try:
@@ -421,50 +414,71 @@ def status() -> None:
             running_pid = candidate
         except (OSError, ValueError):
             pid_file.unlink()
+
     if running_pid is not None:
         server = tui.dot("ok", label="running")
         server.append(f"  (pid {running_pid})", style="muted")
-    else:
-        server = tui.dot("unknown", label="stopped")
-        server.append("  start it with ", style="muted")
-        server.append("flanner start", style="accent")
-    rows.append(("MCP server", server))
+        return server
 
-    # Database
-    if db_path.exists():
-        rows.append(("Database", Text(str(db_path), style="value")))
-        try:
-            init_database(str(db_path))
-            session = get_session()
-            projects = db_list_projects(session)
-            total_plans = sum(len(p.plan_files) for p in projects)
-            # Its own row rather than appended to the path: the path is long
-            # enough to push the counts off the edge of an 80-column terminal,
-            # and the counts are the part worth reading.
-            catalog = Text()
-            catalog.append(
-                f"{len(projects)} project{'' if len(projects) == 1 else 's'}", style="value"
-            )
-            catalog.append(f"  {tui.MIDDOT}  ", style="muted")
-            catalog.append(f"{total_plans} plan{'' if total_plans == 1 else 's'}", style="value")
-            rows.append(("Catalog", catalog))
-        except (FlannerError, SQLAlchemyError):
-            rows.append(("Catalog", Text("unreadable", style="bad")))
-    else:
-        rows.append(("Database", Text("not initialized yet", style="warn")))
+    server = tui.dot("unknown", label="stopped")
+    server.append("  start it with ", style="muted")
+    server.append("flanner start", style="accent")
+    return server
 
-    # Claude Code
-    claude_status = check_server_status()
+
+def _catalog_rows(db_path: Path) -> list[tuple[str, Any]]:
+    """Where the catalog is and what it holds.
+
+    The counts get their own row rather than being appended to the path: the
+    path is long enough to push them off the edge of an 80-column terminal,
+    and the counts are the part worth reading.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    if not db_path.exists():
+        return [("Database", Text("not initialized yet", style="warn"))]
+
+    rows: list[tuple[str, Any]] = [("Database", Text(str(db_path), style="value"))]
+    try:
+        init_database(str(db_path))
+        projects = db_list_projects(get_session())
+    except (FlannerError, SQLAlchemyError):
+        rows.append(("Catalog", Text("unreadable", style="bad")))
+        return rows
+
+    total_plans = sum(len(p.plan_files) for p in projects)
+    catalog = Text()
+    catalog.append(f"{len(projects)} project{'' if len(projects) == 1 else 's'}", style="value")
+    catalog.append(f"  {tui.MIDDOT}  ", style="muted")
+    catalog.append(f"{total_plans} plan{'' if total_plans == 1 else 's'}", style="value")
+    rows.append(("Catalog", catalog))
+    return rows
+
+
+def _claude_row(claude_status: dict[str, Any]) -> Text:
+    """Whether Claude Code is registered, and whether its config still matches."""
     if claude_status["registered"] and claude_status["config_valid"]:
-        registered = tui.dot("ok", label="registered")
-    elif claude_status["registered"]:
+        return tui.dot("ok", label="registered")
+    if claude_status["registered"]:
         registered = tui.dot("warn", label="registered")
         registered.append("  config is out of date", style="warn")
-    else:
-        registered = tui.dot("unknown", label="not registered")
-        registered.append("  run ", style="muted")
-        registered.append("flanner register", style="accent")
-    rows.append(("Claude Code", registered))
+        return registered
+
+    registered = tui.dot("unknown", label="not registered")
+    registered.append("  run ", style="muted")
+    registered.append("flanner register", style="accent")
+    return registered
+
+
+@cli.command()
+def status() -> None:
+    """Show server status"""
+    from .claude_integration import check_server_status
+
+    claude_status = check_server_status()
+    rows: list[tuple[str, Any]] = [("MCP server", _server_row(get_pid_file()))]
+    rows.extend(_catalog_rows(get_mcp_dir() / "data.db"))
+    rows.append(("Claude Code", _claude_row(claude_status)))
     rows.append(("Config file", Text(str(claude_status["config_path"]), style="muted")))
 
     console.print()
@@ -1243,6 +1257,13 @@ def _resolve_plan(
     plan_file = next((p for p in proj.plan_files if p.name == plan_name), None)
     if plan_file is None:
         console.print(f"ERROR Plan '{plan_name}' not found in '{proj.name}'", style="red")
+        # The names, not just the failure. A plan is addressed by name, so
+        # the usual cause is a typo or a half-remembered one, and the list is
+        # short enough to print.
+        if proj.plan_files:
+            console.print(
+                f"  Available plans: {', '.join(p.name for p in proj.plan_files)}", style="yellow"
+            )
         raise SystemExit(1)
     return proj, plan_file
 
@@ -1672,71 +1693,47 @@ def _enrollment_report(project: Any) -> list[EnrollmentCheck]:
     return checks
 
 
-@cli.command()
-@click.option("--project", default=None, help="Project name")
-@click.option("--repair", is_flag=True, help="Adopt orphan files and fix stale version counters")
-@click.option(
-    "--output",
-    type=click.Choice(["table", "json"]),
-    default="table",
-    help="Output format",
-)
-def doctor(project: str | None, repair: bool, output: str) -> None:
-    """Check the catalog against the plan files on disk"""
-    import json as json_module
+def _doctor_json(project_name: str, findings: list[Any], enrollment: list[Any]) -> None:
+    """The machine-readable report.
 
-    from .reconcile import reconcile_project
+    An object, not the bare array this used to print. The array could only
+    ever describe plan files, and "this device is not enrolled" is not a
+    plan file. A caller reading the enrollment state should not have to
+    filter it out of a list of missing-file findings.
+    """
+    import json
 
-    session = _require_session()
-    proj = _resolve_project_or_cwd(session, project)
-    if not proj:
-        _no_project(project)
-
-    findings = reconcile_project(session, proj, repair=repair)
-    enrollment = _enrollment_report(proj)
-
-    if output == "json":
-        # An object, not the bare array this used to print. The array could
-        # only ever describe plan files, and "this device is not enrolled" is
-        # not a plan file. A caller reading the enrollment state should not
-        # have to filter it out of a list of missing-file findings.
-        click.echo(
-            json_module.dumps(
-                {
-                    "project": proj.name,
-                    "catalog": [
-                        {
-                            "kind": f.kind,
-                            "plan": f.plan,
-                            "detail": f.detail,
-                            "path": f.path,
-                            "repairable": f.repairable,
-                        }
-                        for f in findings
-                    ],
-                    "enrollment": [
-                        {"code": c.code, "level": c.level, "detail": c.detail, "fix": c.fix}
-                        for c in enrollment
-                    ],
-                },
-                indent=2,
-            )
+    click.echo(
+        json.dumps(
+            {
+                "project": project_name,
+                "catalog": [
+                    {
+                        "kind": f.kind,
+                        "plan": f.plan,
+                        "detail": f.detail,
+                        "path": f.path,
+                        "repairable": f.repairable,
+                    }
+                    for f in findings
+                ],
+                "enrollment": [
+                    {"code": c.code, "level": c.level, "detail": c.detail, "fix": c.fix}
+                    for c in enrollment
+                ],
+            },
+            indent=2,
         )
-        return
+    )
 
-    if not findings:
-        console.print(
-            f"OK Catalog, files, and signatures all agree for '{proj.name}'", style="green"
-        )
-        _print_enrollment(enrollment)
-        return
 
-    table = tui.table("Issue", "Plan", "Detail")
-    for finding in findings:
-        style = _FINDING_STYLES.get(finding.kind, "white")
-        table.add_row(f"[{style}]{finding.kind}[/{style}]", finding.plan, finding.detail)
-    console.print(table)
+def _print_doctor_advice(findings: list[Any], *, repair: bool) -> None:
+    """What the findings mean and what to do next.
 
+    Findings that are only informational are counted separately, because a
+    report made entirely of "could not verify this on this device" is a
+    clean bill of health and must not read as a list of problems.
+    """
     unchecked = [f for f in findings if f.informational]
     if unchecked and len(unchecked) == len(findings):
         console.print(
@@ -1744,7 +1741,6 @@ def doctor(project: str | None, repair: bool, output: str) -> None:
             "this device; the note above says why.",
             style="green",
         )
-        _print_enrollment(enrollment)
         return
 
     if repair:
@@ -1762,6 +1758,45 @@ def doctor(project: str | None, repair: bool, output: str) -> None:
             "\nRun 'flanner doctor --repair' to fix the repairable ones.", style="yellow"
         )
 
+
+@cli.command()
+@click.option("--project", default=None, help="Project name")
+@click.option("--repair", is_flag=True, help="Adopt orphan files and fix stale version counters")
+@click.option(
+    "--output",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+def doctor(project: str | None, repair: bool, output: str) -> None:
+    """Check the catalog against the plan files on disk"""
+    from .reconcile import reconcile_project
+
+    session = _require_session()
+    proj = _resolve_project_or_cwd(session, project)
+    if not proj:
+        _no_project(project)
+
+    findings = reconcile_project(session, proj, repair=repair)
+    enrollment = _enrollment_report(proj)
+
+    if output == "json":
+        _doctor_json(proj.name, findings, enrollment)
+        return
+
+    if not findings:
+        console.print(
+            f"OK Catalog, files, and signatures all agree for '{proj.name}'", style="green"
+        )
+        _print_enrollment(enrollment)
+        return
+
+    table = tui.table("Issue", "Plan", "Detail")
+    for finding in findings:
+        style = _FINDING_STYLES.get(finding.kind, "white")
+        table.add_row(f"[{style}]{finding.kind}[/{style}]", finding.plan, finding.detail)
+    console.print(table)
+    _print_doctor_advice(findings, repair=repair)
     _print_enrollment(enrollment)
 
 
@@ -2022,38 +2057,7 @@ def jira_link(
 
     session = _require_session()
 
-    # Get project
-    if project:
-        proj = get_project_by_name(session, project)
-    else:
-        # Try to find project from current directory
-        from .database import get_project_by_root
-
-        git_root = find_git_root(os.getcwd())
-        if git_root:
-            proj = get_project_by_root(session, git_root)
-        else:
-            proj = None
-
-    if not proj:
-        console.print(
-            "ERROR Project not found. Specify --project or run from project directory", style="red"
-        )
-        raise SystemExit(1)
-
-    # Find plan file
-    plan_file = None
-    for pf in proj.plan_files:
-        if pf.name == plan_name:
-            plan_file = pf
-            break
-
-    if not plan_file:
-        console.print(f"ERROR Plan '{plan_name}' not found in project '{proj.name}'", style="red")
-        console.print(
-            f"  Available plans: {', '.join([p.name for p in proj.plan_files])}", style="yellow"
-        )
-        raise SystemExit(1)
+    proj, plan_file = _resolve_plan(session, project, plan_name)
 
     # Create link
     try:
@@ -2098,32 +2102,7 @@ def jira_unlink(plan_name: str, issue: str | None, unlink_all: bool, project: st
 
     session = _require_session()
 
-    # Get project
-    if project:
-        proj = get_project_by_name(session, project)
-    else:
-        from .database import get_project_by_root
-
-        git_root = find_git_root(os.getcwd())
-        if git_root:
-            proj = get_project_by_root(session, git_root)
-        else:
-            proj = None
-
-    if not proj:
-        console.print("ERROR Project not found", style="red")
-        raise SystemExit(1)
-
-    # Find plan file
-    plan_file = None
-    for pf in proj.plan_files:
-        if pf.name == plan_name:
-            plan_file = pf
-            break
-
-    if not plan_file:
-        console.print(f"ERROR Plan '{plan_name}' not found", style="red")
-        raise SystemExit(1)
+    proj, plan_file = _resolve_plan(session, project, plan_name)
 
     # Unlink. A missing link is a warning here, not a failure, so these go
     # through dispatch directly rather than the exit-on-error helper.
@@ -2216,32 +2195,7 @@ def jira_show(plan_name: str, project: str | None) -> None:
 
     session = _require_session()
 
-    # Get project
-    if project:
-        proj = get_project_by_name(session, project)
-    else:
-        from .database import get_project_by_root
-
-        git_root = find_git_root(os.getcwd())
-        if git_root:
-            proj = get_project_by_root(session, git_root)
-        else:
-            proj = None
-
-    if not proj:
-        console.print("ERROR Project not found", style="red")
-        raise SystemExit(1)
-
-    # Find plan file
-    plan_file = None
-    for pf in proj.plan_files:
-        if pf.name == plan_name:
-            plan_file = pf
-            break
-
-    if not plan_file:
-        console.print(f"ERROR Plan '{plan_name}' not found", style="red")
-        raise SystemExit(1)
+    proj, plan_file = _resolve_plan(session, project, plan_name)
 
     # Get links
     links = get_jira_links(session, plan_file.id)

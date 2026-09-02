@@ -596,7 +596,12 @@ def test_jira_link_missing_plan(runner, project):
         cli, ["jira", "link", "ghost", "--issue", "PROJ-1", "--project", "proj"]
     )
     assert result.exit_code == 1
-    assert "not found in project" in result.output
+    # Names the plan and the project it was looked for in. Asserted by
+    # content rather than by exact phrasing, because every command now
+    # reports this through one helper. (No "Available plans" line here:
+    # this project has none, and listing nothing helps nobody.)
+    assert "ghost" in result.output
+    assert "proj" in result.output
 
 
 def test_jira_link_missing_project(runner, initialized):
