@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from . import artifacts
 from .artifacts import Artifact
-from .database import VersionModel, get_artifact, list_artifacts, save_artifact
+from .database import VersionModel, get_artifact, list_artifacts, save_envelope
 from .frontmatter import read_managed
 
 PROTOCOL_VERSION = 1
@@ -253,20 +253,9 @@ def ingest_artifact(
     ):
         return artifacts.Verdict(False, "payload does not match content_hash")
 
-    save_artifact(
+    save_envelope(
         session,
-        artifact_id=artifact.artifact_id,
-        artifact_type=artifact.artifact_type,
-        workspace_id=artifact.workspace_id,
-        content_hash=artifact.content_hash,
-        actor_device_id=artifact.actor_device_id,
-        created_at=artifact.created_at,
-        signature=artifact.signature,
-        protocol_version=artifact.protocol_version,
-        organization_id=artifact.organization_id,
-        plan_file_id=artifact.plan_file_id,
-        parents=list(artifact.parents),
-        actor_user_id=artifact.actor_user_id,
+        artifact,
         payload=payload.decode("utf-8", errors="replace") if payload is not None else None,
     )
     return artifacts.Verdict(True)

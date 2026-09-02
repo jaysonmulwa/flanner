@@ -36,7 +36,6 @@ from .database import (
     create_version,
     get_plan_file,
     get_version,
-    save_artifact,
     save_envelope,
 )
 from .database import create_plan_file as db_create_plan_file
@@ -620,20 +619,7 @@ def _resign_into(
         parents=(),
         actor_user_id=latest.created_by or "user",
     )
-    save_artifact(
-        session,
-        artifact_id=artifact.artifact_id,
-        artifact_type=artifact.artifact_type,
-        workspace_id=artifact.workspace_id,
-        content_hash=artifact.content_hash,
-        plan_file_id=artifact.plan_file_id,
-        parents=list(artifact.parents),
-        created_at=artifact.created_at,
-        actor_device_id=artifact.actor_device_id,
-        actor_user_id=artifact.actor_user_id,
-        signature=artifact.signature,
-        organization_id=artifact.organization_id,
-    )
+    save_envelope(session, artifact)
     latest.artifact_id = artifact.artifact_id
 
 

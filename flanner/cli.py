@@ -475,6 +475,92 @@ def status() -> None:
     console.print()
 
 
+def _print_plans(proj: ProjectModel, project: str, output: str) -> None:
+    """One project's plans, as a table or as json."""
+    import json
+
+    if output == "json":
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "id": str(pf.id),
+                        "name": pf.name,
+                        "version": pf.current_version,
+                        "updated_at": pf.updated_at.isoformat() if pf.updated_at else None,
+                    }
+                    for pf in proj.plan_files
+                ]
+            )
+        )
+        return
+
+    if not proj.plan_files:
+        console.print()
+        tui.note(f"No plans in {project} yet. Your agents will fill this in.")
+        console.print()
+        return
+
+    # The id column is gone: a uuid nobody types was eating a third of the
+    # width and then being truncated anyway. The name is what every other
+    # command takes as an argument.
+    listing = tui.table("Plan", ("Ver", {"justify": "right"}), "Updated by", "Updated")
+    for pf in proj.plan_files:
+        listing.add_row(
+            Text(f"{pf.name}.md", style="value"),
+            Text(f"v{pf.current_version}", style="muted"),
+            Text(getattr(pf, "created_by", None) or "user", style="muted"),
+            Text(
+                pf.updated_at.strftime("%Y-%m-%d %H:%M") if pf.updated_at else "never",
+                style="muted",
+            ),
+        )
+    console.print()
+    console.print(listing)
+    console.print()
+    count = len(proj.plan_files)
+    tui.note(f"{count} plan{'' if count == 1 else 's'} in {project}")
+    console.print()
+
+
+def _print_projects(projects: list[ProjectModel], output: str) -> None:
+    """Every project on this device, as a table or as json."""
+    import json
+
+    if output == "json":
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "id": str(p.id),
+                        "name": p.name,
+                        "plan_directory": p.plan_directory,
+                        "plan_files": len(p.plan_files),
+                        "created_at": p.created_at.isoformat() if p.created_at else None,
+                    }
+                    for p in projects
+                ]
+            )
+        )
+        return
+
+    if not projects:
+        console.print("No projects yet. Run 'flanner init' to create one.", style="yellow")
+        return
+
+    listing = tui.table("Project", ("Plans", {"justify": "right"}), "Plan directory", "Created")
+    for p in projects:
+        listing.add_row(
+            Text(p.name, style="value"),
+            Text(str(len(p.plan_files)), style="muted"),
+            Text(p.plan_directory, style="code"),
+            Text(p.created_at.strftime("%Y-%m-%d") if p.created_at else "never", style="muted"),
+        )
+    console.print()
+    console.print(listing)
+    console.print()
+
+
 @cli.command("list")
 @click.option("--project", default=None, help="Project name")
 @click.option(
@@ -485,101 +571,16 @@ def status() -> None:
 )
 def list_cmd(project: str | None, output: str) -> None:
     """List all projects or plan files"""
-    import json as json_module
-
     session = _require_session()
+    if not project:
+        _print_projects(db_list_projects(session), output)
+        return
 
-    if project:
-        # List plan files for a specific project
-        proj = get_project_by_name(session, project)
-        if not proj:
-            console.print(f"ERROR Project '{project}' not found", style="red")
-            raise SystemExit(1)
-
-        if output == "json":
-            click.echo(
-                json_module.dumps(
-                    [
-                        {
-                            "id": str(pf.id),
-                            "name": pf.name,
-                            "version": pf.current_version,
-                            "updated_at": pf.updated_at.isoformat() if pf.updated_at else None,
-                        }
-                        for pf in proj.plan_files
-                    ]
-                )
-            )
-            return
-
-        if not proj.plan_files:
-            console.print()
-            tui.note(f"No plans in {project} yet. Your agents will fill this in.")
-            console.print()
-            return
-
-        # The id column is gone: a uuid nobody types was eating a third of the
-        # width and then being truncated anyway. The name is what every other
-        # command takes as an argument.
-        listing = tui.table("Plan", ("Ver", {"justify": "right"}), "Updated by", "Updated")
-        for pf in proj.plan_files:
-            listing.add_row(
-                Text(f"{pf.name}.md", style="value"),
-                Text(f"v{pf.current_version}", style="muted"),
-                Text(getattr(pf, "created_by", None) or "user", style="muted"),
-                Text(
-                    pf.updated_at.strftime("%Y-%m-%d %H:%M") if pf.updated_at else "never",
-                    style="muted",
-                ),
-            )
-        console.print()
-        console.print(listing)
-        console.print()
-        count = len(proj.plan_files)
-        tui.note(f"{count} plan{'' if count == 1 else 's'} in {project}")
-        console.print()
-    else:
-        # List all projects
-        projects = db_list_projects(session)
-
-        if output == "json":
-            click.echo(
-                json_module.dumps(
-                    [
-                        {
-                            "id": str(p.id),
-                            "name": p.name,
-                            "plan_directory": p.plan_directory,
-                            "plan_files": len(p.plan_files),
-                            "created_at": p.created_at.isoformat() if p.created_at else None,
-                        }
-                        for p in projects
-                    ]
-                )
-            )
-            return
-
-        if not projects:
-            console.print("No projects yet. Run 'flanner init' to create one.", style="yellow")
-            return
-
-        listing = tui.table(
-            "Project", ("Plans", {"justify": "right"}), "Plan directory", "Created"
-        )
-        for p in projects:
-            listing.add_row(
-                Text(p.name, style="value"),
-                Text(str(len(p.plan_files)), style="muted"),
-                Text(p.plan_directory, style="code"),
-                Text(
-                    p.created_at.strftime("%Y-%m-%d") if p.created_at else "never", style="muted"
-                ),
-            )
-        console.print()
-        table = listing
-
-        console.print(table)
-        console.print()
+    proj = get_project_by_name(session, project)
+    if not proj:
+        console.print(f"ERROR Project '{project}' not found", style="red")
+        raise SystemExit(1)
+    _print_plans(proj, project, output)
 
 
 @cli.command()
@@ -1353,20 +1354,23 @@ def _print_comments(session: Session, plan_file: Any) -> None:
     listing = tui.table(
         "By", ("On", {"overflow": "fold"}), ("Note", {"overflow": "fold"}), "Anchor"
     )
+    # A table rather than a chain of elifs: every branch answered the same
+    # question and only the words differed, and "anchored" is the default
+    # because a status this version does not name is a working anchor.
+    marks = {
+        STRANDED: ("lost its place", "bad"),
+        AMBIGUOUS: ("several matches", "warn"),
+        "moved": ("text changed", "warn"),
+    }
     for event in notes:
         payload = event.payload
         anchor_data = payload.get("anchor") or {}
         state = resolve(Anchor.from_dict(anchor_data), body) if body else None
         if state is None:
             mark = Text("unknown", style="muted")
-        elif state.status == STRANDED:
-            mark = Text("lost its place", style="bad")
-        elif state.status == AMBIGUOUS:
-            mark = Text("several matches", style="warn")
-        elif state.status == "moved":
-            mark = Text("text changed", style="warn")
         else:
-            mark = Text("anchored", style="ok")
+            label, style = marks.get(state.status, ("anchored", "ok"))
+            mark = Text(label, style=style)
         listing.add_row(
             Text(str(event.actor or "unknown"), style="muted"),
             Text(str(anchor_data.get("quote") or "")[:40], style="muted"),
@@ -3971,6 +3975,75 @@ def history(plan_name: str, project: str | None, limit: int) -> None:
     console.print()
 
 
+def _pick_versions(
+    from_version: str | None, to_version: str | None, numbers: list[int]
+) -> tuple[int, int]:
+    """Which two versions to compare, defaulting to the last two.
+
+    Accepts `3` or `v3`, because both are what people type.
+
+    The defaults are only computed when a version was actually omitted:
+    `numbers[-2]` raises on a single-version plan, and asking for one
+    explicit version there is legitimate.
+    """
+
+    def parse(raw: str | None, fallback: int) -> int:
+        if raw is None:
+            return fallback
+        try:
+            return int(raw.lstrip("vV"))
+        except ValueError:
+            console.print(f"ERROR '{raw}' is not a version number", style="red")
+            raise SystemExit(1) from None
+
+    return (
+        parse(from_version, numbers[-2] if from_version is None else 0),
+        parse(to_version, numbers[-1] if to_version is None else 0),
+    )
+
+
+def _print_hunk(
+    group: list[tuple[str, int, int, int, int]], before: list[str], after: list[str]
+) -> None:
+    """One run of changed lines, with its three lines of context."""
+    for tag, i1, i2, j1, j2 in group:
+        if tag in ("replace", "delete"):
+            for line in before[i1:i2]:
+                console.print(Text(f"- {line}", style="bad"))
+        if tag in ("replace", "insert"):
+            for line in after[j1:j2]:
+                console.print(Text(f"+ {line}", style="ok"))
+        if tag == "equal":
+            for line in before[i1:i2]:
+                console.print(Text(f"  {line}", style="muted"))
+
+
+def _print_hunks(before: list[str], after: list[str]) -> bool:
+    """Every changed run, headed by the section it falls in.
+
+    The heading names the nearest markdown heading rather than a line range,
+    because "## Rollout" tells a reader what moved and "lines 240-260" does
+    not. It falls back to the range when there is no heading above the change.
+
+    Returns whether anything was printed, which is how the caller tells an
+    identical pair from a changed one.
+    """
+    import difflib
+
+    printed = False
+    for group in difflib.SequenceMatcher(None, before, after).get_grouped_opcodes(3):
+        printed = True
+        section = _section_of(after, group[0][3])
+        rule = Text()
+        rule.append("@@ ", style="muted")
+        rule.append(section or f"lines {group[0][3] + 1}-{group[-1][4]}", style="accent")
+        rule.append(" @@", style="muted")
+        console.print(rule)
+        _print_hunk(group, before, after)
+        console.print()
+    return printed
+
+
 @cli.command()
 @click.argument("plan_name")
 @click.argument("from_version", required=False)
@@ -3984,8 +4057,6 @@ def diff(
     With no versions given, compares the last two. Versions may be written
     as `3` or `v3`.
     """
-    import difflib
-
     from .database import list_versions
 
     session = _require_session()
@@ -3999,28 +4070,12 @@ def diff(
         console.print()
         return
 
-    def parse(raw: str | None, fallback: int) -> int:
-        if raw is None:
-            return fallback
-        try:
-            return int(raw.lstrip("vV"))
-        except ValueError:
-            console.print(f"ERROR '{raw}' is not a version number", style="red")
-            raise SystemExit(1) from None
-
-    # The defaults are only meaningful when both versions were omitted, and
-    # numbers[-2] raises on a single-version plan, so they are not computed
-    # unless they are needed.
-    left = parse(from_version, numbers[-2] if from_version is None else 0)
-    right = parse(to_version, numbers[-1] if to_version is None else 0)
+    left, right = _pick_versions(from_version, to_version, numbers)
     bodies = _version_bodies(versions)
     for wanted in (left, right):
         if wanted not in bodies:
             console.print(f"ERROR v{wanted} of '{plan_file.name}' is not on disk", style="red")
             raise SystemExit(1)
-
-    before = bodies[left].splitlines()
-    after = bodies[right].splitlines()
 
     console.print()
     header = Text()
@@ -4031,27 +4086,7 @@ def diff(
     console.print(header)
     console.print()
 
-    printed = False
-    for group in difflib.SequenceMatcher(None, before, after).get_grouped_opcodes(3):
-        printed = True
-        section = _section_of(after, group[0][3])
-        rule = Text()
-        rule.append("@@ ", style="muted")
-        rule.append(section or f"lines {group[0][3] + 1}-{group[-1][4]}", style="accent")
-        rule.append(" @@", style="muted")
-        console.print(rule)
-        for tag, i1, i2, j1, j2 in group:
-            if tag in ("replace", "delete"):
-                for line in before[i1:i2]:
-                    console.print(Text(f"- {line}", style="bad"))
-            if tag in ("replace", "insert"):
-                for line in after[j1:j2]:
-                    console.print(Text(f"+ {line}", style="ok"))
-            if tag == "equal":
-                for line in before[i1:i2]:
-                    console.print(Text(f"  {line}", style="muted"))
-        console.print()
-
+    printed = _print_hunks(bodies[left].splitlines(), bodies[right].splitlines())
     if not printed:
         tui.note("No differences. The two versions have identical text.")
         console.print()
