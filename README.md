@@ -197,19 +197,18 @@ Decisions are recorded in [docs/adr/](docs/adr/), with more guides in [docs/](do
 Measured on Windows AMD64, Python 3.13.1, SQLite on a local SSD. Reproduce
 with `python benchmarks/bench.py`.
 
-| Operation | Median | Scale |
-|-----------|--------|-------|
-| `create_project` | 44 ms | one project |
-| `create_plan_file` | 79 ms | n=100, ~2.4 KB body each |
-| `list_plan_files` | 4.7 ms | 100 plans, n=20 |
+| Operation | Median | p95 | Scale |
+|-----------|--------|-----|-------|
+| `create_project` | 35.9 ms | — | one project |
+| `create_plan_file` | 62.7 ms | 203.0 ms | n=100, ~2.4 KB body each |
+| `list_plan_files` | 2.6 ms | 7.0 ms | 100 plans, n=20 |
 
 Cold start, measured the same way:
 
 | Command | Median (n=7) | Before |
 |---------|--------------|--------|
-| `flanner --version` | 434 ms | 1470 ms |
-| `flanner --help` | 539 ms | 1470 ms |
-| `flanner list` | 1445 ms | 1760 ms |
+| `flanner --version` | 397 ms | 1470 ms |
+| `flanner --help` | 342 ms | 1470 ms |
 
 SQLAlchemy was being imported by every command, including the ones that
 never open a store, and cost 630 ms of a 1.1 s import. It is now reached
@@ -217,9 +216,19 @@ through thin wrappers that import it on first use, so a command that does
 not touch the database does not pay for it. `flanner list` does open the
 store, so its cost is real work rather than overhead.
 
-`--help` is still 39 ms over the 500 ms bar, and these numbers are from an
-editable install, which adds roughly 80 ms of import-finder overhead that a
-normal `pip install` does not have.
+Both are now under the 500 ms bar. These are from an editable install, which
+adds roughly 80 ms of import-finder overhead a normal `pip install` does not.
+
+`flanner list` is no longer in this table. It opens the store, so its cost is
+real work rather than startup, and quoting it beside two commands that open
+nothing invited the comparison it does not deserve.
+
+The numbers come from `python benchmarks/bench.py`, which measures the
+installed console script rather than `python -m flanner.cli` — they are not
+the same, and the one a person types is the one worth reporting. CI compares
+every run against `benchmarks/baseline.json` and fails past 3x, which
+catches an order-of-magnitude regression and nothing subtler; a shared
+runner's timings vary by a factor of two on identical code.
 
 ## Exit codes
 

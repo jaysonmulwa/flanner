@@ -97,3 +97,41 @@ reviewer** to that environment (repo *Settings -> Environments -> pypi ->
 Required reviewers*) so every publish pauses for a human to approve before it
 uploads to PyPI. The one-time PyPI-side setup (registering the trusted
 publisher) is in the workflow header at `.github/workflows/publish.yml`.
+
+
+## The dev environment is locked; the runtime is not
+
+`requirements-dev.lock` pins the toolchain — pytest, ruff, mypy and their
+trees — to a version *and* a hash, and CI installs from it with
+`--require-hashes`. Regenerate it whenever `pyproject.toml` changes:
+
+```bash
+uv pip compile pyproject.toml --extra dev --generate-hashes --universal --python-version 3.12 -o requirements-dev.lock
+```
+
+`--universal` matters: a lock made without it is specific to the machine that
+made it, and one made on Windows pins `pywin32`, which cannot install on a
+Linux runner.
+
+**The runtime dependencies stay ranges, deliberately.** This is a published
+library. Pinning what a consumer installs forces our resolution onto every
+project that depends on us, which is the opposite of a library's job. The
+test matrix resolves those ranges fresh on every run, which is how we find
+out that a dependency has broken us before a user does.
+
+So the lock buys the toolchain: a green run is reproducible, a failure is
+attributable to a change rather than to ruff shifting underneath us, and a
+compromised dev package cannot slip in unnoticed.
+
+## Benchmarks
+
+```bash
+python benchmarks/bench.py                 # the table
+python benchmarks/bench.py --check         # what CI runs
+python benchmarks/bench.py --save-baseline # after a deliberate change
+```
+
+A performance claim needs numbers from this, before and after, on the same
+machine. The README's tables are what it printed. Cold start measures the
+installed `flanner` console script rather than `python -m flanner.cli` —
+they are not the same, and the one a person types is the one worth quoting.

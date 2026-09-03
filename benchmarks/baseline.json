@@ -1,0 +1,37 @@
+[
+  {
+    "operation": "create_project",
+    "scale": "one project",
+    "median_ms": 39.89,
+    "p95_ms": 39.89,
+    "runs": 1
+  },
+  {
+    "operation": "create_plan_file",
+    "scale": "n=100, ~2.4 KB each",
+    "median_ms": 54.01,
+    "p95_ms": 274.55,
+    "runs": 100
+  },
+  {
+    "operation": "list_plan_files",
+    "scale": "100 plans, n=20",
+    "median_ms": 2.54,
+    "p95_ms": 3.84,
+    "runs": 20
+  },
+  {
+    "operation": "cold_start --version",
+    "scale": "no store opened",
+    "median_ms": 485.7,
+    "p95_ms": 735.65,
+    "runs": 7
+  },
+  {
+    "operation": "cold_start --help",
+    "scale": "no store opened",
+    "median_ms": 365.07,
+    "p95_ms": 577.12,
+    "runs": 7
+  }
+]
