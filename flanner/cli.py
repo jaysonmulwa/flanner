@@ -2317,7 +2317,7 @@ def _session_failed(error: Any) -> NoReturn:
             "again; see docs/clock-skew.md if it will not sync."
         ),
         refusals.SUBSCRIPTION_INACTIVE: (
-            "The team's subscription does not cover this. An admin can fix it " "from the console."
+            "The team's subscription does not cover this. An admin can fix it from the console."
         ),
         refusals.NOT_ADMIN: "This needs an organization admin. Ask one to do it.",
         refusals.DEVICE_UNKNOWN: (

@@ -364,9 +364,15 @@ def test_console_calls_sign_the_arguments_not_just_the_caller(home, monkeypatch)
 
     cache.save(a_session(device_id=identity.device_id()))
     sent = {}
-    monkeypatch.setattr(
-        account, "_post", lambda endpoint, path, payload: sent.update(payload) or {}
-    )
+
+    def capture(endpoint, path, payload, *, repeatable=False):
+        # `payload` is a function now, not a dict: a nonce is spent on use,
+        # so every attempt has to sign afresh. Calling it here is what the
+        # real `_post` does per attempt.
+        sent.update(payload() if callable(payload) else payload)
+        return {}
+
+    monkeypatch.setattr(account, "_post", capture)
     account.revoke_device("dev_lost")
 
     request = SignedRequest.from_dict(sent)

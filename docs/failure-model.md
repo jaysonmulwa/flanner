@@ -145,8 +145,10 @@ rather than a judgement call.
 Stated rather than left to be discovered:
 
 - **No backup command.** Copying `~/.flanner/` and `.plans/` is the backup.
-- **No retry or backoff** on transient network failures. A failed sync is
-  reported and the user runs it again.
+- **No retry on peer sync.** A failed sync is reported and the user runs it
+  again. Control-plane calls do retry a connection failure (three tries with
+  jitter, in `account._post`), but only where repeating is harmless — never
+  an enrolment, which spends a one-shot code.
 - **`.plans/` is git-ignored by default**, so an unsynced, uncommitted plan
   that is deleted is unrecoverable.
 - **No integrity check on read.** `doctor` verifies on demand, not on every

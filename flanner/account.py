@@ -21,8 +21,11 @@ from __future__ import annotations
 import json
 import os
 import platform
+import random
+import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -32,6 +35,19 @@ from .entitlements import VALID
 from .session import DEFAULT_ENDPOINT, Session
 
 REQUEST_TIMEOUT = 15.0
+
+#: Three tries, matching the control plane's own retry budget. Past this the
+#: thing is down rather than blipping, and somebody is watching a prompt.
+ATTEMPTS = 3
+
+#: 0.2s then 0.4s, with jitter. Under a second in total, which is the most a
+#: person waiting on a command should spend on a problem that fixed itself.
+BASE_DELAY = 0.2
+
+#: The longest a `Retry-After` may make us wait before the decision is handed
+#: back to the person. A server asking for thirty seconds is telling them
+#: something they should hear, not something a CLI should sit through.
+MAX_HONOURED_WAIT = 5.0
 
 
 class SessionError(Exception):
@@ -81,8 +97,14 @@ def refresh(session: Session | None = None) -> Session:
     current = session or cache.load()
     if current is None:
         raise SessionError("this device is not logged in")
-    request = device_auth.sign_request({}, device_id=current.device_id)
-    body = _post(current.endpoint, "/v1/entitlements", request.to_dict())
+    # Signed per attempt, not once: a nonce is spent on use, so a retried
+    # envelope would be refused as a replay rather than renewing anything.
+    body = _post(
+        current.endpoint,
+        "/v1/entitlements",
+        lambda: device_auth.sign_request({}, device_id=current.device_id).to_dict(),
+        repeatable=True,
+    )
     renewed = _session_from(current.endpoint, body)
     # A renewal answers about this device, not the others. Dropping the
     # cached peer keys here would silently break artifact verification
@@ -132,26 +154,87 @@ def _default_label() -> str:
         return "unnamed device"
 
 
-def _post(endpoint: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _post(
+    endpoint: str,
+    path: str,
+    payload: dict[str, Any] | Callable[[], dict[str, Any]],
+    *,
+    repeatable: bool = False,
+) -> dict[str, Any]:
+    """One call to the control plane, retried where a repeat cannot do harm.
+
+    Args:
+        payload: the body, or a function returning one. **A signed request
+            must pass the function**, because a nonce is spent on use: the
+            same envelope sent twice is refused as a replay, so each attempt
+            has to be signed afresh.
+        repeatable: the caller's promise that doing this twice is harmless.
+            Defaults to False so the promise is made deliberately. Reads and
+            idempotent writes qualify; anything that spends a one-shot
+            secret or sends an email does not.
+
+    Retries only when the request never completed — a refused connection, a
+    DNS failure, a timeout before the first byte. A response with a status,
+    including a 5xx, is never repeated: the far side received it. The one
+    exception is a 429, where the server has explicitly said to come back
+    and nothing was applied.
+    """
     url = endpoint.rstrip("/") + path
     if not url.startswith(("http://", "https://")):
         raise SessionError(f"{endpoint} is not an http endpoint")
-    request = urllib.request.Request(  # noqa: S310 - scheme checked above
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+
+    for attempt in range(ATTEMPTS):
+        body = payload() if callable(payload) else payload
+        request = urllib.request.Request(  # noqa: S310 - scheme checked above
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:  # noqa: S310 - scheme checked before the call
+                return dict(json.loads(response.read().decode("utf-8")))
+        except urllib.error.HTTPError as e:
+            wait = _asked_wait(e)
+            if wait is not None and attempt < ATTEMPTS - 1:
+                time.sleep(wait)
+                continue
+            message, code = _refusal(e)
+            raise SessionError(message, code=code) from None
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            if not repeatable or attempt == ATTEMPTS - 1:
+                raise SessionError(f"could not reach {endpoint}: {e}") from None
+            _pause(attempt)
+        except ValueError as e:
+            raise SessionError(f"the control plane returned something unusable: {e}") from None
+
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _asked_wait(error: urllib.error.HTTPError) -> float | None:
+    """How long the server said to wait, if waiting that long is reasonable.
+
+    Only for 429, where the refusal means nothing was applied — so trying
+    again is safe whatever the request was. Anything past `MAX_HONOURED_WAIT`
+    is reported instead: a person watching a prompt should be told to come
+    back later, not left staring at it.
+    """
+    if error.code != 429 or not error.headers:
+        return None
     try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:  # noqa: S310 - scheme checked before the call
-            return dict(json.loads(response.read().decode("utf-8")))
-    except urllib.error.HTTPError as e:
-        message, code = _refusal(e)
-        raise SessionError(message, code=code) from None
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise SessionError(f"could not reach {endpoint}: {e}") from None
-    except ValueError as e:
-        raise SessionError(f"the control plane returned something unusable: {e}") from None
+        wait = float(error.headers.get("Retry-After") or "")
+    except ValueError:
+        return None
+    return wait if 0 < wait <= MAX_HONOURED_WAIT else None
+
+
+def _pause(attempt: int) -> None:
+    """Back off, with jitter.
+
+    Jitter matters even for one client: several machines whose entitlements
+    expire together renew together, and without it they retry together too.
+    """
+    time.sleep(random.uniform(0, BASE_DELAY * (2**attempt)))  # noqa: S311 - jitter, not crypto
 
 
 def _refusal(error: urllib.error.HTTPError) -> tuple[str, str]:
@@ -216,6 +299,8 @@ def accept_invitation(
 
 def request_enrollment_code() -> tuple[str, str]:
     """Mint a code to type on another machine. Returns the code and expiry."""
+    # Not repeatable: this mints a code. A retry after an outcome we
+    # never learned leaves a second one valid and unaccounted for.
     body = _signed("/v1/devices/codes", {})
     return str(body["enrollment_code"]), str(body["expires_at"])
 
@@ -230,7 +315,7 @@ def fetch_device_keys() -> dict[str, str]:
     current = cache.load()
     if current is None:
         raise SessionError("this device is not logged in")
-    body = _signed("/v1/devices/keyring", {})
+    body = _signed("/v1/devices/keyring", {}, repeatable=True)
     current.device_keys = dict(body.get("devices") or {})
     cache.save(current)
     return current.device_keys
@@ -238,36 +323,48 @@ def fetch_device_keys() -> dict[str, str]:
 
 def list_devices() -> list[dict[str, Any]]:
     """Every machine enrolled under this member."""
-    return list(_signed("/v1/devices/list", {}).get("devices") or [])
+    return list(_signed("/v1/devices/list", {}, repeatable=True).get("devices") or [])
 
 
 def revoke_device(device_id: str) -> None:
     """Retire a machine. Yours always; anyone's if you are an admin."""
-    _signed("/v1/devices/revoke", {"device_id": device_id})
+    _signed("/v1/devices/revoke", {"device_id": device_id}, repeatable=True)
 
 
 def invite_member(email: str, *, admin: bool = False) -> str:
     """Invite someone to the organization. Returns the invitation token."""
+    # Not repeatable: this sends an email. Two invitations to the same
+    # person is a worse outcome than one failure they can see and redo.
     body = _signed("/v1/members/invite", {"email": email, "role": "admin" if admin else "member"})
     return str(body["token"])
 
 
 def list_members() -> dict[str, Any]:
     """Who is in the organization, and the seat count that implies."""
-    return _signed("/v1/members/list", {})
+    return _signed("/v1/members/list", {}, repeatable=True)
 
 
 def remove_member(membership_id: str) -> None:
-    _signed("/v1/members/remove", {"membership_id": membership_id})
+    _signed("/v1/members/remove", {"membership_id": membership_id}, repeatable=True)
 
 
-def _signed(path: str, body: dict[str, Any]) -> dict[str, Any]:
-    """Call an endpoint that authenticates by device signature."""
+def _signed(path: str, body: dict[str, Any], *, repeatable: bool = False) -> dict[str, Any]:
+    """Call an endpoint that authenticates by device signature.
+
+    `repeatable` is the caller's promise that doing this twice is harmless,
+    and it is passed through rather than assumed: a read is safe, minting a
+    code or sending an invitation is not.
+    """
     current = cache.load()
     if current is None:
         raise SessionError("this device is not logged in")
-    request = device_auth.sign_request(body, device_id=current.device_id)
-    return _post(current.endpoint, path, request.to_dict())
+    return _post(
+        current.endpoint,
+        path,
+        # Freshly signed each attempt. The nonce is single-use.
+        lambda: device_auth.sign_request(body, device_id=current.device_id).to_dict(),
+        repeatable=repeatable,
+    )
 
 
 def mesh_credential() -> tuple[str, str, datetime] | None:
