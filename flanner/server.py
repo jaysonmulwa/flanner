@@ -1189,16 +1189,55 @@ def get_linear_config_tool(project_id: str) -> dict[str, Any]:
     return {"configured": False, "message": "Linear not configured for this project"}
 
 
-def main() -> None:
-    """Run the MCP server over stdio.
+#: The only address the http transport will bind. Every tool below acts with
+#: the full authority of the person running it — creating projects, rewriting
+#: plans, deleting them — and there is no signature, token or entitlement in
+#: front of any of them, because stdio needed none. Reachable from another
+#: machine, that is a remote shell over somebody's design documents.
+HTTP_HOST = "127.0.0.1"
+DEFAULT_HTTP_PORT = 8765
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run the MCP server.
 
     Entry point for the `flanner-mcp` console script and for
-    `python -m flanner.server`.
+    `python -m flanner.server`. Stdio by default, which is how an editor or
+    an agent launches it; `--http` serves the same tools over a port for a
+    client that cannot spawn a process, and for `flanner start`.
     """
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="flanner-mcp", description="Flanner MCP server")
+    parser.add_argument(
+        "--http", action="store_true", help=f"Serve on {HTTP_HOST} instead of stdio"
+    )
+    parser.add_argument("--port", type=int, default=DEFAULT_HTTP_PORT, help="Port for --http")
+    args = parser.parse_args(argv)
+
     # Initialize the database before serving: tools assume a live session,
     # and an MCP client's first call is otherwise "Database not initialized"
     ensure_database()
-    mcp.run(transport="stdio")
+
+    if not args.http:
+        mcp.run(transport="stdio")
+        return
+
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    # A loopback bind alone does not make this private. A page in the user's
+    # browser can resolve any hostname it likes to 127.0.0.1 and then post
+    # to this port, so the Host and Origin have to be checked as well. The
+    # library's default is protection enabled with an empty allowlist, which
+    # refuses everything; naming the addresses is what turns it on usefully.
+    here = [f"{host}:{args.port}" for host in (HTTP_HOST, "localhost", "[::1]")]
+    _mcp.settings.host = HTTP_HOST
+    _mcp.settings.port = args.port
+    _mcp.settings.transport_security = TransportSecuritySettings(
+        allowed_hosts=here,
+        allowed_origins=[f"http://{origin}" for origin in here],
+    )
+    mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":

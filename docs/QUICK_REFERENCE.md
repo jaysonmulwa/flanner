@@ -80,13 +80,26 @@ flanner setup-gitignore PROJECT_NAME
 
 ## MCP Server
 
-```bash
-# Start server (shows connection instructions)
-flanner start
+Most clients spawn their own copy over stdio and need none of this. Use it
+for a client that only speaks http, for two editors sharing one server, or
+for working with flanner on its own.
 
-# Stop server
+```bash
+# Run it in the background on 127.0.0.1:8765 (env: FLANNER_MCP_PORT)
+flanner start
+flanner start --port 9000
+
+# Is it up, and on what pid
+flanner status
+
+# Stop it
 flanner stop
 ```
+
+It listens on loopback only, and no option widens that. Every tool acts with
+the full authority of whoever started the server and nothing authenticates a
+caller, so this is a local convenience rather than a service to expose.
+Output goes to `~/.flanner/server.log`.
 
 ## Common Workflows
 

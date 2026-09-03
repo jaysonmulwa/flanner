@@ -15,6 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 import flanner.claude_integration as ci
+import flanner.cli as cli_module
 from flanner.cli import cli
 from flanner.database import (
     create_jira_link,
@@ -394,55 +395,10 @@ def test_sync_unparseable_plan_id_is_error(runner, project, git_repo):
 # --- start / stop / status ---
 
 
-def test_start_prints_instructions(runner):
-    result = runner.invoke(cli, ["start"])
-    assert result.exit_code == 0
-    assert "MCP server ready" in result.output
-
-
-def test_start_already_running(runner, home, monkeypatch):
-    (home / "server.pid").write_text("12345")
-    monkeypatch.setattr(os, "kill", lambda *a: None)
-    result = runner.invoke(cli, ["start"])
-    assert "already running" in result.output
-
-
-def test_start_stale_pid(runner, home, monkeypatch):
-    (home / "server.pid").write_text("12345")
-
-    def boom(*a):
-        raise OSError("no such process")
-
-    monkeypatch.setattr(os, "kill", boom)
-    result = runner.invoke(cli, ["start"])
-    assert "MCP server ready" in result.output
-    assert not (home / "server.pid").exists()
-
-
-def test_stop_not_running(runner):
-    result = runner.invoke(cli, ["stop"])
-    assert result.exit_code == 0
-    assert "not running" in result.output
-
-
-def test_stop_running(runner, home, monkeypatch):
-    (home / "server.pid").write_text("12345")
-    monkeypatch.setattr(os, "kill", lambda *a: None)
-    result = runner.invoke(cli, ["stop"])
-    assert "Server stopped" in result.output
-    assert not (home / "server.pid").exists()
-
-
-def test_stop_stale_pid(runner, home, monkeypatch):
-    (home / "server.pid").write_text("12345")
-
-    def boom(*a):
-        raise OSError("no such process")
-
-    monkeypatch.setattr(os, "kill", boom)
-    result = runner.invoke(cli, ["stop"])
-    assert "Error stopping server" in result.output
-    assert not (home / "server.pid").exists()
+# `start` and `stop` now spawn and signal a real process, so what they do is
+# tested against real processes in `test_server_lifecycle.py` rather than by
+# patching `os.kill` to pretend. What is left here is the status line, which
+# is CLI wiring rather than process handling.
 
 
 def test_status_no_db(runner, claude_config):
@@ -456,7 +412,7 @@ def test_status_no_db(runner, claude_config):
 def test_status_with_db_and_registration(runner, home, project, claude_config, monkeypatch):
     ci.register_mcp_server()
     (home / "server.pid").write_text("12345")
-    monkeypatch.setattr(os, "kill", lambda *a: None)
+    monkeypatch.setattr(cli_module, "_process_alive", lambda pid: True)
     result = runner.invoke(cli, ["status"])
     assert "running" in result.output
     assert "1 project" in result.output
@@ -465,11 +421,7 @@ def test_status_with_db_and_registration(runner, home, project, claude_config, m
 
 def test_status_stale_pid(runner, home, initialized, claude_config, monkeypatch):
     (home / "server.pid").write_text("12345")
-
-    def boom(*a):
-        raise OSError("no such process")
-
-    monkeypatch.setattr(os, "kill", boom)
+    monkeypatch.setattr(cli_module, "_process_alive", lambda pid: False)
     result = runner.invoke(cli, ["status"])
     assert "stopped" in result.output
     assert not (home / "server.pid").exists()

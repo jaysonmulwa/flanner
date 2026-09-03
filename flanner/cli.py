@@ -6,10 +6,12 @@ Provides command-line interface for managing the Flanner server and projects.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import signal
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
@@ -359,87 +361,192 @@ def guard_write() -> None:
         click.echo(output)
 
 
+def _process_alive(pid: int) -> bool:
+    """Whether a process id belongs to something still running.
+
+    Not `os.kill(pid, 0)`. That is the posix idiom, and on Windows it
+    answers a different question: it reports a process as alive whenever a
+    handle to it can still be opened, which stays true after the process has
+    exited. Measured directly — a child run to completion, then asked about
+    — the posix idiom says "running".
+
+    That is the wrong answer in the direction that hurts. A server that
+    crashed is reported as up, so `status` sends somebody looking for it and
+    `start` refuses to replace it, with the only escape being to delete the
+    pid file by hand. Waiting on the handle asks whether it has been
+    signalled, which is the question actually being asked.
+    """
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+
+    import ctypes
+
+    SYNCHRONIZE = 0x00100000
+    STILL_RUNNING = 0x00000102  # WAIT_TIMEOUT: the handle never signalled
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined,unused-ignore]  # nt only
+    handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+    if not handle:
+        return False
+    try:
+        return bool(kernel32.WaitForSingleObject(handle, 0) == STILL_RUNNING)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _running_pid(pid_file: Path) -> int | None:
+    """The live pid this file records, deleting it when the process is gone.
+
+    A pid file outliving its process is what a crash leaves behind, and
+    reporting that as "running" sends people looking for something that is
+    not there.
+    """
+    if not pid_file.exists():
+        return None
+    try:
+        pid = int(pid_file.read_text())
+    except (OSError, ValueError):
+        pid_file.unlink(missing_ok=True)
+        return None
+    if _process_alive(pid):
+        return pid
+    pid_file.unlink(missing_ok=True)
+    return None
+
+
+def _accepting(port: int, *, timeout: float, child: Any = None) -> bool:
+    """Wait until something answers on the port, or give up.
+
+    The timeout is generous because a cold start imports the whole package
+    and may create the database, which on a slow disk is tens of seconds. It
+    can afford to be: a `child` that has already exited ends the wait at
+    once, so the long deadline is only ever spent on a server still coming
+    up, never on one that has crashed.
+    """
+    import socket
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if child is not None and child.poll() is not None:
+            return False
+        with contextlib.suppress(OSError), socket.create_connection(("127.0.0.1", port), 0.3):
+            return True
+        time.sleep(0.1)
+    return False
+
+
 @cli.command()
 @click.option(
     "--port",
     type=int,
-    default=lambda: int(os.environ.get("FLANNER_WEB_PORT", "8080")),
-    help="Web server port (env: FLANNER_WEB_PORT)",
+    default=lambda: int(os.environ.get("FLANNER_MCP_PORT", "8765")),
+    help="Port to serve on (env: FLANNER_MCP_PORT)",
 )
 def start(port: int) -> None:
-    """Start the MCP server"""
+    """Run the MCP server in the background
+
+    Most clients spawn their own copy over stdio and need nothing here. This
+    is for the ones that cannot: a client that only speaks http, a second
+    editor that should share one server, or working with flanner on its own.
+
+    It listens on 127.0.0.1 and nowhere else. The tools carry the full
+    authority of whoever started them and there is nothing in front of them,
+    so this is a local convenience and never a service to expose.
+    """
+    import subprocess
+    import sys
+
+    from .server import DEFAULT_HTTP_PORT  # noqa: F401  (documents the shared default)
+
     pid_file = get_pid_file()
+    already = _running_pid(pid_file)
+    if already is not None:
+        tui.warn(f"Already running (pid {already}). Stop it with 'flanner stop'.")
+        return
 
-    # Check if already running
-    if pid_file.exists():
-        try:
-            pid = int(pid_file.read_text())
-            # Check if process is actually running
-            os.kill(pid, 0)  # Doesn't kill, just checks if process exists
-            console.print("ERROR Server is already running", style="yellow")
-            console.print(f"  PID: {pid}", style="yellow")
-            return
-        except (OSError, ValueError):
-            # Process not running, remove stale PID file
-            pid_file.unlink()
+    log_path = get_mcp_dir() / "server.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    detach: dict[str, Any] = (
+        {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+        if os.name == "nt"
+        else {"start_new_session": True}
+    )
+    with log_path.open("ab") as log:
+        child = subprocess.Popen(  # noqa: S603 - fixed argv, no shell, no user input
+            [sys.executable, "-m", "flanner.server", "--http", "--port", str(port)],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            **detach,
+        )
 
-    console.print("Starting MCP Server...", style="blue")
+    # A pid recorded before the port answers is a pid `stop` can act on even
+    # if the server dies while starting, which is the case that otherwise
+    # leaves an orphan nothing knows how to kill.
+    pid_file.write_text(str(child.pid))
 
-    # Note: In production, you would start the server in background
-    # For now, we'll just show instructions
+    console.print(f"Starting on port {port}...", style="muted")
+    if not _accepting(port, timeout=90.0, child=child):
+        pid_file.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            child.terminate()
+        tui.warn(f"The server did not come up on port {port}.")
+        console.print(f"  Its output: {tui.code(str(log_path))}", style="muted")
+        raise SystemExit(2)
+
     console.print()
-    tui.ok("MCP server ready")
+    tui.ok(f"MCP server running on http://127.0.0.1:{port}/mcp")
+    console.print(f"  pid {child.pid}, logging to {tui.code(str(log_path))}", style="muted")
     console.print()
-
-    console.print("Add to your Claude Code MCP settings:\n", style="white")
+    console.print("Point an http MCP client at that url, or use the stdio config:", style="white")
 
     import json
 
     from .claude_integration import get_local_server_config
 
-    snippet = {"mcpServers": {"flanner": get_local_server_config()}}
-    console.print(json.dumps(snippet, indent=2), style="yellow")
-
-    console.print("\nOr run the server directly:", style="white")
-    console.print("  flanner-mcp\n", style="yellow")
+    console.print(
+        json.dumps({"mcpServers": {"flanner": get_local_server_config()}}, indent=2),
+        style="yellow",
+    )
+    console.print()
 
 
 @cli.command()
 def stop() -> None:
-    """Stop the MCP server"""
+    """Stop the background MCP server"""
     pid_file = get_pid_file()
-
-    if not pid_file.exists():
-        console.print("ERROR Server is not running", style="yellow")
+    pid = _running_pid(pid_file)
+    if pid is None:
+        tui.note("Not running.")
         return
 
     try:
-        pid = int(pid_file.read_text())
         os.kill(pid, signal.SIGTERM)
-        pid_file.unlink()
-        console.print("OK Server stopped", style="green")
-    except (OSError, ValueError) as e:
-        console.print(f"ERROR Error stopping server: {e}", style="red")
-        # Remove stale PID file
-        if pid_file.exists():
-            pid_file.unlink()
+    except OSError as e:
+        tui.warn(f"Could not stop pid {pid}: {e}")
+        return
+
+    # Give it a moment to go, so `stop` followed by `start` does not collide
+    # on the port with a process that is still shutting down.
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and _process_alive(pid):
+        time.sleep(0.1)
+
+    pid_file.unlink(missing_ok=True)
+    tui.ok("Server stopped")
 
 
 def _server_row(pid_file: Path) -> Text:
-    """Whether the MCP server is up, judged by signalling its recorded pid.
+    """Whether the background MCP server is up.
 
-    A pid file whose process is gone is deleted rather than reported: it is
-    what a crash leaves behind, and treating it as "running" sends people
-    looking for a process that is not there.
+    Only the one `flanner start` runs. A client that spawns its own copy
+    over stdio owns that process and does not record a pid here, so this
+    saying "stopped" is not the same as flanner being unavailable.
     """
-    running_pid: int | None = None
-    if pid_file.exists():
-        try:
-            candidate = int(pid_file.read_text())
-            os.kill(candidate, 0)
-            running_pid = candidate
-        except (OSError, ValueError):
-            pid_file.unlink()
+    running_pid = _running_pid(pid_file)
 
     if running_pid is not None:
         server = tui.dot("ok", label="running")

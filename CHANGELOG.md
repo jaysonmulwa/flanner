@@ -8,6 +8,17 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Added
 
+- `flanner start` runs the MCP server in the background for real, over http
+  on 127.0.0.1, and `flanner stop` stops it. Both previously described a
+  process that was never created: `start` printed a config snippet, and
+  `stop` and `status` read a pid file nothing ever wrote. This is for a
+  client that cannot spawn its own copy over stdio, for two editors sharing
+  one server, or for using flanner without an agent at all.
+- A version arriving from a peer becomes a file and a version record, rather
+  than being stored and reported as `accepted` with nothing to open.
+- `flanner list` names each plan's owner, and sorts plans with a teammate's
+  version waiting to the top.
+
 - Peer requests now spend their nonce, so a captured request cannot be
   answered twice. The control plane has done this since revocation shipped;
   between two devices the freshness window was the only defence, which meant
@@ -20,6 +31,15 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Changed
 
+- A version arriving from a peer no longer moves the plan's current version.
+  Your file was never overwritten, but `flanner show`, the web UI and every
+  agent read the pointer, so a teammate pushing changed what you had open. A
+  plan this device has only ever received still tracks along, and accepting a
+  baseline through `flanner review` moves it.
+- The http peer transport listens on loopback by default rather than every
+  interface, and refuses a request body over `MAX_REQUEST_BYTES` before
+  parsing it. The existing limits all run after the body is a dict.
+- `cryptography` widens to `<51`, taking 50.x, which clears PYSEC-2026-3552.
 - The signed-request freshness window is 5 minutes, up from 2. Now that the
   nonce refuses replays, the window only has to tolerate clock drift — and on
   Windows the time service ships stopped, so minutes of drift is the default
@@ -35,6 +55,12 @@ versioning follows [SemVer](https://semver.org/).
 
 - `flanner init` could hang indefinitely if `claude mcp add` blocked. It is
   now bounded at 30 seconds.
+- Enrolling now learns the organisation's device keys, so the first sync can
+  verify a peer instead of rejecting everything it receives.
+- Whether a process is running is no longer judged with `os.kill(pid, 0)`. On
+  Windows that reports a process as alive for as long as a handle to it can
+  be opened, which outlives the process, so a crashed server would have been
+  reported as up for good.
 - `server.json` said 0.7.1 while the package was 0.9.3 — four releases of
   drift in the file the MCP registry reads. The same class of bug 0.9.1 fixed
   for `__version__`, in the one place that fix did not reach.
