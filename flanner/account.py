@@ -73,6 +73,28 @@ class SessionError(Exception):
         return refusals.is_retryable(self.code)
 
 
+def _learn_peers(session: Session) -> Session:
+    """Fetch the organization's device keys, right after enrolling.
+
+    Without these, `flanner peer pull dev_...` cannot turn a teammate's id
+    into the public key it needs to dial them — so a freshly enrolled device
+    could not reach a single colleague, which is the whole advertised
+    workflow. They were only ever fetchable through an internal helper that
+    no command called.
+
+    Best-effort on purpose. Enrolment has already succeeded by the time this
+    runs, and failing it because a second request did not land would trade a
+    working install for a missing convenience. The caller warns instead, and
+    names the command that retries.
+    """
+    try:
+        fetch_device_keys()
+    except SessionError:
+        return session
+    refreshed = cache.load()
+    return refreshed if refreshed is not None else session
+
+
 def login(code: str, *, endpoint: str = DEFAULT_ENDPOINT, label: str | None = None) -> Session:
     """Redeem an enrolment code and cache the entitlement it returns."""
     if not code.strip():
@@ -89,7 +111,7 @@ def login(code: str, *, endpoint: str = DEFAULT_ENDPOINT, label: str | None = No
     )
     session = _session_from(endpoint, body)
     cache.save(session)
-    return session
+    return _learn_peers(session)
 
 
 def refresh(session: Session | None = None) -> Session:
@@ -132,6 +154,16 @@ def ensure_fresh(*, now: datetime | None = None) -> Session | None:
 
 
 def _session_from(endpoint: str, body: dict[str, Any]) -> Session:
+    """Build a session from an enrolment or renewal response.
+
+    Every optional field the control plane sends has to be read here or it
+    is silently dropped, and two advertised features were broken by exactly
+    that: `relay_url` was never stored, so the relay fallback never engaged,
+    and `device_keys` had nowhere to land even if the server sent them.
+
+    So absent fields are defaulted rather than ignored, and anything new the
+    control plane starts sending has one obvious place to be picked up.
+    """
     try:
         return Session(
             endpoint=endpoint,
@@ -140,6 +172,13 @@ def _session_from(endpoint: str, body: dict[str, Any]) -> Session:
             user_id=str(body["user_id"]),
             entitlement=str(body["entitlement"]),
             keyring=dict(body.get("keyring") or {}),
+            # Where two devices meet when they cannot reach each other
+            # directly. Deployment configuration rather than a secret, sent
+            # with every entitlement, and until now thrown away on arrival.
+            relay_url=str(body.get("relay_url") or ""),
+            # Sent by no control plane today; read anyway, so the day one
+            # does the client already works rather than needing a release.
+            device_keys=dict(body.get("device_keys") or {}),
         )
     except (KeyError, TypeError, ValueError) as e:
         raise SessionError(f"the control plane returned something unusable: {e}") from None
@@ -294,7 +333,7 @@ def accept_invitation(
     )
     session = _session_from(endpoint, body)
     cache.save(session)
-    return session
+    return _learn_peers(session)
 
 
 def request_enrollment_code() -> tuple[str, str]:

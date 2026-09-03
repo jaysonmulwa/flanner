@@ -2927,6 +2927,19 @@ def whoami(do_refresh: bool, output: str) -> None:
         except account.SessionError as e:
             console.print(f"WARN could not renew: {e}", style="yellow")
             current = cache.load()
+
+        # The device directory too, not just the entitlement. Six error
+        # messages across the CLI and the transport recommend this command
+        # as the fix for "cannot resolve that device", and until now it
+        # renewed the entitlement and deliberately preserved the stale — and
+        # on a fresh install, empty — key cache. So the recommended recovery
+        # could not recover the thing it was recommended for.
+        try:
+            learned = account.fetch_device_keys()
+            current = cache.load() or current
+            console.print(f"Peers   {len(learned)} device key(s) known", style="dim")
+        except account.SessionError as e:
+            console.print(f"WARN could not refresh device keys: {e}", style="yellow")
     else:
         current = cache.load()
     if output == "json":
