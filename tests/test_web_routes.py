@@ -7,13 +7,18 @@ from fastapi.testclient import TestClient
 
 from flanner.web import app, markdown_filter
 
+# The Host header the middleware expects. TestClient defaults to
+# "testserver", which flanner refuses on purpose: a Host it does not
+# serve is how DNS rebinding reaches a local-only tool.
+LOCAL_URL = "http://127.0.0.1:8080"
+
 BAD_UUID = "not-a-uuid"
 MISSING_UUID = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.fixture
 def client(db):
-    return TestClient(app, follow_redirects=False)
+    return TestClient(app, base_url=LOCAL_URL, follow_redirects=False)
 
 
 @pytest.fixture
@@ -535,3 +540,64 @@ def test_a_plan_with_only_outside_review_still_appears(client, plan_id):
     _import_outside_review(plan_id)
     after = client.get("/review").text
     assert "Nothing is waiting" not in after
+
+
+# --- requests from another website ------------------------------------------
+#
+# These are regression tests for a hole that was open and exploitable: a plain
+# form POST from any page in the user's browser deleted projects here, because
+# the UI binds localhost and trusted that entirely.
+
+
+def test_a_form_post_from_another_site_is_refused(client, project_id):
+    """The bug. A page on any site could submit this and it worked."""
+    response = client.post(
+        f"/projects/{project_id}/delete",
+        headers={"Origin": "https://evil.example"},
+    )
+    assert response.status_code == 403
+    assert "evil.example" in response.text
+    # And the project is still here.
+    assert client.get(f"/projects/{project_id}").status_code == 200
+
+
+def test_our_own_forms_still_work(client, project_id):
+    """A same-origin post carries an Origin too, and must not be caught."""
+    response = client.post(
+        f"/projects/{project_id}/delete",
+        headers={"Origin": LOCAL_URL},
+    )
+    assert response.status_code == 303
+
+
+def test_a_request_with_no_origin_is_allowed(client, git_repo):
+    """curl, and the MCP server calling /ipc/call. Neither carries cookies."""
+    response = client.post(
+        "/projects/new",
+        data={"name": "noorigin", "project_root": str(git_repo), "plan_directory": ".plans"},
+    )
+    assert response.status_code == 303
+
+
+def test_a_foreign_host_header_is_refused(client):
+    """DNS rebinding: an attacker domain resolved to 127.0.0.1 is same-origin.
+
+    Refusing on Host is what stops them reading the catalog to find the ids
+    the delete route needs.
+    """
+    assert client.get("/", headers={"Host": "evil.example"}).status_code == 403
+
+
+def test_a_cross_site_read_is_still_allowed(client):
+    """GET is not state-changing, so Origin alone does not refuse it.
+
+    The Host check is what protects reads; this pins that the Origin check
+    is scoped to writes and does not quietly break embedding or link-outs.
+    """
+    assert client.get("/", headers={"Origin": "https://evil.example"}).status_code == 200
+
+
+def test_an_operator_can_serve_elsewhere(client, monkeypatch):
+    """`flanner web --host` sets this, and the Host check stands down."""
+    monkeypatch.setenv("FLANNER_WEB_HOSTS", "*")
+    assert client.get("/", headers={"Host": "flanner.internal"}).status_code == 200

@@ -5,6 +5,11 @@ from fastapi.testclient import TestClient
 
 from flanner import ipc
 
+# The Host header the middleware expects. TestClient defaults to
+# "testserver", which flanner refuses on purpose: a Host it does not
+# serve is how DNS rebinding reaches a local-only tool.
+LOCAL_URL = "http://127.0.0.1:8080"
+
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
@@ -37,7 +42,7 @@ def web_client(db, monkeypatch):
     from flanner.web import app
 
     monkeypatch.setenv(ipc.TOKEN_ENV, "secret-token")
-    return TestClient(app, follow_redirects=False)
+    return TestClient(app, base_url=LOCAL_URL, follow_redirects=False)
 
 
 @pytest.fixture

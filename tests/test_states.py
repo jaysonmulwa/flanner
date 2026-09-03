@@ -6,12 +6,17 @@ from fastapi.testclient import TestClient
 from flanner.server import create_plan_file_tool, create_project_tool
 from flanner.web import app
 
+# The Host header the middleware expects. TestClient defaults to
+# "testserver", which flanner refuses on purpose: a Host it does not
+# serve is how DNS rebinding reaches a local-only tool.
+LOCAL_URL = "http://127.0.0.1:8080"
+
 MISSING_UUID = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.fixture
 def client(db):
-    return TestClient(app)
+    return TestClient(app, base_url=LOCAL_URL)
 
 
 # --- error pages are HTML for browsers, JSON for the API --------------------
@@ -51,7 +56,7 @@ def test_unhandled_exception_hides_traceback(client, monkeypatch):
         raise RuntimeError("secret internals")
 
     monkeypatch.setattr(webmod, "db_list_projects", boom)
-    quiet = TestClient(app, raise_server_exceptions=False)
+    quiet = TestClient(app, base_url=LOCAL_URL, raise_server_exceptions=False)
     r = quiet.get("/projects")
     assert r.status_code == 500
     assert "500 Server Error" in r.text

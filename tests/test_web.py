@@ -5,10 +5,15 @@ from fastapi.testclient import TestClient
 
 from flanner.web import app
 
+# The Host header the middleware expects. TestClient defaults to
+# "testserver", which flanner refuses on purpose: a Host it does not
+# serve is how DNS rebinding reaches a local-only tool.
+LOCAL_URL = "http://127.0.0.1:8080"
+
 
 @pytest.fixture
 def client(db):
-    return TestClient(app)
+    return TestClient(app, base_url=LOCAL_URL)
 
 
 def test_dashboard(client):

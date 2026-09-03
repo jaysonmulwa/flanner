@@ -750,6 +750,8 @@ def web(port: int, host: str, open_browser: bool) -> None:
 
     _require_store()
 
+    from . import web as web_module
+
     if host not in ("127.0.0.1", "localhost", "::1"):
         console.print(
             f"WARN Binding {host} exposes the web UI beyond localhost. It has no "
@@ -757,6 +759,11 @@ def web(port: int, host: str, open_browser: bool) -> None:
             "your plans. Use 127.0.0.1 unless you have put auth in front of it.",
             style="yellow",
         )
+        # The Host header check stands down too. It exists to stop a domain
+        # pointed at 127.0.0.1 reaching a local-only tool, and no list here
+        # can predict which names will reach a deliberately exposed one. The
+        # cross-site check on writes still runs.
+        web_module.ALLOW_ANY_HOST = True
 
     if _port_in_use(host, port):
         console.print(f"ERROR Port {port} is already in use on {host}.", style="red")

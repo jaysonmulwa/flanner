@@ -21,6 +21,7 @@ from fastapi.responses import (
     FileResponse,
     HTMLResponse,
     JSONResponse,
+    PlainTextResponse,
     RedirectResponse,
     Response,
 )
@@ -196,6 +197,86 @@ templates.env.globals["app_version"] = __version__
 # render would be the only thing on the page that could change without the
 # page changing, and nobody is running this process across New Year.
 templates.env.globals["app_year"] = datetime.now(timezone.utc).year
+
+
+# --- requests that came from another website --------------------------------
+#
+# This UI binds 127.0.0.1 and has no login, so "only you can reach it" was
+# carrying the whole security argument. That is not true inside a browser.
+# Any page you have open can submit a form to http://localhost:8080, and the
+# browser sends it with your cookies. Same-origin policy blocks *reading* the
+# reply; it does not block making the request. Before this, a page on any
+# site could delete every project here, and a domain pointed at 127.0.0.1
+# (DNS rebinding) could read them first to find the ids.
+#
+# Two checks on the request itself. No token threaded through templates, no
+# session to keep, nothing for a form to forget.
+
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_HOSTS_ENV = "FLANNER_WEB_HOSTS"
+
+# Set by `flanner web` when it was told to bind somewhere other than
+# loopback, and readable by anyone running uvicorn directly. A flag on the
+# module rather than a write into os.environ: a command that mutates the
+# environment leaks into everything else in the process, which is exactly
+# how a test that only wanted the warning turned the check off for the
+# whole suite.
+ALLOW_ANY_HOST = False
+
+
+def _hostname(value: str) -> str:
+    """The host part of a Host header or an Origin netloc, without the port."""
+    if value.startswith("["):  # bracketed IPv6, e.g. [::1]:8080
+        return value.partition("]")[0] + "]"
+    return value.rsplit(":", 1)[0] if ":" in value else value
+
+
+def _host_is_allowed(host_header: str) -> bool:
+    """Whether a Host header names this machine, or one the operator allowed.
+
+    Loopback names always pass. Beyond that, `FLANNER_WEB_HOSTS` names the
+    hosts an operator serves under (or `*` for any), for a deployment that
+    runs uvicorn directly rather than through `flanner web`.
+    """
+    allowed = os.environ.get(_HOSTS_ENV, "")
+    if ALLOW_ANY_HOST or allowed.strip() == "*":
+        return True
+    extra = {h.strip() for h in allowed.split(",") if h.strip()}
+    return _hostname(host_header) in (_LOOPBACK | extra)
+
+
+@app.middleware("http")
+async def block_foreign_requests(request: Request, call_next: Any) -> Response:
+    """Refuse requests a browser made on another site's behalf.
+
+    An `Origin` that disagrees with `Host` means a page somewhere else asked
+    for this. Browsers have sent `Origin` on cross-origin form posts for
+    years, so this is the check that matters. A request with no `Origin` at
+    all is allowed: that is curl, or the MCP server calling `/ipc/call`, and
+    neither is a browser carrying somebody's cookies.
+    """
+    host = request.headers.get("host", "")
+    if not _host_is_allowed(host):
+        return PlainTextResponse(
+            "Refused: this address is not one flanner serves. "
+            "It is a local tool, reachable as localhost.",
+            status_code=403,
+        )
+
+    origin = request.headers.get("origin")
+    if origin and request.method in _UNSAFE_METHODS:
+        from urllib.parse import urlsplit
+
+        if urlsplit(origin).netloc != host:
+            return PlainTextResponse(
+                f"Refused: this request came from {origin}, not from flanner.",
+                status_code=403,
+            )
+
+    result: Response = await call_next(request)
+    return result
+
 
 _STATUS_LABELS = {400: "Bad Request", 404: "Not Found", 500: "Server Error"}
 

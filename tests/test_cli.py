@@ -716,18 +716,31 @@ def test_list_project_plans_json(runner, plan):
 def test_web_warns_on_non_local_host(runner, initialized, monkeypatch):
     import uvicorn
 
+    from flanner import web as web_module
+
+    # monkeypatch records the real value and puts it back afterwards. Without
+    # that, this command would leave the Host check switched off for every
+    # later test in the process, because `flanner web` normally never returns.
+    monkeypatch.setattr(web_module, "ALLOW_ANY_HOST", False)
     monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
     result = runner.invoke(cli, ["web", "--host", "0.0.0.0", "--port", "0"])
     assert result.exit_code == 0
     assert "exposes the web UI beyond localhost" in result.output
+    # The warning and the stood-down Host check are one decision, so the test
+    # that pins the warning pins the check too.
+    assert web_module.ALLOW_ANY_HOST is True
 
 
 def test_web_no_warning_on_localhost(runner, initialized, monkeypatch):
     import uvicorn
 
+    from flanner import web as web_module
+
+    monkeypatch.setattr(web_module, "ALLOW_ANY_HOST", False)
     monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
     result = runner.invoke(cli, ["web", "--host", "127.0.0.1", "--port", "0"])
     assert "exposes the web UI" not in result.output
+    assert web_module.ALLOW_ANY_HOST is False
 
 
 def test_web_port_in_use_is_graceful(runner, initialized):
