@@ -55,6 +55,16 @@ versioning follows [SemVer](https://semver.org/).
 
 - `flanner init` could hang indefinitely if `claude mcp add` blocked. It is
   now bounded at 30 seconds.
+- `flanner init` no longer replaces a `.mcp.json` or `.claude/settings.json`
+  it cannot parse. Both are read, merged into and written back, and an
+  unparseable file was read as `{}`, so the write discarded every other MCP
+  server, hook and permission the repo had declared. A trailing comma was
+  enough. The file is now left alone and the reason reported, and the rest of
+  the integration still installs.
+- Creating a plan is failure-atomic. The plan row was committed before its
+  first version was written, so a failed write left a plan with no versions
+  holding the name, and every retry afterwards was refused as a duplicate —
+  permanently, even once the cause was fixed.
 - A keychain that cannot be read no longer costs this machine its identity.
   Once the signing key moves to the keychain the file is deleted, so a locked
   keychain looked exactly like a machine that had never run flanner, and the

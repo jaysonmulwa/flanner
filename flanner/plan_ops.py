@@ -151,16 +151,43 @@ def create_plan(
         description=description,
         auto_version=auto_version,
     )
-    version = write_version(
-        session,
-        project=project,
-        plan_file=plan_file,
-        version=1,
-        content=content,
-        created_by=created_by,
-        notes="Initial version",
-    )
+    try:
+        version = write_version(
+            session,
+            project=project,
+            plan_file=plan_file,
+            version=1,
+            content=content,
+            created_by=created_by,
+            notes="Initial version",
+        )
+    except Exception:
+        _undo_plan_row(session, plan_file.id)
+        raise
     return plan_file, version
+
+
+def _undo_plan_row(session: Session, plan_file_id: UUID) -> None:
+    """Remove the plan record when its first version could not be written.
+
+    The row is committed before the file is written, so a write that fails —
+    a full disk, a read-only checkout, a directory standing where the file
+    should go — leaves a plan with no versions. Nothing displays it usefully
+    and, worse, it holds the name: every retry from then on is refused as a
+    duplicate, so the failure is permanent and the only fix is deleting a
+    row by hand. Reproduced directly, the second attempt raises
+    DuplicateError even after the obstruction is gone.
+
+    A cleanup that itself fails is swallowed. The write error is the one the
+    caller needs; replacing it with a delete error would hide what actually
+    went wrong, and the ghost row is no worse than it was.
+    """
+    session.rollback()
+    with contextlib.suppress(Exception):
+        stranded = session.get(PlanFileModel, plan_file_id)
+        if stranded is not None:
+            session.delete(stranded)
+            session.commit()
 
 
 def record_new_version(

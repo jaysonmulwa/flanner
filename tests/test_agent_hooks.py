@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from flanner.agent_hooks import (
     agent_md_block,
     decide_write,
@@ -156,11 +158,21 @@ def test_project_mcp_json_merges_with_existing(git_repo):
     assert config["mcpServers"]["flanner"]["command"] == "flanner-mcp"
 
 
-def test_project_mcp_json_recovers_from_malformed(git_repo):
+def test_project_mcp_json_refuses_to_replace_a_malformed_file(git_repo):
+    """This test used to assert the opposite, and called it recovery.
+
+    "Recovering" meant reading an unparseable file as `{}` and writing over
+    it, which discards every other MCP server the repo declared. What the
+    file cannot be is silently replaced; see `test_config_merge.py`.
+    """
+    from flanner.exceptions import ConfigError
+
     (git_repo / ".mcp.json").write_text("{not json", encoding="utf-8")
-    assert ensure_project_mcp_json(str(git_repo)) is True
-    config = json.loads((git_repo / ".mcp.json").read_text(encoding="utf-8"))
-    assert config["mcpServers"]["flanner"]["command"] == "flanner-mcp"
+
+    with pytest.raises(ConfigError):
+        ensure_project_mcp_json(str(git_repo))
+
+    assert (git_repo / ".mcp.json").read_text(encoding="utf-8") == "{not json"
 
 
 # --- skill -------------------------------------------------------------------
@@ -276,13 +288,16 @@ def test_wire_agent_integration(db, git_repo):
     from flanner.agent_hooks import wire_agent_integration
 
     project = _project(get_session(), git_repo)
-    done = wire_agent_integration(str(git_repo), project)
+    done = wire_agent_integration(str(git_repo), project).installed
     assert any("CLAUDE.md" in d for d in done)
     assert any(".mcp.json" in d for d in done)
     assert any("skill" in d for d in done)
     assert (git_repo / ".mcp.json").exists()
     assert (git_repo / ".claude" / "settings.json").exists()
-    assert wire_agent_integration(str(git_repo), project) == []  # idempotent
+
+    again = wire_agent_integration(str(git_repo), project)  # idempotent
+    assert again.installed == []
+    assert again.skipped == []
 
 
 def test_upsert_global_nudge(monkeypatch, tmp_path):

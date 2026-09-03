@@ -140,14 +140,15 @@ def initialize_project(
     if not project:
         return {"error": True, "message": "Failed to load project after creation"}
 
-    installed = wire_agent_integration(root, project)
+    wiring = wire_agent_integration(root, project)
     return {
         "project_id": str(project.id),
         "project_name": project.name,
         "project_root": project.project_root,
         "plan_directory": project.plan_directory,
         "created": created,
-        "installed": installed,
+        "installed": wiring.installed,
+        "skipped": wiring.skipped,
         "message": (
             f"{'Adopted' if created else 'Re-synced'} project '{project.name}'. "
             f"Create plans with create_plan_file_tool(project_id='{project.id}', name=..., "

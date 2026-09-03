@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy.orm import Session
 
 from .database import ProjectModel, get_project_by_root
+from .exceptions import ConfigError
 from .git_integration import find_git_root
 
 AGENT_MD_START = "<!-- flanner:managed -->"
@@ -150,18 +151,41 @@ def upsert_agent_md(root: str, filename: str, block: str) -> bool:
     return True
 
 
+def _existing_object(path: Path) -> dict[str, Any]:
+    """Read a json config this repo already has, or start an empty one.
+
+    Raises `ConfigError` rather than starting empty when the file is there
+    but cannot be parsed as an object. Both callers go on to *write* what
+    this returns, so answering "{}" for a file that could not be read
+    replaces it: every other MCP server the repo declared, every hook,
+    every permission, gone, because of a trailing comma or because somebody
+    happened to be mid-edit.
+
+    Nothing here is flanner's to discard. Refusing costs one integration
+    that a second `flanner init` will install once the file parses; the
+    alternative costs work that cannot be got back.
+    """
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"{path} is not valid json ({e}); fix it and run this again") from None
+    except OSError as e:
+        raise ConfigError(f"{path} could not be read ({e})") from None
+    if not isinstance(loaded, dict):
+        raise ConfigError(f"{path} does not hold a json object, so there is nothing to merge into")
+    return loaded
+
+
 def ensure_settings_hook(root: str) -> bool:
     """Merge the guard-write PreToolUse hook into <root>/.claude/settings.json.
 
-    Idempotent; returns True if the file was changed.
+    Idempotent; returns True if the file was changed. Raises `ConfigError`
+    if the file exists and cannot be parsed, rather than replacing it.
     """
     settings_path = Path(root) / ".claude" / "settings.json"
-    settings: dict[str, Any] = {}
-    if settings_path.exists():
-        try:
-            settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            settings = {}
+    settings = _existing_object(settings_path)
 
     hooks = settings.setdefault("hooks", {})
     pre = hooks.setdefault("PreToolUse", [])
@@ -202,14 +226,7 @@ def ensure_project_mcp_json(root: str) -> bool:
     servers already declared in the file.
     """
     path = Path(root) / ".mcp.json"
-    config: dict[str, Any] = {}
-    if path.exists():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                config = loaded
-        except json.JSONDecodeError:
-            config = {}
+    config = _existing_object(path)
 
     servers = config.get("mcpServers")
     if not isinstance(servers, dict):
@@ -265,24 +282,44 @@ def install_skill(root: str) -> bool:
     return True
 
 
-def wire_agent_integration(root: str, project: ProjectModel) -> list[str]:
-    """Install the full per-repo agent integration; return a list of what changed.
+class Wiring(NamedTuple):
+    """What the integration installed, and what it would not touch."""
+
+    installed: list[str]
+    skipped: list[str]
+
+
+def wire_agent_integration(root: str, project: ProjectModel) -> Wiring:
+    """Install the full per-repo agent integration; report what changed.
 
     Shared by `flanner init` (CLI) and initialize_project_tool (MCP) so the set
     of files a repo gets never drifts between the two entry points.
+
+    A config file that cannot be parsed is skipped rather than replaced, and
+    skipping one does not stop the rest: the repo still gets its CLAUDE.md
+    block and its skill, and the reason the one file was left alone is
+    returned so somebody can be told about it.
     """
     done: list[str] = []
+    skipped: list[str] = []
     block = agent_md_block(project)
     for filename in AGENT_MD_FILES:
         if upsert_agent_md(root, filename, block):
             done.append(f"flanner block in {filename}")
-    if ensure_project_mcp_json(root):
-        done.append(".mcp.json (Claude Code)")
-    if ensure_settings_hook(root):
-        done.append("guard-write hook in .claude/settings.json")
+
+    for label, install in (
+        (".mcp.json (Claude Code)", ensure_project_mcp_json),
+        ("guard-write hook in .claude/settings.json", ensure_settings_hook),
+    ):
+        try:
+            if install(root):
+                done.append(label)
+        except ConfigError as e:
+            skipped.append(str(e))
+
     if install_skill(root):
         done.append("flanner-plan skill")
-    return done
+    return Wiring(installed=done, skipped=skipped)
 
 
 # A global nudge written into ~/.claude/CLAUDE.md by `flanner setup`. Because a

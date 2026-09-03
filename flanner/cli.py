@@ -335,8 +335,11 @@ def _setup_agent_integration(project_root: str) -> None:
         if not project:
             return
         console.print("\n[Agent] Setting up coding-agent integration...", style="cyan")
-        for item in wire_agent_integration(project_root, project):
+        wiring = wire_agent_integration(project_root, project)
+        for item in wiring.installed:
             console.print(f"OK Installed {item}", style="green")
+        for reason in wiring.skipped:
+            tui.warn(f"Left alone: {reason}")
     except Exception as e:
         console.print(f"WARN Could not set up agent integration: {e}", style="yellow")
 
