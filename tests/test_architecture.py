@@ -109,7 +109,12 @@ ALLOWED = {
         "anchors",
         "storage",
     },
-    "sync": FOUNDATION | {"artifacts", "database"},
+    # `plan_ops` because a received plan version has to become a file
+    # somebody can open. Same layer, not a reach upward — plan_ops sits on
+    # database and storage exactly as sync does, and imports nothing from
+    # here, so the cycle test stays quiet. Until this edge existed,
+    # "accepted" meant a row in a table and nothing on disk.
+    "sync": FOUNDATION | {"artifacts", "database", "plan_ops"},
     "reconcile": FOUNDATION | {"database", "artifacts", "identity"},
     "services": FOUNDATION
     | {"database", "storage", "plan_ops", "linear_api", "agent_hooks", "ipc", "review"},
@@ -153,7 +158,11 @@ ALLOWED = {
         "authz",
     },
     "agent_hooks": FOUNDATION | {"database"},
-    "plan_ops": FOUNDATION | {"database", "storage", "artifacts"},
+    # `identity` so a received version can be told from one written here.
+    # Whether an incoming version may move the current-version pointer turns
+    # entirely on that, and getting it wrong means either a peer changing
+    # what you have open or a received history stuck on its oldest version.
+    "plan_ops": FOUNDATION | {"database", "storage", "artifacts", "identity"},
     "cli": FOUNDATION
     | {
         "tui",
@@ -294,6 +303,6 @@ def test_the_version_is_derived_rather_than_typed():
     guard that fires on correct code gets deleted rather than heeded.
     """
     source = (PACKAGE / "__init__.py").read_text(encoding="utf-8")
-    assert (
-        "_installed_version(" in source
-    ), "__version__ is no longer read from package metadata; it will drift again"
+    assert "_installed_version(" in source, (
+        "__version__ is no longer read from package metadata; it will drift again"
+    )

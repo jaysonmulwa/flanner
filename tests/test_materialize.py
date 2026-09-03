@@ -42,7 +42,13 @@ def sender(db, tmp_path, monkeypatch):
 
 @pytest.fixture
 def receiver(tmp_path):
-    """A second device with its own catalog and working tree."""
+    """A second device with its own catalog and working tree.
+
+    Not a second *identity*: these fixtures share one process and therefore
+    one device key. Tests that turn on "did this device write it?" set that
+    up themselves — patching it here signed the sender's artifacts as the
+    receiver and broke key resolution for every sync test.
+    """
     session = _catalog(tmp_path / "receiver.db")
     root = tmp_path / "receiver"
     root.mkdir()

@@ -516,8 +516,22 @@ def status() -> None:
 
 
 def _print_plans(proj: ProjectModel, project: str, output: str) -> None:
-    """One project's plans, as a table or as json."""
+    """One project's plans, as a table or as json.
+
+    Plans with a teammate's version waiting sort to the top. The pointer
+    deliberately does not move for an arriving version, so without this the
+    only sign that anything had arrived was a file appearing in the plan
+    directory.
+    """
     import json
+
+    from .plan_ops import standing
+
+    session = get_session()
+    ordered = sorted(
+        ((pf, standing(session, pf)) for pf in proj.plan_files),
+        key=lambda pair: (pair[1].waiting is None, pair[0].name),
+    )
 
     if output == "json":
         click.echo(
@@ -527,9 +541,11 @@ def _print_plans(proj: ProjectModel, project: str, output: str) -> None:
                         "id": str(pf.id),
                         "name": pf.name,
                         "version": pf.current_version,
+                        "owner": how.owner,
+                        "waiting": how.waiting,
                         "updated_at": pf.updated_at.isoformat() if pf.updated_at else None,
                     }
-                    for pf in proj.plan_files
+                    for pf, how in ordered
                 ]
             )
         )
@@ -544,22 +560,34 @@ def _print_plans(proj: ProjectModel, project: str, output: str) -> None:
     # The id column is gone: a uuid nobody types was eating a third of the
     # width and then being truncated anyway. The name is what every other
     # command takes as an argument.
-    listing = tui.table("Plan", ("Ver", {"justify": "right"}), "Updated by", "Updated")
-    for pf in proj.plan_files:
-        listing.add_row(
+    pending = [pf.name for pf, how in ordered if how.has_incoming]
+    columns: list[Any] = ["Plan", ("Ver", {"justify": "right"}), "Owner", "Updated"]
+    if pending:
+        columns.append("Waiting")
+    listing = tui.table(*columns)
+    for pf, how in ordered:
+        row = [
             Text(f"{pf.name}.md", style="value"),
             Text(f"v{pf.current_version}", style="muted"),
-            Text(getattr(pf, "created_by", None) or "user", style="muted"),
+            Text(how.owner, style="muted"),
             Text(
                 pf.updated_at.strftime("%Y-%m-%d %H:%M") if pf.updated_at else "never",
                 style="muted",
             ),
-        )
+        ]
+        if pending:
+            row.append(Text(f"v{how.waiting}", style="warn") if how.has_incoming else Text(""))
+        listing.add_row(*row)
     console.print()
     console.print(listing)
     console.print()
     count = len(proj.plan_files)
     tui.note(f"{count} plan{'' if count == 1 else 's'} in {project}")
+    if pending:
+        tui.note(
+            f"{len(pending)} with a version from a teammate waiting. "
+            f"See it with: flanner history {pending[0]}"
+        )
     console.print()
 
 

@@ -34,8 +34,10 @@ from .database import (
     ProjectModel,
     VersionModel,
     create_version,
+    get_artifact,
     get_plan_file,
     get_version,
+    list_versions,
     save_envelope,
 )
 from .database import create_plan_file as db_create_plan_file
@@ -492,6 +494,96 @@ def _target_name(plan_dir: Path, incoming: _Incoming) -> tuple[str, str | None]:
     return file_name, str(plan_dir / file_name)
 
 
+def _authored_here(session: Session, plan_file: PlanFileModel) -> bool:
+    """Whether this device has ever written a version of this plan itself.
+
+    The question that decides whether an incoming version may move the
+    current-version pointer. If you have authored anything here, the pointer
+    is a choice you made and a teammate does not get to change it by
+    pushing; if every version you hold arrived from somebody else, there is
+    nothing of yours to displace and following along is what you want.
+
+    A version with **no artifact id** predates signing, which means it was
+    written locally, so it counts as authored here. Treating it as foreign
+    would let a peer move the pointer on the one class of plan that has
+    never left this machine.
+
+    A version whose artifact id we cannot resolve does *not* count. That is
+    a version record pointing at an artifact this store does not hold, which
+    the append-only store makes vanishingly rare — and reading it as "mine"
+    froze the pointer on a device that had only ever received, leaving a
+    whole history stuck on its oldest version.
+    """
+    from . import identity
+
+    mine = identity.device_id()
+    return any(
+        _written_here(session, version, mine) for version in list_versions(session, plan_file.id)
+    )
+
+
+def _written_here(session: Session, version: VersionModel, mine: str) -> bool:
+    """Whether one version row was authored by this device."""
+    if not version.artifact_id:
+        return True
+    stored = get_artifact(session, version.artifact_id)
+    return stored is not None and stored.actor_device_id == mine
+
+
+@dataclass(frozen=True)
+class Standing:
+    """Who started a plan, and what has arrived that you have not taken.
+
+    Both halves are things `flanner list` could not say. Ownership was
+    invisible, so on a shared plan nobody could tell whose it was; and a
+    peer's newer version sat in the catalog with no indication it was there,
+    because the current-version pointer deliberately does not move for it.
+    A notification you have to run `history` to discover is not one.
+    """
+
+    owner: str
+    waiting: int | None
+
+    @property
+    def has_incoming(self) -> bool:
+        return self.waiting is not None
+
+
+def standing(session: Session, plan_file: PlanFileModel) -> Standing:
+    """The owner and the highest version that arrived and was not taken.
+
+    Two shapes count as waiting, and the second is the common one. A peer
+    can be *ahead* of you, which is a version numbered above the pointer;
+    or you can both have written the same version number, which lands as a
+    conflict file beside yours and shares its number. Only comparing
+    against the pointer would miss every conflict, which is precisely the
+    case somebody needs to be told about.
+    """
+    from . import identity
+
+    mine = identity.device_id()
+    current = plan_file.current_version or 0
+    owner = ""
+    foreign: list[int] = []
+    hold_the_current = False
+    for version in list_versions(session, plan_file.id):
+        if version.version == 1 and not owner:
+            owner = version.created_by or ""
+        if _written_here(session, version, mine):
+            hold_the_current = hold_the_current or version.version == current
+        else:
+            foreign.append(version.version)
+
+    ahead = [v for v in foreign if v > current]
+    if ahead:
+        waiting: int | None = max(ahead)
+    elif hold_the_current and current in foreign:
+        waiting = current
+    else:
+        waiting = None
+    return Standing(owner=owner or "user", waiting=waiting)
+
+
 def materialize_version(
     session: Session,
     *,
@@ -559,7 +651,21 @@ def materialize_version(
             notes=str(incoming.fm_data.get("notes") or ""),
             artifact_id=incoming.artifact_id or None,
         )
-        if incoming.version > (plan_file.current_version or 0) and conflict_path is None:
+        # The pointer does **not** move because a teammate sent something.
+        #
+        # It used to, on "higher number and no conflict", and that is the one
+        # way a peer could change what you see: the file was never
+        # overwritten, but `flanner show`, the web UI and any agent all read
+        # the current version, so somebody else's push silently changed what
+        # you opened. Which version is current is a decision, and decisions
+        # are made through review — `workflow.make_accepted_head` exists to
+        # record exactly that, citing what justified it.
+        #
+        # The exception is a plan this device has only ever received. There
+        # is no work of yours to displace, so the pointer tracks along —
+        # which is what makes a whole history arriving in order end up
+        # pointing at its newest version rather than its oldest.
+        if not _authored_here(session, plan_file):
             plan_file.current_version = incoming.version
             plan_file.updated_at = utcnow()
         session.commit()

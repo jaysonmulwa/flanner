@@ -33,10 +33,12 @@ from .database import (
     PlanFileModel,
     ProjectModel,
     get_version,
+    list_versions,
     save_envelope,
 )
 from .plan_ops import workspace_id_for
 from .storage import load_plan_file
+from .utils import utcnow
 from .workflow import (
     APPROVE,
     DEFAULT_POLICY,
@@ -408,5 +410,27 @@ def _try_accept(
         actor_user_id=actor,
     )
     save_event(session, accepted, str(plan_file.id))
+    _point_at(session, plan_file, proposal.target_artifact_id)
     session.commit()
     return accepted, "baseline advanced"
+
+
+def _point_at(session: Session, plan_file: PlanFileModel, target_artifact_id: str) -> None:
+    """Move the plan's current version to the artifact just accepted.
+
+    An arriving version deliberately does not move the pointer, so without
+    this the baseline everyone agreed on was recorded in the event log and
+    invisible everywhere a person or an agent actually looks — `flanner
+    show`, the web UI, the MCP tools all read `current_version`. Accepting
+    is the decision the pointer was being held for.
+
+    It may move backwards. Accepting an earlier artifact as the baseline is
+    a revert, and refusing to follow one would leave the pointer somewhere
+    the team explicitly rejected. No file is rewritten either way; every
+    version stays on disk.
+    """
+    for version in list_versions(session, plan_file.id):
+        if version.artifact_id == target_artifact_id:
+            plan_file.current_version = version.version
+            plan_file.updated_at = utcnow()
+            return

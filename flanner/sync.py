@@ -207,6 +207,12 @@ class SyncReport:
     rejected: list[tuple[str, str]] = field(default_factory=list)
     already_held: list[str] = field(default_factory=list)
 
+    #: Accepted and stored, but no file was written. A separate list from
+    #: `rejected` on purpose: the artifact verified and is held, so the sync
+    #: succeeded — what failed is only the local convenience of a file, and
+    #: reporting it as a rejection would understate what was received.
+    unreadable: list[tuple[str, str]] = field(default_factory=list)
+
     @property
     def ok(self) -> bool:
         return not self.rejected
@@ -314,11 +320,68 @@ def sync_from_peer(
             report.rejected.append((artifact_id, "artifact belongs to a different workspace"))
             continue
         verdict = ingest_artifact(session, envelope, payload, resolve_key)
-        if verdict:
-            report.accepted.append(artifact_id)
-        else:
+        if not verdict:
             report.rejected.append((artifact_id, verdict.reason))
+            continue
+        report.accepted.append(artifact_id)
+        _make_readable(session, envelope, payload, report)
     return report
+
+
+def _make_readable(
+    session: Session,
+    envelope: dict[str, Any],
+    payload: bytes | None,
+    report: SyncReport,
+) -> None:
+    """Turn an accepted plan version into a file somebody can open.
+
+    Without this, "accepted" meant a row in a table. The artifact verified
+    and was stored, and then nothing wrote a file, created a version record,
+    or told the catalog it existed — so `flanner history` could not find it,
+    the web UI could not show it, and an agent could not read or revise it.
+    The plan a teammate sent was, for every practical purpose, not there.
+
+    Only plan versions. Comments, decisions and tombstones are events that
+    the review surface reads straight from the artifact store; they have no
+    file and want none.
+
+    Failure is reported, never raised. The artifact is verified and stored by
+    the time this runs, so a disk that refused the write must not un-accept
+    something cryptographically valid — the sync stays successful and the
+    file can be written on the next attempt.
+    """
+    if envelope.get("artifact_type") != artifacts.PLAN_VERSION or payload is None:
+        return
+
+    project = _project_for(session, str(envelope.get("workspace_id") or ""))
+    if project is None:
+        report.unreadable.append(
+            (str(envelope.get("artifact_id", "?")), "no local project is in that workspace")
+        )
+        return
+
+    from . import plan_ops
+
+    result = plan_ops.materialize_version(
+        session, project=project, envelope=envelope, managed_file=payload
+    )
+    if result.version is None and result.reason:
+        report.unreadable.append((str(envelope.get("artifact_id", "?")), result.reason))
+
+
+def _project_for(session: Session, workspace_id: str) -> Any:
+    """The local project that joined this workspace, if one did.
+
+    A device can hold plans for a workspace it has not joined locally — a
+    second checkout, a project deleted since. Those artifacts stay stored and
+    verifiable; there is simply nowhere on disk that they belong.
+    """
+    if not workspace_id:
+        return None
+    from .database import ProjectModel
+
+    return session.query(ProjectModel).filter_by(workspace_id=workspace_id).first()
 
 
 class LocalPeer:
