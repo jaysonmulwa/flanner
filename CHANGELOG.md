@@ -55,6 +55,13 @@ versioning follows [SemVer](https://semver.org/).
 
 - `flanner init` could hang indefinitely if `claude mcp add` blocked. It is
   now bounded at 30 seconds.
+- A keychain that cannot be read no longer costs this machine its identity.
+  Once the signing key moves to the keychain the file is deleted, so a locked
+  keychain looked exactly like a machine that had never run flanner, and the
+  answer was to generate a new key — silently making it a different device,
+  whose signatures peers reject and whose plans are stranded. It now refuses
+  and names the device it should be. Installs that migrated under an earlier
+  version are caught up on their first successful read.
 - Enrolling now learns the organisation's device keys, so the first sync can
   verify a peer instead of rejecting everything it receives.
 - Whether a process is running is no longer judged with `os.kill(pid, 0)`. On

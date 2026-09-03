@@ -65,3 +65,12 @@ class MeshUnavailableError(MeshError):
     Distinct from a refusal: the request may succeed on retry, so callers
     fail closed for new access while leaving existing local state intact.
     """
+
+
+class IdentityUnavailableError(FlannerError):
+    """This device has a signing key that cannot be read right now.
+
+    Distinct from having no key at all, and the distinction is the point:
+    the first must never be answered by generating a new one, because the
+    device id is derived from the key and a new key is a new machine.
+    """

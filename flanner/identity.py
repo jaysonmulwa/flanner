@@ -16,6 +16,7 @@ foundation the artifact layer signs with.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import os
 from pathlib import Path
@@ -28,7 +29,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from .exceptions import IdentityUnavailableError
+
 KEY_FILENAME = "device_key"
+
+#: Written once the key is proven readable from the keychain, and only then.
+#: Its presence is the record that this home *has* an identity even though no
+#: key file remains, which is what lets a keychain that cannot be read be
+#: told apart from a machine that has never had a key.
+KEYCHAIN_MARKER = "device_key.in-keychain"
 KEYCHAIN_SERVICE = "flanner"
 DEVICE_ID_PREFIX = "dev_"
 _DEVICE_ID_HEX_CHARS = 16
@@ -41,6 +50,10 @@ def flanner_home() -> Path:
 
 def device_key_path() -> Path:
     return flanner_home() / KEY_FILENAME
+
+
+def keychain_marker_path() -> Path:
+    return flanner_home() / KEYCHAIN_MARKER
 
 
 def _pem(key: Ed25519PrivateKey) -> bytes:
@@ -135,11 +148,27 @@ def load_or_create_device_key() -> Ed25519PrivateKey:
     there, because an install predating the keychain must not wake up as a
     different device: the id is derived from the key, so a new key is a new
     machine as far as every peer and the control plane are concerned.
+
+    Generating is the step that has to be earned. Once the key has moved to
+    the keychain the file is deleted, so a keychain that is locked, that has
+    had its entry removed, or that resolves to a different backend than the
+    one written to, looks exactly like a machine that has never run flanner.
+    Falling through to `generate` there would silently make this a *new*
+    device: peers reject its signatures, its entitlement no longer matches,
+    and the plans it authored are stranded under an id nothing can produce
+    again. Refusing and saying so is the only safe answer.
     """
     store = _keychain()
     if store is not None:
         held = _read_keychain(store)
         if held is not None:
+            # Written on every successful read, not only on the migration
+            # that first stored it. An install that moved its key before
+            # this existed has no marker, and would still be one locked
+            # keychain away from becoming a different device; the first
+            # reading it does get right is the one that fixes that.
+            if not keychain_marker_path().exists():
+                _mark_in_keychain(held)
             return held
 
     path = device_key_path()
@@ -152,12 +181,47 @@ def load_or_create_device_key() -> Ed25519PrivateKey:
             # removing the file safe. Leaving it would mean the move bought
             # nothing, so this is the step the whole change exists for.
             path.unlink(missing_ok=True)
+            _mark_in_keychain(loaded)
         return loaded
+
+    marker = keychain_marker_path()
+    if marker.exists():
+        raise IdentityUnavailableError(_locked_out(marker))
 
     key = Ed25519PrivateKey.generate()
     if store is None or not _store_keychain(store, key):
         _write_private_key(path, key)
+    else:
+        _mark_in_keychain(key)
     return key
+
+
+def _mark_in_keychain(key: Ed25519PrivateKey) -> None:
+    """Record that this home's identity lives in the keychain.
+
+    The device id goes in the file so the refusal can name the device the
+    machine is meant to be, which is the difference between a message
+    somebody can act on and one that only says something is wrong.
+    """
+    with contextlib.suppress(OSError):
+        marker = keychain_marker_path()
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(device_id_for(key.public_key()), encoding="utf-8")
+
+
+def _locked_out(marker: Path) -> str:
+    known = ""
+    with contextlib.suppress(OSError):
+        known = marker.read_text(encoding="utf-8").strip()
+    which = f" This device is {known}." if known else ""
+    return (
+        "This machine's signing key is in the system keychain and could not be "
+        f"read.{which} Unlock the keychain and try again. Generating a new key "
+        "would make this a different device: peers would reject its signatures "
+        "and any plans it has authored would be stranded. "
+        "If the key is genuinely gone, 'flanner login' again to enrol as a new "
+        f"device, after deleting {marker}."
+    )
 
 
 def public_key_b64(key: Ed25519PublicKey) -> str:

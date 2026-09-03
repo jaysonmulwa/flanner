@@ -35,7 +35,9 @@ ALLOWED = {
     "storage": {"exceptions", "frontmatter", "utils"},
     "freshness": {"utils"},
     "ipc": set(),
-    "identity": set(),
+    # The one import: refusing to mint a second identity for a machine that
+    # already has one needs an error a caller can tell apart from "no key".
+    "identity": {"exceptions"},
     # Palette and table shapes for the command line. Presentation only,
     # so it imports nothing from the package and nothing may import it
     # except the surfaces that print.
