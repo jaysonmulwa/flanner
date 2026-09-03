@@ -3476,7 +3476,7 @@ def _catch_up_in_background(dial: Any) -> None:
 
 
 @peer.command("serve")
-@click.option("--host", default="0.0.0.0", help="Address to listen on (--http only)")  # noqa: S104 - opt-in --http flag; the default path binds nothing
+@click.option("--host", default="127.0.0.1", help="Address to listen on (--http only)")
 @click.option("--port", default=None, type=int, help="Port to listen on (--http only)")
 @click.option(
     "--http",
@@ -3537,6 +3537,13 @@ def peer_serve(host: str, port: int | None, http: bool) -> None:
     console.print(
         "Callers need a signed request and an entitlement for the workspace.", style="dim"
     )
+    # Loopback by default. Every caller has to produce a signature and a
+    # matching entitlement, so a wider bind grants nothing on its own — but
+    # `--http` is the fallback somebody reaches for on a machine where the
+    # default transport could not start, which is not the moment to open a
+    # port on every interface without being asked.
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        tui.warn(f"Reachable from other machines on {host}. Anyone can reach the port.")
     # Over HTTP a peer is named by address, and this device knows device ids
     # rather than addresses, so there is nobody to dial. Catching up here is
     # a manual `flanner peer pull <address>`.

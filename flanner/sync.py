@@ -65,6 +65,14 @@ MAX_PUSH_BATCH = 50
 # cannot arrive as one 400 MB allocation.
 MAX_PUSH_BYTES = 16 * 1024 * 1024
 
+# The transport's own ceiling, checked before a byte is parsed. Every limit
+# above is enforced after the body has been read and turned into a dict, so
+# on their own they bound what a peer may *store* and not what it may make
+# this device allocate. Artifacts travel base64-encoded inside json, which
+# costs about a third on top of `MAX_PUSH_BYTES`; the rest is headroom for
+# the envelopes around them.
+MAX_REQUEST_BYTES = 32 * 1024 * 1024
+
 # Pushes one device may make in `PUSH_WINDOW` seconds. Authorised is not the
 # same as careful: a colleague running a script in a loop must not be able
 # to fill your disk, and the limit is per device so one misbehaving laptop

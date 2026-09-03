@@ -430,6 +430,31 @@ def create_peer_app(sessions: Any, held: Any, refresh_keys: Any = None) -> Any:
 
     app = FastAPI(title="Flanner peer", version=str(sync.PROTOCOL_VERSION))
 
+    @app.middleware("http")
+    async def refuse_oversized(request: Any, call_next: Any) -> Any:
+        """Bound the request before FastAPI parses it into a dict.
+
+        Every other limit here runs after the body has been read and decoded,
+        which bounds what a peer may store rather than what it may make this
+        device allocate. An unauthenticated caller could send a gigabyte and
+        have it parsed before a signature was so much as looked at.
+
+        A body with no declared length is refused rather than counted. ASGI
+        servers deliver exactly the declared number of bytes for a framed
+        body, so the header is a real bound; a chunked body has no bound to
+        check, and this protocol's own clients always declare one.
+        """
+        from starlette.responses import PlainTextResponse
+
+        declared = request.headers.get("content-length")
+        if request.method == "POST" and (declared is None or not declared.isdigit()):
+            return PlainTextResponse("Refused: declare a content-length.", status_code=411)
+        if declared is not None and declared.isdigit() and int(declared) > sync.MAX_REQUEST_BYTES:
+            return PlainTextResponse(
+                f"Refused: at most {sync.MAX_REQUEST_BYTES} bytes per request.", status_code=413
+            )
+        return await call_next(request)
+
     def _serve(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             return serve_request(operation, payload, sessions, held, refresh_keys)
