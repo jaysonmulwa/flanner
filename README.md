@@ -230,6 +230,31 @@ every run against `benchmarks/baseline.json` and fails past 3x, which
 catches an order-of-magnitude regression and nothing subtler; a shared
 runner's timings vary by a factor of two on identical code.
 
+## When something goes wrong
+
+```bash
+flanner --verbose doctor        # where the time went, per step
+flanner doctor --report         # a scrubbed summary to paste into an issue
+```
+
+`--verbose` prints a timing breakdown after the command, so "why was that
+slow" has an answer without a profiler.
+
+`doctor --report` prints versions, platform, store size, catalog counts and
+whether the mesh transport installed. **No paths, plan names, or plan
+contents** — a local log holding a project name is fine, and something you
+paste into a public issue is not. It works when the store will not open,
+which is when you most need it.
+
+The MCP server keeps `~/.flanner/mcp.log`: one line per tool call, with the
+outcome and any error. That surface has no human watching it, so an agent
+that hits an error and quietly works around it would otherwise leave no
+trace at all. Plan bodies are never written there; `flanner peer serve`
+records the requests it answers to the same file.
+
+**Nothing is ever sent anywhere.** There is no telemetry and no endpoint —
+not as a cost decision, as the product.
+
 ## Exit codes
 
 Scripts need to tell "fix your command" from "this machine is broken", so

@@ -46,6 +46,7 @@ job, and deliberately not this module's.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -296,7 +297,38 @@ def serve_request(
     ``held`` is a callable read per request rather than captured, so a
     renewed entitlement or a refreshed keyring takes effect without a
     restart.
+
+    Every outcome is recorded, because `peer serve` runs unattended: the
+    person whose machine refused a colleague is not watching when it
+    happens, and a refusal that leaves no trace cannot be explained later.
     """
+    from . import observe
+
+    started = time.perf_counter()
+    device = str(payload.get("device_id") or "")
+    try:
+        answer = _serve_request(operation, payload, sessions, held, refresh_keys)
+    except PeerError as e:
+        observe.served(
+            operation,
+            ms=(time.perf_counter() - started) * 1000,
+            ok=False,
+            peer=device,
+            reason=str(e),
+        )
+        raise
+    observe.served(operation, ms=(time.perf_counter() - started) * 1000, ok=True, peer=device)
+    return answer
+
+
+def _serve_request(
+    operation: str,
+    payload: dict[str, Any],
+    sessions: Any,
+    held: Any,
+    refresh_keys: Any = None,
+) -> dict[str, Any]:
+    """The work itself. Wrapped above so every path is recorded once."""
     current = held()
     if current is None:
         # Not logged in: this device has no way to check anyone's

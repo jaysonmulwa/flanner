@@ -17,6 +17,10 @@ FOUNDATION = {
     # anything may reach for it without dragging a dependency along.
     "deprecation",
     "utils",
+    # What flanner did, recorded locally and never shipped. Imports only the
+    # standard library, so any layer may reach for it — including `peer`,
+    # which is the surface that answers other machines unattended.
+    "observe",
     # Why the control plane said no, as a word a program can match on. Part
     # of the public wire format, so it imports nothing and anything may.
     "refusals",
@@ -71,6 +75,7 @@ ALLOWED = {
     # local read over rows already in this database; the reachability test
     # below still proves peer cannot get to `account` through it.
     "peer": {
+        "observe",
         "entitlements",
         "identity",
         "sync",
@@ -289,6 +294,6 @@ def test_the_version_is_derived_rather_than_typed():
     guard that fires on correct code gets deleted rather than heeded.
     """
     source = (PACKAGE / "__init__.py").read_text(encoding="utf-8")
-    assert "_installed_version(" in source, (
-        "__version__ is no longer read from package metadata; it will drift again"
-    )
+    assert (
+        "_installed_version(" in source
+    ), "__version__ is no longer read from package metadata; it will drift again"

@@ -4,12 +4,15 @@ MCP Server for Flanner
 Exposes plan file management tools to Claude Code and other AI assistants.
 """
 
-from typing import Any
+import functools
+import time
+from collections.abc import Callable
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 
-from . import artifacts, assurance, review
+from . import artifacts, assurance, observe, review
 from .database import (
     artifact_parents,
     get_plan_file,
@@ -28,8 +31,86 @@ from .storage import (
     load_plan_file,
 )
 
+#: Any tool function. Bound, so the wrapper hands back what it was given
+#: rather than widening every tool's signature to `Any`.
+F = TypeVar("F", bound=Callable[..., Any])
+
 # Initialize MCP server
-mcp = FastMCP("flanner")
+_mcp = FastMCP("flanner")
+
+
+class _Observed:
+    """`mcp`, with every tool wrapped so the call leaves a trace.
+
+    This surface is the one blind spot in the whole package: an agent calls
+    a tool, gets a dict back, and if that dict says `error` it may retry,
+    route around it, or give up — with the person who owns the plans none
+    the wiser. There are thirty error returns below and, until this, not one
+    of them was recorded anywhere.
+
+    Wrapping the decorator rather than each tool because thirty decorated
+    functions is thirty places to forget. A tool added next year is logged
+    without anybody remembering to log it.
+    """
+
+    def __init__(self, inner: FastMCP) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def tool(self, *args: Any, **kwargs: Any) -> Callable[[F], F]:
+        register = self._inner.tool(*args, **kwargs)
+
+        def decorate(fn: F) -> F:
+            @functools.wraps(fn)
+            def observed(*call_args: Any, **call_kwargs: Any) -> Any:
+                started = time.perf_counter()
+                try:
+                    result = fn(*call_args, **call_kwargs)
+                except Exception as e:
+                    observe.tool_call(
+                        fn.__name__,
+                        ms=(time.perf_counter() - started) * 1000,
+                        ok=False,
+                        error=f"{type(e).__name__}: {e}",
+                        **_loggable(call_kwargs),
+                    )
+                    raise
+                # A tool that returns `{"error": ...}` has failed as surely
+                # as one that raised. Both are what an agent has to work
+                # around, so both are recorded the same way.
+                failed = isinstance(result, dict) and bool(result.get("error"))
+                observe.tool_call(
+                    fn.__name__,
+                    ms=(time.perf_counter() - started) * 1000,
+                    ok=not failed,
+                    error=str(result.get("message", "")) if failed else "",
+                    **_loggable(call_kwargs),
+                )
+                return result
+
+            # cast, because the wrapper preserves the signature that
+            # `functools.wraps` copied but the registrar is untyped. Without
+            # it mypy declares all thirty tools untyped and stops checking
+            # them, which is a much worse trade than one cast.
+            return cast("F", register(observed))
+
+        return decorate
+
+
+def _loggable(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """The arguments that are safe to write down.
+
+    An allowlist, not a denylist. `content` is a plan body and `notes` can
+    be anything somebody typed; a rule that removed those by name would let
+    the next argument through by default, and the default has to be silence.
+    """
+    allowed = ("project_id", "plan_file_id", "name", "plan_name", "created_by", "version")
+    return {key: kwargs[key] for key in allowed if key in kwargs}
+
+
+mcp = _Observed(_mcp)
 
 
 # Configuration Tools

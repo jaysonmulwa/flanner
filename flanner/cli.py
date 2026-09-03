@@ -187,6 +187,32 @@ def cli(verbose: bool, quiet: bool) -> None:
     logging.basicConfig(
         level=level, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s"
     )
+    if verbose:
+        # The flag promised "debug output" and delivered a log level over
+        # seven log calls, which is close to nothing. What somebody actually
+        # wants when a command felt slow is where the time went, so that is
+        # what it prints — after the command, once there is something to say.
+        import atexit
+
+        atexit.register(_print_breakdown)
+
+
+def _print_breakdown() -> None:
+    """Where this invocation spent its time, under `--verbose`.
+
+    Registered at exit rather than printed by each command, so a command
+    that raises still reports what it managed to do first — which is the
+    run you most want the numbers for.
+    """
+    from . import observe
+
+    lines = observe.breakdown()
+    if not lines:
+        return
+    console.print()
+    console.print("timing", style="dim")
+    for line in lines:
+        console.print(line, style="dim")
 
 
 def _register_with_claude_desktop() -> None:
@@ -1120,11 +1146,15 @@ def _sync_create(session: Session, proj: ProjectModel, fm: _Parsed, dry_run: boo
 
 def _sync_file(session: Session, proj: ProjectModel, file_path: Path, dry_run: bool) -> str:
     """Import one plan file into the database. Returns 'imported', 'skipped', or 'error'."""
+    from . import observe
     from .database import get_plan_file
 
-    fm = _parse_for_sync(file_path)
+    with observe.step(f"read {file_path.name}"):
+        fm = _parse_for_sync(file_path)
     if isinstance(fm, str):
+        observe.count(skipped=1)
         return fm
+    observe.count(imported=1)
 
     existing = get_plan_file(session, fm.plan_file_id)
     if existing:
@@ -1700,6 +1730,80 @@ def _enrollment_report(project: Any) -> list[EnrollmentCheck]:
     return checks
 
 
+def _print_report() -> None:
+    """A summary somebody can paste into an issue without reading it first.
+
+    Bug reports arrive as "it did not work", and the conversation that
+    follows is six questions any of which this could have answered. What is
+    here is what a maintainer asks for: versions, platform, how the store is
+    configured, and how big it is.
+
+    **Scrubbed, because this one is pasted.** A local log holding a project
+    name is fine; a paste into a public issue is not. So paths are reported
+    by shape rather than by value — that the store exists and how large it
+    is, never where somebody's employer's repository lives on disk. Plan
+    names and contents never appear at all.
+    """
+    import platform
+    import sys as _sys
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from . import __version__
+
+    lines = [
+        f"flanner       {__version__}",
+        f"python        {_sys.version.split()[0]} ({platform.python_implementation()})",
+        f"platform      {platform.system()} {platform.machine()}",
+    ]
+
+    store = Path(get_mcp_dir()) / "data.db"
+    if store.exists():
+        lines.append(f"store         present, {store.stat().st_size // 1024} KB")
+    else:
+        lines.append("store         not initialized")
+
+    try:
+        # Opened here rather than assumed: this command deliberately does not
+        # go through `_require_session`, because a report is most wanted
+        # exactly when the store will not open, and refusing to print one
+        # then would be the worst possible time to refuse.
+        if store.exists():
+            init_database(str(store))
+        projects = db_list_projects(get_session())
+        plans = sum(len(p.plan_files) for p in projects)
+        lines.append(f"catalog       {len(projects)} project(s), {plans} plan(s)")
+    except (FlannerError, SQLAlchemyError) as e:
+        lines.append(f"catalog       unreadable: {type(e).__name__}")
+
+    # Whether the mesh transport installed, not whether it worked. A
+    # platform without a wheel is the single most common cause of "peer
+    # commands do nothing" and is invisible from the error message.
+    try:
+        import importlib.util
+
+        has_iroh = importlib.util.find_spec("iroh") is not None
+    except (ImportError, ValueError):  # pragma: no cover - defensive
+        has_iroh = False
+    lines.append(f"mesh          {'iroh present' if has_iroh else 'iroh absent (address-only)'}")
+
+    log = Path(get_mcp_dir()) / "mcp.log"
+    if log.exists():
+        recent = [
+            line for line in log.read_text(encoding="utf-8").splitlines() if "failed" in line
+        ]
+        lines.append(f"mcp failures  {len(recent)} in the current log")
+
+    console.print()
+    console.print("Paste this into the issue:", style="dim")
+    console.print()
+    for line in lines:
+        console.print(f"  {line}")
+    console.print()
+    tui.note("No paths, plan names, or plan contents are included.")
+    console.print()
+
+
 def _doctor_json(project_name: str, findings: list[Any], enrollment: list[Any]) -> None:
     """The machine-readable report.
 
@@ -1775,17 +1879,31 @@ def _print_doctor_advice(findings: list[Any], *, repair: bool) -> None:
     default="table",
     help="Output format",
 )
-def doctor(project: str | None, repair: bool, output: str) -> None:
+@click.option(
+    "--report",
+    is_flag=True,
+    help="Print a scrubbed summary to paste into a bug report",
+)
+def doctor(project: str | None, repair: bool, output: str, report: bool) -> None:
     """Check the catalog against the plan files on disk"""
     from .reconcile import reconcile_project
+
+    if report:
+        _print_report()
+        return
 
     session = _require_session()
     proj = _resolve_project_or_cwd(session, project)
     if not proj:
         _no_project(project)
 
-    findings = reconcile_project(session, proj, repair=repair)
-    enrollment = _enrollment_report(proj)
+    from . import observe
+
+    with observe.step("reconcile catalog"):
+        findings = reconcile_project(session, proj, repair=repair)
+    with observe.step("check enrollment"):
+        enrollment = _enrollment_report(proj)
+    observe.count(findings=len(findings))
 
     if output == "json":
         _doctor_json(proj.name, findings, enrollment)
@@ -3511,13 +3629,24 @@ def peer_pull(address: str, project: str | None) -> None:
         console.print("Run 'flanner join <workspace-id>' first.", style="dim")
         raise SystemExit(1)
 
+    from . import observe
+
     try:
-        remote = peer_iroh.peer_for(address, proj.workspace_id, cache.load)
+        with observe.step("resolve peer"):
+            remote = peer_iroh.peer_for(address, proj.workspace_id, cache.load)
     except peer_transport.PeerError as e:
         console.print(f"ERROR {e}", style="red")
         raise SystemExit(1) from None
 
-    report = peer_transport.pull(session, address, proj.workspace_id, cache.load, remote=remote)
+    with observe.step("fetch and verify"):
+        report = peer_transport.pull(
+            session, address, proj.workspace_id, cache.load, remote=remote
+        )
+    observe.count(
+        accepted=len(report.accepted),
+        already_held=len(report.already_held),
+        rejected=len(report.rejected),
+    )
 
     console.print(f"accepted: {len(report.accepted)}", style="green")
     if report.already_held:
