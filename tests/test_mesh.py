@@ -148,6 +148,6 @@ def test_no_vendor_details_leak_into_the_domain_types():
             continue
         assert not any(word in name.lower() for word in vendor_words)
         for field in dataclasses.fields(obj):
-            assert not any(word in field.name.lower() for word in vendor_words), (
-                f"{name}.{field.name} names a specific provider"
-            )
+            assert not any(
+                word in field.name.lower() for word in vendor_words
+            ), f"{name}.{field.name} names a specific provider"

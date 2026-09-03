@@ -26,7 +26,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
-from . import device_auth, identity
+from . import device_auth, identity, refusals
 from . import session as cache
 from .entitlements import VALID
 from .session import DEFAULT_ENDPOINT, Session
@@ -35,7 +35,26 @@ REQUEST_TIMEOUT = 15.0
 
 
 class SessionError(Exception):
-    """Enrolment or renewal was refused, or could not be attempted."""
+    """Enrolment or renewal was refused, or could not be attempted.
+
+    Carries the control plane's machine-readable `code` where it sent one,
+    so a caller can tell "your subscription lapsed" from "your clock is
+    wrong" without matching on English. See `flanner.refusals`.
+
+    `code` is `refusals.UNKNOWN` when the refusal carried none — an older
+    control plane, or a failure that never reached one at all, such as the
+    network being down. Callers must handle that rather than assume a code
+    is always meaningful.
+    """
+
+    def __init__(self, message: str, *, code: str = refusals.UNKNOWN) -> None:
+        super().__init__(message)
+        self.code = code
+
+    @property
+    def retryable(self) -> bool:
+        """Whether the same request could work again without changing it."""
+        return refusals.is_retryable(self.code)
 
 
 def login(code: str, *, endpoint: str = DEFAULT_ENDPOINT, label: str | None = None) -> Session:
@@ -127,19 +146,29 @@ def _post(endpoint: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:  # noqa: S310 - scheme checked before the call
             return dict(json.loads(response.read().decode("utf-8")))
     except urllib.error.HTTPError as e:
-        raise SessionError(_detail(e)) from None
+        message, code = _refusal(e)
+        raise SessionError(message, code=code) from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise SessionError(f"could not reach {endpoint}: {e}") from None
     except ValueError as e:
         raise SessionError(f"the control plane returned something unusable: {e}") from None
 
 
-def _detail(error: urllib.error.HTTPError) -> str:
-    """The server's own explanation, when it gave one worth repeating."""
+def _refusal(error: urllib.error.HTTPError) -> tuple[str, str]:
+    """The server's own explanation, and its code for what happened.
+
+    The sentence is for a person and may change between releases; the code
+    is for us and may not. Reading both means a caller can act on the code
+    and still show the wording somebody wrote for the situation.
+    """
+    body: dict[str, Any] = {}
     try:
-        detail = json.loads(error.read().decode("utf-8")).get("detail")
-    except (ValueError, OSError):
-        detail = None
+        body = dict(json.loads(error.read().decode("utf-8")))
+    except (ValueError, OSError, TypeError):
+        body = {}
+
+    detail = body.get("detail")
+    code = str(body.get("code") or "") or refusals.UNKNOWN
     message = str(detail) if detail else f"the control plane refused this request ({error.code})"
 
     # A refusal that says when to come back is far more useful than one that
@@ -147,7 +176,7 @@ def _detail(error: urllib.error.HTTPError) -> str:
     retry_after = error.headers.get("Retry-After") if error.headers else None
     if retry_after:
         message += f" (try again in {retry_after}s)"
-    return message
+    return message, code
 
 
 # --- the console: what a member can do for themselves ----------------------

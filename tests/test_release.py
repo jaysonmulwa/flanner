@@ -28,9 +28,9 @@ def test_server_json_matches_pyproject() -> None:
     manifest = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
     expected = _declared_version()
 
-    assert manifest["version"] == expected, (
-        f"server.json version is {manifest['version']}, pyproject is {expected}"
-    )
+    assert (
+        manifest["version"] == expected
+    ), f"server.json version is {manifest['version']}, pyproject is {expected}"
     assert manifest["packages"][0]["version"] == expected, (
         f"server.json packages[0].version is {manifest['packages'][0]['version']}, "
         f"pyproject is {expected}"

@@ -2295,6 +2295,53 @@ def _open_store() -> None:
     init_database(str(get_mcp_dir() / "data.db"))
 
 
+def _session_failed(error: Any) -> NoReturn:
+    """Report a refusal from the control plane, and say what to do about it.
+
+    This is what the refusal codes bought. The message was always the
+    server's sentence, which describes what happened; the next step depends
+    on which thing happened, and until there was a code the only way to pick
+    one was to match on that sentence.
+
+    Advice lives here rather than on the server on purpose: what to do about
+    a lapsed subscription is different for the person who pays and the person
+    who does not, and the client is the end that knows which it is talking to.
+    """
+    from flanner import refusals
+
+    console.print(f"ERROR {error}", style="red")
+
+    advice = {
+        refusals.CLOCK_SKEW: (
+            "This machine's clock disagrees with the server. Sync it and try "
+            "again; see docs/clock-skew.md if it will not sync."
+        ),
+        refusals.SUBSCRIPTION_INACTIVE: (
+            "The team's subscription does not cover this. An admin can fix it " "from the console."
+        ),
+        refusals.NOT_ADMIN: "This needs an organization admin. Ask one to do it.",
+        refusals.DEVICE_UNKNOWN: (
+            "This device is not enrolled, or was revoked. Run 'flanner login' "
+            "with a fresh enrolment code."
+        ),
+        refusals.CODE_UNUSABLE: (
+            "That code is unknown, already used, or expired. Ask for a new one."
+        ),
+        refusals.THROTTLED: "Too many attempts. The message above says how long to wait.",
+        refusals.UPSTREAM_UNAVAILABLE: (
+            "Something the control plane needs is down. Try again shortly."
+        ),
+        refusals.NOT_CONFIGURED: "This deployment has not enabled that feature.",
+    }.get(getattr(error, "code", refusals.UNKNOWN))
+
+    if advice:
+        tui.hint(advice)
+    elif getattr(error, "retryable", False):
+        tui.hint("This one is worth trying again.")
+
+    raise SystemExit(1)
+
+
 def _require_session() -> Session:
     """Open the flanner database, or refuse if there is not one yet."""
     _open_store()
@@ -2706,8 +2753,7 @@ def login(code: str, endpoint: str | None, label: str | None) -> None:
             code, endpoint=endpoint or session_cache.DEFAULT_ENDPOINT, label=label
         )
     except account.SessionError as e:
-        console.print(f"ERROR {e}", style="red")
-        raise SystemExit(1) from None
+        _session_failed(e)
 
     console.print(f"OK Enrolled as {current.user_id} ({current.device_id})", style="green")
     _print_entitlement(current)
@@ -3017,8 +3063,7 @@ def accept(token: str, user_id: str, endpoint: str | None, label: str | None) ->
             label=label,
         )
     except account.SessionError as e:
-        console.print(f"ERROR {e}", style="red")
-        raise SystemExit(1) from None
+        _session_failed(e)
 
     # The store is machine-wide, and accepting an invitation is the moment
     # this machine commits to being used with a team. Creating it here
@@ -3155,8 +3200,7 @@ def _console_call(action: Any, *args: Any, **kwargs: Any) -> Any:
     try:
         return action(*args, **kwargs)
     except account.SessionError as e:
-        console.print(f"ERROR {e}", style="red")
-        raise SystemExit(1) from None
+        _session_failed(e)
 
 
 @cli.command("retire")
@@ -3605,8 +3649,7 @@ def mesh_join() -> None:
     try:
         offered = account.mesh_credential()
     except account.SessionError as e:
-        console.print(f"ERROR {e}", style="red")
-        raise SystemExit(1) from None
+        _session_failed(e)
 
     if offered is None:
         console.print("This team has no managed network.", style="yellow")

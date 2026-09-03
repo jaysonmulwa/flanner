@@ -17,6 +17,9 @@ FOUNDATION = {
     # anything may reach for it without dragging a dependency along.
     "deprecation",
     "utils",
+    # Why the control plane said no, as a word a program can match on. Part
+    # of the public wire format, so it imports nothing and anything may.
+    "refusals",
     "frontmatter",
     "git_integration",
     "jira_utils",
@@ -58,7 +61,7 @@ ALLOWED = {
     # guarantee than a promise that nobody will call out.
     "session": {"identity", "entitlements"},
     # The only module below the composition roots that may reach the network.
-    "account": {"identity", "device_auth", "entitlements", "session"},
+    "account": {"identity", "device_auth", "entitlements", "refusals", "session"},
     "authz": {"workflow", "session", "entitlements", "database", "plan_ops"},
     # Peer transport. Talks to other devices, never to the control plane,
     # so it may not import account any more than a read command may.
@@ -286,6 +289,6 @@ def test_the_version_is_derived_rather_than_typed():
     guard that fires on correct code gets deleted rather than heeded.
     """
     source = (PACKAGE / "__init__.py").read_text(encoding="utf-8")
-    assert "_installed_version(" in source, (
-        "__version__ is no longer read from package metadata; it will drift again"
-    )
+    assert (
+        "_installed_version(" in source
+    ), "__version__ is no longer read from package metadata; it will drift again"

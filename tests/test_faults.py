@@ -83,7 +83,7 @@ def test_reading_a_mangled_plan_file_does_not_raise(tmp_path: Path, body: str) -
         frontmatter.parse_frontmatter(path.read_text(encoding="utf-8"))
         storage.load_plan_file(str(path))
     except Exception as exc:  # noqa: BLE001 - the assertion is about which type
-        assert isinstance(exc, (ValueError, OSError)), f"unexpected {type(exc).__name__}: {exc}"
+        assert isinstance(exc, ValueError | OSError), f"unexpected {type(exc).__name__}: {exc}"
 
 
 # --- exit codes distinguish the two kinds of failure ------------------------

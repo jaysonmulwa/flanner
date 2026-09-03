@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from flanner import account, identity
+from flanner import account, identity, refusals
 from flanner import session as cache
 from flanner.entitlements import EXPIRED, IN_GRACE, MALFORMED, VALID
 
@@ -414,9 +414,12 @@ def test_a_rate_limited_refusal_says_when_to_come_back(home):
         headers,
         io.BytesIO(b'{"detail": "too many requests; slow down"}'),
     )
-    detail = account._detail(error)
+    detail, code = account._refusal(error)
     assert "slow down" in detail
     assert "12s" in detail
+    # Falls back to a code derived from nothing, because this refusal
+    # carried none. An older control plane looks exactly like this.
+    assert code == refusals.UNKNOWN
 
 
 def test_a_refusal_without_a_retry_hint_reads_cleanly(home):
@@ -432,4 +435,5 @@ def test_a_refusal_without_a_retry_hint_reads_cleanly(home):
         Message(),
         io.BytesIO(b'{"detail": "this device may not act on this organization"}'),
     )
-    assert account._detail(error) == "this device may not act on this organization"
+    detail, _ = account._refusal(error)
+    assert detail == "this device may not act on this organization"
