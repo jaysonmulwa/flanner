@@ -67,7 +67,7 @@
         {% if nav_plans is not none %}<span class="n tnum">{{ nav_plans }}</span>{% endif %}</a>
       <a href="/freshness" {% if here.startswith('/freshness') %}class="active" aria-current="page"{% endif %}>
         <span class="glyph" aria-hidden="true">◔</span> Freshness
-        {% if nav_attention %}<span class="n n-warn tnum">{{ nav_attention }}</span>{% endif %}</a>
+        <span class="n n-warn tnum" data-attention hidden></span></a>
       <a href="/integrations" {% if here.startswith('/integrations') %}class="active" aria-current="page"{% endif %}>
         <span class="glyph" aria-hidden="true">⚯</span> Integrations</a>
 

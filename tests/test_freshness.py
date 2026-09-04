@@ -104,14 +104,65 @@ def test_the_history_check_is_bounded_and_fails_open(git_repo):
     which is the same fail-open direction the rest of this module takes:
     the one that cannot invent an alarm.
     """
+    from flanner import freshness
     from flanner.freshness import _HistoryBudget
 
     _setup_code(git_repo)
     _add_then_remove_legacy(git_repo)
-    budget = _HistoryBudget(str(git_repo), limit=1)
+    freshness.clear_cache()
 
+    # Two symbols that were both really here and are both really gone, so
+    # either would answer True if the budget allowed the walk. Asking the
+    # same one twice would not prove the cap any more, because an answer
+    # already known is now returned without spending a lookup on it — see
+    # the memo test below.
+    (git_repo / "src" / "other.py").write_text("def second_gone():\n    pass\n")
+    _commit(git_repo, "add other")
+    (git_repo / "src" / "other.py").unlink()
+    _commit(git_repo, "drop other")
+
+    budget = _HistoryBudget(str(git_repo), limit=1)
     assert budget.ever_had_symbol("gone_function") is True
-    assert budget.ever_had_symbol("gone_function") is False  # budget spent
+    assert budget.ever_had_symbol("second_gone") is False  # budget spent
+
+
+def test_a_symbol_already_looked_up_costs_nothing(git_repo):
+    """The pickaxe is the most expensive call this module makes.
+
+    `git log --all -S` walks every ref and measured ~370ms a call against a
+    real store; twenty of them were most of a nine-second page. Its answer
+    cannot change while HEAD does not, and two plans citing the same
+    identifier is the ordinary case in one repository.
+    """
+    from flanner import freshness
+    from flanner.freshness import _HistoryBudget
+
+    _setup_code(git_repo)
+    _add_then_remove_legacy(git_repo)
+    freshness.clear_cache()
+
+    calls = []
+    real = freshness._git
+
+    def counted(root, *args):
+        calls.append(args[0])
+        return real(root, *args)
+
+    freshness._git = counted
+    try:
+        first = _HistoryBudget(str(git_repo), limit=4)
+        assert first.ever_had_symbol("gone_function") is True
+        pickaxes = calls.count("log")
+
+        # A second plan in the same repository asks the same question. It
+        # gets the same answer and spends neither a git process nor its own
+        # budget, which is what leaves that budget for symbols nobody has
+        # looked up yet.
+        second = _HistoryBudget(str(git_repo), limit=4)
+        assert second.ever_had_symbol("gone_function") is True
+        assert calls.count("log") == pickaxes, "the pickaxe ran twice for one answer"
+    finally:
+        freshness._git = real
 
 
 def test_churn_marks_suspect(git_repo):

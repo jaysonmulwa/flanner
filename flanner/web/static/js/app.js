@@ -1018,3 +1018,57 @@ onPage(function () {
         });
     });
 });
+
+
+// The freshness badge, fetched rather than rendered.
+//
+// It is the only number in the sidebar that costs git: a walk over every
+// plan in every project, several subprocesses each. Computing it inline put
+// that in front of the first byte of every page, including pages that show
+// no freshness at all. The page arrives first now and the number follows.
+(function () {
+    function fillAttention() {
+        const badges = document.querySelectorAll('[data-attention]');
+        if (!badges.length) return;
+        fetch('/nav/attention', { headers: { 'Accept': 'application/json' } })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (data) {
+                if (!data) return;
+                badges.forEach(function (badge) {
+                    badge.textContent = data.count;
+                    badge.hidden = !data.count;
+                });
+            })
+            .catch(function () { /* a badge must never break a page */ });
+    }
+    document.addEventListener('DOMContentLoaded', fillAttention);
+    document.addEventListener('flanner:page', fillAttention);
+})();
+
+
+// The freshness column on /projects, fetched rather than rendered.
+(function () {
+    const DOTS = ['fresh', 'aging', 'suspect', 'stale'];
+
+    function fillMix() {
+        const cells = document.querySelectorAll('[data-mix]');
+        if (!cells.length) return;
+        fetch('/projects/freshness-mix', { headers: { 'Accept': 'application/json' } })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (mix) {
+                if (!mix) return;
+                cells.forEach(function (cell) {
+                    const counts = mix[cell.getAttribute('data-mix')];
+                    if (!counts) return;
+                    const parts = DOTS.filter(function (k) { return counts[k]; })
+                        .map(function (k) {
+                            return '<span class="d d-' + k + '"></span>' + counts[k];
+                        });
+                    if (parts.length) cell.innerHTML = parts.join(' ');
+                });
+            })
+            .catch(function () { /* a column must never break a page */ });
+    }
+    document.addEventListener('DOMContentLoaded', fillMix);
+    document.addEventListener('flanner:page', fillMix);
+})();

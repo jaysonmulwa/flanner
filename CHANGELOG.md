@@ -7,6 +7,17 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **The local web UI is 27-120x faster to first byte.** Every page carried a
+  freshness walk: git subprocesses for every plan in every project, computed
+  inline, including on pages showing no freshness at all. One cold `/projects`
+  ran 133 git processes and took 9 seconds. Evidence is now cached on the
+  repository's HEAD and the plan's content hash, computed once per request
+  rather than twice, and the two views that genuinely need the walk — the
+  sidebar badge and the projects freshness column — fetch it after the page
+  is up instead of blocking it.
+- `git grep` is asked once per plan rather than once per symbol, and `git log
+  --all -S` — the most expensive call this module makes, ~370ms each — is
+  memoized on the repository's HEAD.
 - `flanner login` says what to do next. It printed one line and stopped,
   which is silence at the moment somebody setting up a team for the first
   time has least idea what to type. What it says depends on what the account

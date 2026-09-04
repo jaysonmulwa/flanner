@@ -15,9 +15,11 @@ every status can show its reasons. All git access is read-only and fails
 open: no git means the status degrades to age-only, never an exception.
 """
 
+import hashlib
 import os
 import re
 import subprocess
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -144,6 +146,24 @@ class _HistoryBudget:
         return bool(_git(self._root, "log", "--all", "--oneline", "--max-count=1", "--", path))
 
     def ever_had_symbol(self, symbol: str) -> bool:
+        """Memoized on (repo, HEAD, symbol).
+
+        A pickaxe over all refs costs ~370ms here and is the single most
+        expensive call this module makes. Its answer cannot change while
+        HEAD does not, and two plans citing the same identifier is the
+        normal case in one repository.
+        """
+        key = (self._root, _head_for(self._root), symbol)
+        cached = _SYMBOL_HISTORY.get(key)
+        if cached is not None:
+            return cached
+        answer = self._ever_had_symbol(symbol)
+        _SYMBOL_HISTORY[key] = answer
+        if len(_SYMBOL_HISTORY) > _EVIDENCE_MAX:
+            _SYMBOL_HISTORY.popitem(last=False)
+        return answer
+
+    def _ever_had_symbol(self, symbol: str) -> bool:
         """A pickaxe: did any commit ever add or remove this text?
 
         Deliberately not the same call as ``ever_had_path``. ``-S`` searches
@@ -164,8 +184,36 @@ class _HistoryBudget:
 
 def _check_symbol(project_root: str, symbol: str) -> list[str]:
     """Tracked files containing the symbol; None result folds to []."""
-    out = _git(project_root, "grep", "-l", "-F", "-e", symbol, "--", ".")
-    return out.splitlines() if out else []
+    return _find_symbols(project_root, [symbol]).get(symbol, [])
+
+
+def _find_symbols(project_root: str, symbols: list[str]) -> dict[str, list[str]]:
+    """Which tracked files contain each symbol, in one git process.
+
+    One `git grep` per symbol was the single largest cost in the local web
+    UI: rendering the projects page ran 54 of them, and on Windows the
+    spawn alone outweighs the search. `-o` prints `file:match` per hit, so
+    one pass over the tree still says which symbol was found where — which
+    `-l` with several patterns cannot, since it only reports that some
+    pattern matched.
+    """
+    if not symbols:
+        return {}
+    patterns: list[str] = []
+    for symbol in symbols:
+        patterns += ["-e", symbol]
+    out = _git(project_root, "grep", "-o", "-F", *patterns, "--", ".")
+    found: dict[str, list[str]] = {}
+    for line in (out or "").splitlines():
+        # file:match — a path may contain a colon on no platform we support,
+        # and the match is the last field, so split from the right.
+        path, _, match = line.rpartition(":")
+        if not path or match not in symbols:
+            continue
+        files = found.setdefault(match, [])
+        if path not in files:
+            files.append(path)
+    return found
 
 
 def _bad_refs(
@@ -189,8 +237,9 @@ def _bad_refs(
         if not os.path.exists(os.path.join(project_root, path)) and budget.ever_had_path(path):
             invalid.append(path)
 
+    live = _find_symbols(project_root, symbols)
     for symbol in symbols:
-        found_in = _check_symbol(project_root, symbol)
+        found_in = live.get(symbol, [])
         if found_in:
             found_files.extend(f for f in found_in if f not in found_files)
         elif budget.ever_had_symbol(symbol):
@@ -231,12 +280,120 @@ def _age_days(authored_at: datetime | None) -> int | None:
     return max(0, (now - authored_at).days)
 
 
+#: Evidence already computed, keyed by everything that can change it.
+#:
+#: Freshness is a pure function of the repository's HEAD, the plan's text and
+#: when it was written. None of those move between two page loads, and each
+#: miss costs five or more git subprocesses — on Windows a process spawn is
+#: milliseconds before git has done anything. The local web UI recomputed
+#: this for every plan on every request, including pages that show no
+#: freshness at all, which is where its half-second floor came from.
+#:
+#: Bounded because a long-lived `flanner web` would otherwise hold every
+#: version it ever rendered.
+_EVIDENCE: OrderedDict[tuple[str, str, str, str], dict[str, Any]] = OrderedDict()
+_EVIDENCE_MAX = 512
+
+#: Whether a symbol was ever in this repository, by (root, HEAD, symbol).
+_SYMBOL_HISTORY: OrderedDict[tuple[str, str, str], bool] = OrderedDict()
+
+#: HEAD per repository, for the life of one freshness pass. Cleared with the
+#: evidence, so a commit between two page loads is still seen.
+_HEADS: dict[str, str] = {}
+
+
+def _head_for(project_root: str) -> str:
+    cached = _HEADS.get(project_root)
+    if cached is None:
+        cached = head_commit(project_root) or ""
+        _HEADS[project_root] = cached
+    return cached
+
+
+def head_commit(project_root: str) -> str | None:
+    """The commit HEAD points at, or None when this is not a usable repo.
+
+    Exposed so a caller rendering many plans from one repository can resolve
+    it once and hand it to every `compute_freshness` call, rather than
+    paying a `rev-parse` per plan.
+    """
+    return _git(project_root, "rev-parse", "HEAD")
+
+
+def clear_cache() -> None:
+    """Forget every computed record. For tests, and for `doctor`."""
+    _EVIDENCE.clear()
+    _SYMBOL_HISTORY.clear()
+    _HEADS.clear()
+
+
+def _key(
+    project_root: str, head: str | None, body_id: str, authored_at: datetime | None
+) -> tuple[str, str, str, str]:
+    return (project_root, head or "", body_id, authored_at.isoformat() if authored_at else "")
+
+
+def peek(
+    project_root: str, body_id: str, authored_at: datetime | None, *, head: str | None
+) -> dict[str, Any] | None:
+    """A record already computed for this exact body, or None.
+
+    Takes an identifier for the body rather than the body, so a caller with
+    a stored content hash can answer "is this cached?" without opening the
+    file. Rendering a list of plans is otherwise one read per plan for text
+    that is then only hashed and thrown away.
+    """
+    key = _key(project_root, head, body_id, authored_at)
+    hit = _EVIDENCE.get(key)
+    if hit is None:
+        return None
+    _EVIDENCE.move_to_end(key)
+    # Copied: callers decorate the record with the plan, project and version.
+    return dict(hit)
+
+
 def compute_freshness(
-    project_root: str, body: str, authored_at: datetime | None
+    project_root: str,
+    body: str,
+    authored_at: datetime | None,
+    *,
+    head: str | None = None,
+    body_id: str | None = None,
+    use_cache: bool = True,
 ) -> dict[str, Any]:
-    """Compute the full evidence record for one plan version."""
+    """Compute the full evidence record for one plan version.
+
+    ``head`` is this repository's current commit. Pass it when rendering
+    several plans from one repo; omitted, it is resolved here.
+
+    ``body_id`` names this body for the cache — the version's stored content
+    hash, where the caller has one. Omitted, the body is hashed here.
+    """
+    if head is None:
+        head = head_commit(project_root)
+    if body_id is None:
+        body_id = hashlib.sha256(body.encode("utf-8", "replace")).hexdigest()
+
+    key = _key(project_root, head, body_id, authored_at)
+    if use_cache:
+        hit = _EVIDENCE.get(key)
+        if hit is not None:
+            _EVIDENCE.move_to_end(key)
+            return dict(hit)
+
+    record = _compute(project_root, body, authored_at, head)
+    if use_cache:
+        _EVIDENCE[key] = dict(record)
+        if len(_EVIDENCE) > _EVIDENCE_MAX:
+            _EVIDENCE.popitem(last=False)
+    return record
+
+
+def _compute(
+    project_root: str, body: str, authored_at: datetime | None, head: str | None
+) -> dict[str, Any]:
     paths, symbols = extract_refs(body)
-    git_available = _git(project_root, "rev-parse", "HEAD") is not None
+    git_available = head is not None
 
     invalid_refs, symbol_files = (
         _bad_refs(project_root, paths, symbols) if git_available else ([], [])

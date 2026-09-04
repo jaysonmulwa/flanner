@@ -55,6 +55,8 @@ from .database import list_plan_files as db_list_plan_files
 from .database import list_projects as db_list_projects
 from .exceptions import DatabaseError
 from .freshness import compute_freshness
+from .freshness import head_commit as freshness_head
+from .freshness import peek as freshness_peek
 from .frontmatter import read_managed
 from .git_integration import find_git_root, update_gitignore, validate_git_repo
 from .linear_utils import generate_linear_issue_url
@@ -664,7 +666,12 @@ def _nav(session: Any) -> dict[str, Any]:
     return {
         "nav_projects": db_count_projects(session),
         "nav_plans": db_count_plan_files(session, exclude=_hidden(session)),
-        "nav_attention": _attention_count(session),
+        # Deliberately not computed here. It is the only number in this
+        # context that costs git, and every page carries it, so it set the
+        # floor under every response — including pages that show no
+        # freshness. The sidebar renders a placeholder and app.js fills it
+        # in from /nav/attention once the page is up.
+        "nav_attention": None,
         # Zero when this machine has no account, which is the normal state
         # and the reason the whole Team group hides itself in that case.
         "nav_signed_in": held is not None,
@@ -673,7 +680,9 @@ def _nav(session: Any) -> dict[str, Any]:
     }
 
 
-def _plan_freshness(session: Any, plan_file: Any) -> dict[str, Any] | None:
+def _plan_freshness(
+    session: Any, plan_file: Any, *, head: str | None = None
+) -> dict[str, Any] | None:
     """Freshness for a plan's latest version, or None if it cannot be judged."""
     version = get_version(session, plan_file.id, None)
     if version is None:
@@ -682,11 +691,22 @@ def _plan_freshness(session: Any, plan_file: Any) -> dict[str, Any] | None:
     root = project.project_root if project else None
     if not root:
         return None
-    try:
-        body = read_managed(Path(version.file_path).read_text(encoding="utf-8"))[1]
-    except (OSError, ValueError):
-        return None
-    record = compute_freshness(root, body, version.created_at)
+
+    # Ask the cache before opening the file. The version row already holds a
+    # hash of its content, which is exactly what the cache is keyed on, so a
+    # hit costs neither a read nor a git process.
+    if head is None:
+        head = freshness_head(root)
+    body_id = version.content_hash or ""
+    record = freshness_peek(root, body_id, version.created_at, head=head) if body_id else None
+    if record is None:
+        try:
+            body = read_managed(Path(version.file_path).read_text(encoding="utf-8"))[1]
+        except (OSError, ValueError):
+            return None
+        record = compute_freshness(
+            root, body, version.created_at, head=head, body_id=body_id or None
+        )
     record["plan_file"] = plan_file
     record["project"] = project
     record["version"] = version
@@ -704,17 +724,28 @@ def _freshness_for(project: Any, body: str, version: Any) -> dict[str, Any] | No
         return None
 
 
-def _needs_attention(session: Any) -> list[dict[str, Any]]:
+def _needs_attention(session: Any, request: Any = None) -> list[dict[str, Any]]:
     """Every plan that is not fresh, worst first.
 
     Ordered by evidence rather than by date, because a plan edited this
     morning can already be wrong and one from March can still be true.
+
+    ``request`` memoizes the answer for the life of one request. The
+    freshness page asked for this twice — once for the sidebar badge and
+    once for the table under it — and each pass walks every plan.
     """
+    if request is not None:
+        cached = getattr(request.state, "attention", None)
+        if cached is not None:
+            return list(cached)
+
     rank = {"stale": 0, "suspect": 1, "aging": 2}
     out: list[dict[str, Any]] = []
     for project in db_list_projects(session):
+        # One rev-parse for the repository rather than one per plan.
+        head = freshness_head(project.project_root) if project.project_root else None
         for plan_file in _visible_plans(session, project.id):
-            record = _plan_freshness(session, plan_file)
+            record = _plan_freshness(session, plan_file, head=head)
             if record and record["status"] in rank:
                 out.append(record)
     out.sort(key=lambda r: (rank[r["status"]], -len(r.get("reasons") or [])))
@@ -722,6 +753,8 @@ def _needs_attention(session: Any) -> list[dict[str, Any]]:
     # "most drifted" is a descending sort like every other column.
     for row in out:
         row["drift_rank"] = len(rank) - rank[row["status"]]
+    if request is not None:
+        request.state.attention = list(out)
     return out
 
 
@@ -730,8 +763,10 @@ def _freshness_mix(session: Any, projects: Any) -> dict[Any, dict[str, int]]:
     out: dict[Any, dict[str, int]] = {}
     for project in projects:
         tally = {"fresh": 0, "aging": 0, "suspect": 0, "stale": 0}
+        # One rev-parse per repository, not one per plan.
+        head = freshness_head(project.project_root) if project.project_root else None
         for plan_file in _visible_plans(session, project.id):
-            record = _plan_freshness(session, plan_file)
+            record = _plan_freshness(session, plan_file, head=head)
             if record:
                 tally[record["status"]] = tally.get(record["status"], 0) + 1
         if any(tally.values()):
@@ -744,6 +779,34 @@ def _attention_count(session: Any) -> int:
         return len(_needs_attention(session))
     except Exception:  # noqa: BLE001 - a badge must never break a page
         return 0
+
+
+@app.get("/projects/freshness-mix")
+async def projects_freshness_mix(request: Request) -> dict[str, dict[str, int]]:
+    """The freshness column on /projects, fetched after the page is up.
+
+    Same reasoning as /nav/attention: it is a walk over every plan in every
+    project, and it was the reason the projects page was the slowest in the
+    UI while showing a column most visits never read.
+    """
+    ensure_db()
+    session = get_session()
+    projects = db_list_projects(session)
+    mix = await run_in_threadpool(_freshness_mix, session, projects)
+    return {str(pid): counts for pid, counts in mix.items()}
+
+
+@app.get("/nav/attention")
+async def nav_attention(request: Request) -> dict[str, int]:
+    """How many plans need attention, fetched after the page is up.
+
+    Its own address because it is the one number in the sidebar that costs
+    git. Computing it inline put a repository walk in front of the first
+    byte of every page, including pages with no freshness on them.
+    """
+    ensure_db()
+    session = get_session()
+    return {"count": await run_in_threadpool(_attention_count, session)}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -800,10 +863,14 @@ async def projects_list(
     projects = db_list_projects(session, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE, sort=sort)
     plan_counts = plan_file_counts_by_project(session, exclude=_hidden(session))
 
+    # Not computed here. See _nav's attention badge: this is the same walk,
+    # every plan in every project, several git processes each. It made the
+    # projects page the slowest in the UI while showing a column most
+    # visits do not read. The page arrives first and the column fills in.
+    #
     # The freshness mix per project, which is the column the design leads
     # with. Computed off the request thread: it reads files and shells out
     # to git, and a slow repo should not block the event loop.
-    mix = await run_in_threadpool(_freshness_mix, session, projects)
 
     return templates.TemplateResponse(
         request,
@@ -813,7 +880,6 @@ async def projects_list(
             "request": request,
             "projects": projects,
             "plan_counts": plan_counts,
-            "freshness_mix": mix,
             "total_projects": total,
             "total_plans": db_count_plan_files(session, exclude=_hidden(session)),
             "updated_this_week": db_count_plan_files_recent(
@@ -1315,7 +1381,7 @@ async def freshness_page(request: Request) -> HTMLResponse:
     """Which plans have stopped being true, and the evidence for saying so."""
     ensure_db()
     session = get_session()
-    attention = await run_in_threadpool(_needs_attention, session)
+    attention = await run_in_threadpool(_needs_attention, session, request)
 
     tally = {"fresh": 0, "aging": 0, "suspect": 0, "stale": 0}
     for project in db_list_projects(session):

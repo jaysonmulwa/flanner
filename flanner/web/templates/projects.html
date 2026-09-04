@@ -51,15 +51,10 @@
         <span class="path" title="{{ project.project_root or '' }}/{{ project.plan_directory }}">
           {{ project.plan_directory }}</span>
         <span>
-          {% set mix = freshness_mix.get(project.id) %}
-          {% if mix %}
-          <span class="dots">
-            {% if mix.fresh %}<span class="d d-fresh"></span>{{ mix.fresh }}{% endif %}
-            {% if mix.aging %}<span class="d d-aging"></span>{{ mix.aging }}{% endif %}
-            {% if mix.suspect %}<span class="d d-suspect"></span>{{ mix.suspect }}{% endif %}
-            {% if mix.stale %}<span class="d d-stale"></span>{{ mix.stale }}{% endif %}
-          </span>
-          {% else %}<span class="sub">—</span>{% endif %}
+          {# Filled by app.js from /projects/freshness-mix. Computing it here
+             walked every plan in every project, several git processes each,
+             in front of the first byte of this page. #}
+          <span class="dots" data-mix="{{ project.id }}"><span class="sub">—</span></span>
         </span>
         <span class="when">{{ project.updated_at | relative_time if project.updated_at
                               else project.created_at | relative_time }}</span>
