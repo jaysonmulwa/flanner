@@ -395,3 +395,71 @@ def registration_instructions() -> str:
             "  3. Restart Claude Code",
         ]
     )
+
+
+# --- the other two agents ---------------------------------------------------
+#
+# Everything above is Claude Desktop's config file. `flanner status` read it
+# and reported the result as "Claude Code", which is a different program with
+# different files: `init` writes the project's .mcp.json and `setup` runs
+# `claude mcp add`, and neither touches claude_desktop_config.json. So a
+# correct setup was reported as "not registered", on the one command a new
+# user runs to find out whether it worked.
+
+
+def claude_code_user_config_path() -> Path:
+    """Where `claude mcp add -s user` records servers."""
+    return Path.home() / ".claude.json"
+
+
+def claude_code_registration(start: Path, server_name: str = "flanner") -> str:
+    """How Claude Code will find the server from `start`, or "" if it will not.
+
+    Two scopes count. User scope is one file for every project; project
+    scope is a .mcp.json at the repository root, which Claude Code looks
+    for upward from where it was launched, so this walks the same way.
+    """
+    try:
+        user = json.loads(claude_code_user_config_path().read_text(encoding="utf-8"))
+        if server_name in (user.get("mcpServers") or {}):
+            return "user scope"
+    except (OSError, ValueError):
+        pass
+
+    here = start.resolve()
+    for candidate in (here, *here.parents):
+        manifest = candidate / ".mcp.json"
+        if not manifest.exists():
+            continue
+        try:
+            declared = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return ""
+        if server_name in (declared.get("mcpServers") or {}):
+            # Short on purpose: this lands in a status column, and a full
+            # temp-style path there wraps or is cut, taking the answer with it.
+            return f".mcp.json in {candidate.name or candidate}"
+        return ""
+    return ""
+
+
+def codex_config_path() -> Path:
+    return Path.home() / ".codex" / "config.toml"
+
+
+CODEX_SNIPPET = """[mcp_servers.flanner]
+command = "flanner-mcp"
+"""
+
+
+def codex_registration(server_name: str = "flanner") -> bool:
+    """Whether Codex has the server in its config.
+
+    A text check rather than a parse: Python 3.10 ships no TOML reader, and
+    the one line that matters is the table header.
+    """
+    try:
+        text = codex_config_path().read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return f"[mcp_servers.{server_name}]" in text

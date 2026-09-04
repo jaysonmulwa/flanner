@@ -630,8 +630,15 @@ def pull(
     held: Any,
     *,
     remote: Any = None,
+    project: Any = None,
 ) -> sync.SyncReport:
     """Pull everything a peer holds for a workspace that this device lacks.
+
+    ``project`` is where pulled plans should be written when the workspace
+    alone cannot say — a team with several repositories has several local
+    projects in one workspace. The CLI passes the one the person named or
+    ran from; the background catch-up passes nothing and lets the sync
+    apply its own rule.
 
     Artifacts are verified against their author's key from the cached
     organization keyring, not against the peer that handed them over.
@@ -648,7 +655,9 @@ def pull(
         return report
 
     peer = remote or RemotePeer(address, workspace_id, held)
-    return sync.sync_from_peer(session, peer, workspace_id, current.resolve_device_key)
+    return sync.sync_from_peer(
+        session, peer, workspace_id, current.resolve_device_key, project=project
+    )
 
 
 def _batches(items: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:

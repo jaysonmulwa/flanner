@@ -16,6 +16,15 @@ versioning follows [SemVer](https://semver.org/).
   one server, or for using flanner without an agent at all.
 - A version arriving from a peer becomes a file and a version record, rather
   than being stored and reported as `accepted` with nothing to open.
+- `flanner status` shows one row per agent — Claude Desktop, Claude Code,
+  Codex — each checked where that agent actually looks. It used to read
+  Claude Desktop's config and call the result "Claude Code", so a correct
+  setup read as "not registered". `flanner setup` now prints the Codex
+  registration lines it cannot write.
+- `flanner peer pull` reports a plan that was stored but could not be
+  written on its own line, and exits 1 for it. A second pull writes what the
+  first could not; before, an artifact already held was never looked at
+  again, so such a plan was verified, stored and stuck.
 - An end-to-end test of the advertised workflow: enrol, join, pull over http
   between two real device identities, and open the file. Nothing covered this
   before, which is how a missing production call survived two green suites.
@@ -34,6 +43,18 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Changed
 
+- Where a pulled plan goes is now a rule rather than `.first()`: a plan
+  already held goes where it lives, then the project named with `--project`
+  or run from, then a workspace's only project. Two repositories in one
+  workspace with nothing to say which is reported, not guessed.
+- `flanner join` checks access before it binds. It used to bind, commit,
+  re-sign every plan into the workspace, and only then say this device holds
+  no role there — so a mistyped id cost a repository its plans' history in a
+  workspace nobody can reach. A refusal now changes nothing.
+- `flanner init` with nothing on stdin takes the offered project name instead
+  of dying with "Aborted!", so it works from a script or CI.
+- CI runs the suite on Windows and macOS as well as Linux, and every test has
+  a five-minute timeout so a hang fails instead of stalling the job.
 - A version arriving from a peer no longer moves the plan's current version.
   Your file was never overwritten, but `flanner show`, the web UI and every
   agent read the pointer, so a teammate pushing changed what you had open. A

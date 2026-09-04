@@ -272,7 +272,18 @@ def _adopt_repository(project_root: str, plan_dir: str, force_new_project: bool)
         console.print(f"WARN Project '{existing.name}' already exists here", style="yellow")
         console.print("  Creating a new project anyway (--force-new-project)", style="yellow")
 
-    project_name = click.prompt("Enter project name", default=Path(project_root).name)
+    offered = Path(project_root).name
+    try:
+        project_name = click.prompt("Enter project name", default=offered)
+    except click.Abort:
+        # Click aborts on end-of-input as well as on Ctrl-C. Only one of
+        # those is a person cancelling. With no terminal attached — a
+        # script, CI, `< /dev/null` — the offered default is the answer,
+        # and dying with "Aborted!" made `init` unusable anywhere unattended.
+        if sys.stdin.isatty():
+            raise
+        project_name = offered
+        console.print(f"No terminal to ask, so the project is named '{offered}'.", style="dim")
 
     from .server import create_project_tool
 
@@ -591,8 +602,43 @@ def _catalog_rows(db_path: Path) -> list[tuple[str, Any]]:
     return rows
 
 
+def _claude_code_row() -> Text:
+    """Whether Claude Code will find the server, checked where it looks.
+
+    Not Claude Desktop's file. `status` read claude_desktop_config.json and
+    called the result "Claude Code", and neither of the things `init` and
+    `setup` write for Claude Code — the project's .mcp.json, the user-scope
+    entry from `claude mcp add` — lives there. A correct setup read as "not
+    registered", on the command a new user runs to see whether it worked.
+    """
+    from .claude_integration import claude_code_registration
+
+    where = claude_code_registration(Path.cwd())
+    if where:
+        row = tui.dot("ok", label="registered")
+        row.append(f"  {where}", style="muted")
+        return row
+    row = tui.dot("unknown", label="not registered")
+    row.append("  run ", style="muted")
+    row.append("flanner init", style="accent")
+    row.append(" in the repository, or ", style="muted")
+    row.append("flanner setup", style="accent")
+    return row
+
+
+def _codex_row() -> Text:
+    """Codex reads the AGENTS.md block, but registers MCP servers itself."""
+    from .claude_integration import codex_config_path, codex_registration
+
+    if codex_registration():
+        return tui.dot("ok", label="registered")
+    row = tui.dot("unknown", label="not registered")
+    row.append(f"  add [mcp_servers.flanner] to {codex_config_path()}", style="muted")
+    return row
+
+
 def _claude_row(claude_status: dict[str, Any]) -> Text:
-    """Whether Claude Code is registered, and whether its config still matches."""
+    """Whether Claude Desktop is registered, and whether its config still matches."""
     if claude_status["registered"] and claude_status["config_valid"]:
         return tui.dot("ok", label="registered")
     if claude_status["registered"]:
@@ -614,8 +660,10 @@ def status() -> None:
     claude_status = check_server_status()
     rows: list[tuple[str, Any]] = [("MCP server", _server_row(get_pid_file()))]
     rows.extend(_catalog_rows(get_mcp_dir() / "data.db"))
-    rows.append(("Claude Code", _claude_row(claude_status)))
-    rows.append(("Config file", Text(str(claude_status["config_path"]), style="muted")))
+    rows.append(("Claude Desktop", _claude_row(claude_status)))
+    rows.append(("Claude Code", _claude_code_row()))
+    rows.append(("Codex", _codex_row()))
+    rows.append(("Desktop config", Text(str(claude_status["config_path"]), style="muted")))
 
     console.print()
     console.print(tui.fields(rows))
@@ -1030,7 +1078,22 @@ def setup() -> None:
         )
         console.print("    claude mcp add -s user flanner -- flanner-mcp", style="white")
 
-    # 3. Global adoption nudge.
+    # 3. Codex. It reads the AGENTS.md block `init` writes, but its MCP
+    # registration is a TOML file this does not edit: Python 3.10 has no
+    # TOML writer, and rewriting somebody's editor config by hand is how
+    # the .mcp.json clobbering happened. Print the exact lines instead.
+    from .claude_integration import CODEX_SNIPPET, codex_config_path, codex_registration
+
+    if codex_registration():
+        console.print("OK Codex: registered", style="green")
+    else:
+        console.print(f"- Codex: not registered. Add to {codex_config_path()}:", style="yellow")
+        for line in CODEX_SNIPPET.splitlines():
+            # markup=False: Rich reads "[mcp_servers.flanner]" as a style tag
+            # and prints nothing for it, which is the one line that matters.
+            console.print(f"    {line}", style="white", markup=False)
+
+    # 4. Global adoption nudge.
     from .agent_hooks import upsert_global_nudge
 
     changed = upsert_global_nudge()
@@ -3264,6 +3327,26 @@ def join(
         console.print("ERROR Give a workspace id.", style="red")
         raise SystemExit(1)
 
+    # Access is checked before anything is written. Joining used to bind,
+    # commit, re-sign every plan into the workspace as a new root, and only
+    # then mention that this device holds no role there — so a mistyped id
+    # cost a repository its plans' history in a workspace nobody can reach.
+    # The check needs a project bound to the target, which is what the
+    # unsaved probe is; the real one is not touched until it passes.
+    from . import authz
+    from .database import ProjectModel
+
+    probe = authz.resolve(ProjectModel(name=proj.name, workspace_id=workspace_id))
+    if not probe.roles:
+        console.print(f"ERROR No access to {workspace_id}: {probe.reason}", style="red")
+        console.print("Nothing was changed.", style="dim")
+        console.print(
+            "If you were invited to it just now, renew first:  flanner whoami --refresh",
+            style="dim",
+        )
+        _print_workspaces_hint()
+        raise SystemExit(1)
+
     proj.workspace_id = workspace_id
     session.commit()
     console.print(f"OK '{proj.name}' joined workspace {workspace_id}", style="green")
@@ -3798,7 +3881,7 @@ def peer_pull(address: str, project: str | None) -> None:
 
     with observe.step("fetch and verify"):
         report = peer_transport.pull(
-            session, address, proj.workspace_id, cache.load, remote=remote
+            session, address, proj.workspace_id, cache.load, remote=remote, project=proj
         )
     observe.count(
         accepted=len(report.accepted),
@@ -3811,7 +3894,13 @@ def peer_pull(address: str, project: str | None) -> None:
         console.print(f"already held: {len(report.already_held)}", style="dim")
     for artifact_id, reason in report.rejected:
         console.print(f"REJECTED {artifact_id}: {reason}", style="red")
-    if not report.ok:
+    # Stored and verified, and still not a file anyone can open. Reported on
+    # its own line and as a failure: "accepted: 1" with nothing in .plans
+    # was the original defect, and a count that stays green while the plan
+    # is missing is the count that hid it.
+    for artifact_id, reason in report.unreadable:
+        console.print(f"NOT WRITTEN {artifact_id}: {reason}", style="yellow")
+    if not report.ok or report.unreadable:
         raise SystemExit(1)
 
 

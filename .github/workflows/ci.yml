@@ -9,10 +9,24 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      # One failing platform must not cancel the others: the point of
+      # running three is to learn which one broke.
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # Every supported version on Linux, and one version on each of the
+        # other two platforms. Packaging, config paths, file locking and the
+        # process model all differ there, and until this the first machine
+        # to run the suite on Windows or a Mac was a user's. The Windows
+        # run is known good: the whole suite passes on Windows locally.
+        include:
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

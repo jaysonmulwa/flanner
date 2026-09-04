@@ -486,6 +486,7 @@ def test_joining_brings_existing_plans_into_the_workspace(project, plan):
     """
 
     session, proj = project
+    a_signed_entitlement(MAINTAINER, workspace="ws_core")
     result = _join(proj)
 
     assert result.exit_code == 0, result.output
@@ -494,6 +495,7 @@ def test_joining_brings_existing_plans_into_the_workspace(project, plan):
 
 def test_joining_can_be_told_to_leave_history_alone(project, plan):
     session, proj = project
+    a_signed_entitlement(MAINTAINER, workspace="ws_core")
     result = _join(proj, "--no-adopt")
 
     assert result.exit_code == 0, result.output
@@ -502,10 +504,47 @@ def test_joining_can_be_told_to_leave_history_alone(project, plan):
 
 def test_joining_a_project_with_no_plans_says_nothing_about_them(project):
     session, proj = project
+    a_signed_entitlement(MAINTAINER, workspace="ws_core")
     result = _join(proj)
 
     assert result.exit_code == 0
     assert "into the workspace" not in result.output
+
+
+def test_joining_without_access_changes_nothing(project, plan):
+    """The order used to be bind, commit, re-sign every plan, then mention
+    that this device holds no role there.
+
+    So a mistyped workspace id cost a repository its plans' history: each
+    one signed afresh as a root in a workspace nobody can reach, and the
+    binding already committed by the time the warning printed. Now the
+    check comes first and a refusal leaves the catalog exactly as it was.
+    """
+    from flanner.database import get_plan_file, list_artifacts
+
+    session, proj = project
+    plan_file, version = plan
+    before = {a.artifact_id for a in list_artifacts(session)}
+
+    result = _join(proj, workspace="ws_typo")
+
+    assert result.exit_code == 1
+    assert "No access to ws_typo" in result.output
+    assert "Nothing was changed" in result.output
+    session.expire_all()
+    assert get_plan_file(session, plan_file.id).project.workspace_id is None, "it bound anyway"
+    assert {a.artifact_id for a in list_artifacts(session)} == before, "plans were re-signed"
+
+
+def test_joining_a_workspace_you_are_not_in_is_refused_even_when_logged_in(project, plan):
+    """Logged in, with a real entitlement — for a different workspace."""
+    session, proj = project
+    a_signed_entitlement(MAINTAINER, workspace="ws_core")
+
+    result = _join(proj, workspace="ws_other")
+
+    assert result.exit_code == 1
+    assert "No access to ws_other" in result.output
 
 
 def _join(proj, *flags, workspace="ws_core"):
@@ -522,6 +561,16 @@ def _join(proj, *flags, workspace="ws_core"):
     from flanner.database import get_db_path
 
     home = str(Path(get_db_path()).parent)
+
+    # Joining now needs the cached entitlement, and the fixtures save it
+    # under the autouse FLANNER_HOME rather than beside the database. Carry
+    # it across so the CLI sees the same signed-in device the test set up.
+    import shutil
+
+    from flanner import session as cache
+
+    if cache.session_path().exists():
+        shutil.copy(cache.session_path(), Path(home) / cache.session_path().name)
     return CliRunner(env={"FLANNER_HOME": home}).invoke(
         cli, ["join", workspace, "--project", proj.name, *flags]
     )

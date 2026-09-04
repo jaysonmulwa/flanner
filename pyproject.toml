@@ -68,6 +68,11 @@ dependencies = [
 dev = [
     "pytest>=9.0.3,<10",
     "pytest-cov>=6.0,<9",
+    # A test that hangs fails instead of holding the runner until the job
+    # limit. An outside review saw the iroh suite not terminate in a
+    # sandbox with no network; it passes in 22s here, and either way the
+    # right outcome is a red test naming itself, not a stalled workflow.
+    "pytest-timeout>=2.3,<3",
     "httpx>=0.25,<1",
     "ruff>=0.8",
     "mypy>=1.13,<2",
@@ -132,3 +137,8 @@ include = ["flanner*"]
 # py.typed: the package is checked under mypy --strict, so downstream
 # consumers should get its types rather than an untyped stub.
 flanner = ["py.typed", "web/templates/*.html", "web/static/**/*"]
+
+[tool.pytest.ini_options]
+# Per test. The slowest genuine test is under a minute; five minutes is a
+# hang detector, not a performance gate.
+timeout = 300

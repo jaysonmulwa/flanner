@@ -280,6 +280,8 @@ def sync_from_peer(
     peer: Peer,
     workspace_id: str,
     resolve_key: KeyResolver,
+    *,
+    project: Any = None,
 ) -> SyncReport:
     """Pull everything a peer holds for a workspace that this device lacks.
 
@@ -304,14 +306,17 @@ def sync_from_peer(
         return report
 
     wanted = sorted(missing_artifact_ids(build_manifest(session, workspace_id), remote))
-    if not wanted:
-        return report
-
-    try:
-        delivered = peer.fetch(wanted)
-    except Exception as e:
-        report.rejected.append(("<fetch>", f"peer fetch failed: {e}"))
-        return report
+    # "Nothing new" used to return here, before the pass at the bottom — so
+    # the one situation that pass exists for, a second pull after a first
+    # that stored a plan it could not write, was the one situation in which
+    # it never ran.
+    delivered: list[tuple[dict[str, Any], bytes | None]] = []
+    if wanted:
+        try:
+            delivered = peer.fetch(wanted)
+        except Exception as e:
+            report.rejected.append(("<fetch>", f"peer fetch failed: {e}"))
+            return report
 
     asked_for = set(wanted)
     for envelope, payload in delivered:
@@ -332,8 +337,50 @@ def sync_from_peer(
             report.rejected.append((artifact_id, verdict.reason))
             continue
         report.accepted.append(artifact_id)
-        _make_readable(session, envelope, payload, report)
+        _make_readable(session, envelope, payload, report, preferred=project)
+
+    _write_what_is_held(session, workspace_id, report, preferred=project)
     return report
+
+
+def _write_what_is_held(
+    session: Session, workspace_id: str, report: SyncReport, *, preferred: Any
+) -> None:
+    """Give stored plan versions that never became files another chance.
+
+    The fetch loop only ingests what this device lacks, so an artifact that
+    was stored and could not be written — no project in the workspace yet,
+    two projects and no way to choose, a disk that said no — would never be
+    looked at again: every later pull reports it as already held and moves
+    on. "The file can be written on the next attempt" is only true if the
+    next attempt tries, so this is the trying.
+
+    It is also what makes refusing to guess acceptable. A pull that reports
+    "two projects share that workspace" is followed by one with --project,
+    and this pass is where that second pull does the writing.
+
+    Only artifacts with no version row. This device's own plans always have
+    one — creating, updating and adopting all record the artifact id — so
+    they are never re-materialised here, which matters: written again they
+    would land as conflict copies of themselves.
+    """
+    held = [
+        row.artifact_id
+        for row in list_artifacts(session, artifact_type=artifacts.PLAN_VERSION)
+        if row.workspace_id == workspace_id
+    ]
+    if not held:
+        return
+    written = {
+        row.artifact_id
+        for row in session.query(VersionModel).filter(VersionModel.artifact_id.in_(held))
+    }
+    # Not the ones this very pull already tried: those were either written
+    # or reported a moment ago, and reporting one twice reads as two plans.
+    tried = set(report.accepted) | {artifact_id for artifact_id, _ in report.unreadable}
+    pending = [a for a in held if a not in written and a not in tried]
+    for envelope, payload in LocalPeer(session).fetch(pending):
+        _make_readable(session, envelope, payload, report, preferred=preferred)
 
 
 def _make_readable(
@@ -341,6 +388,8 @@ def _make_readable(
     envelope: dict[str, Any],
     payload: bytes | None,
     report: SyncReport,
+    *,
+    preferred: Any = None,
 ) -> None:
     """Turn an accepted plan version into a file somebody can open.
 
@@ -359,14 +408,20 @@ def _make_readable(
     something cryptographically valid — the sync stays successful and the
     file can be written on the next attempt.
     """
-    if envelope.get("artifact_type") != artifacts.PLAN_VERSION or payload is None:
+    if envelope.get("artifact_type") != artifacts.PLAN_VERSION:
+        return
+    if payload is None:
+        # Reported, not skipped. A silent return here is a plan that was
+        # accepted and then vanished, which is the shape of the original
+        # defect all over again.
+        report.unreadable.append(
+            (str(envelope.get("artifact_id", "?")), "the artifact arrived without its content")
+        )
         return
 
-    project = _project_for(session, str(envelope.get("workspace_id") or ""))
+    project, why = _home_for(session, envelope, preferred)
     if project is None:
-        report.unreadable.append(
-            (str(envelope.get("artifact_id", "?")), "no local project is in that workspace")
-        )
+        report.unreadable.append((str(envelope.get("artifact_id", "?")), why))
         return
 
     from . import plan_ops
@@ -378,18 +433,55 @@ def _make_readable(
         report.unreadable.append((str(envelope.get("artifact_id", "?")), result.reason))
 
 
-def _project_for(session: Session, workspace_id: str) -> Any:
-    """The local project that joined this workspace, if one did.
+def _home_for(session: Session, envelope: dict[str, Any], preferred: Any) -> tuple[Any, str]:
+    """Which local project a pulled plan belongs in, or why none does.
 
-    A device can hold plans for a workspace it has not joined locally — a
-    second checkout, a project deleted since. Those artifacts stay stored and
-    verifiable; there is simply nowhere on disk that they belong.
+    A workspace is a team, and a team has more than one repository, so the
+    workspace id alone cannot say where a plan goes. This used to be
+    `.first()`: whichever project the query happened to return, which is
+    not a rule anyone could predict and put plans in the wrong checkout.
+
+    In order:
+
+    1. A plan this device already holds goes where it lives. Same plan id,
+       same project; nothing to decide.
+    2. The project the person named — `peer pull --project`, or the one
+       they ran it from — is used, if it is in the workspace.
+    3. A workspace with exactly one local project needs no choosing.
+
+    Anything else is reported rather than guessed. The artifact stays
+    stored and verified, and the next pull with `--project` writes it.
     """
-    if not workspace_id:
-        return None
-    from .database import ProjectModel
+    from uuid import UUID
 
-    return session.query(ProjectModel).filter_by(workspace_id=workspace_id).first()
+    from .database import PlanFileModel, ProjectModel
+
+    workspace_id = str(envelope.get("workspace_id") or "")
+    if not workspace_id:
+        return None, "the artifact names no workspace"
+
+    plan_id = str(envelope.get("plan_file_id") or "")
+    if plan_id:
+        try:
+            held = session.get(PlanFileModel, UUID(plan_id))
+        except ValueError:
+            held = None
+        if held is not None and held.project.workspace_id == workspace_id:
+            return held.project, ""
+
+    if preferred is not None and preferred.workspace_id == workspace_id:
+        return preferred, ""
+
+    candidates = session.query(ProjectModel).filter_by(workspace_id=workspace_id).all()
+    if len(candidates) == 1:
+        return candidates[0], ""
+    if not candidates:
+        return None, "no local project is in that workspace"
+    names = ", ".join(sorted(candidate.name for candidate in candidates))
+    return None, (
+        f"{len(candidates)} local projects share that workspace ({names}); "
+        "pull with --project to say which"
+    )
 
 
 class LocalPeer:
@@ -416,12 +508,16 @@ class LocalPeer:
             version = (
                 self._session.query(VersionModel).filter_by(artifact_id=row.artifact_id).first()
             )
-            if version is None:
-                return None
-            try:
-                return Path(version.file_path).read_bytes()
-            except OSError:
-                return None
+            if version is not None:
+                try:
+                    return Path(version.file_path).read_bytes()
+                except OSError:
+                    pass
+            # No file yet, or none readable: a version that arrived from a
+            # peer and has not been written to a project. Ingest keeps its
+            # bytes on the row for exactly this case. Answering None here
+            # made such a plan unwritable by any later pull and unrelayable
+            # to a third device — stored, verified, and stuck.
         return row.payload.encode("utf-8") if row.payload is not None else None
 
     def fetch(self, artifact_ids: list[str]) -> list[tuple[dict[str, Any], bytes | None]]:

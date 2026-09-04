@@ -67,6 +67,20 @@ def outside_any_repo(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_agent_configs(tmp_path, monkeypatch):
+    """Point the Claude Code and Codex config lookups at empty temp paths.
+
+    Both are read from the developer's real home otherwise, so `status`
+    would report whatever this machine happens to have registered, and a
+    test asserting "not registered" would pass or fail by who ran it.
+    """
+    import flanner.claude_integration as ci
+
+    monkeypatch.setattr(ci, "claude_code_user_config_path", lambda: tmp_path / "claude.json")
+    monkeypatch.setattr(ci, "codex_config_path", lambda: tmp_path / "codex.toml")
+
+
+@pytest.fixture(autouse=True)
 def _isolated_keychain(monkeypatch):
     """An in-memory keychain for every test.
 
