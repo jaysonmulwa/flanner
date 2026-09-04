@@ -16,6 +16,9 @@ versioning follows [SemVer](https://semver.org/).
   one server, or for using flanner without an agent at all.
 - A version arriving from a peer becomes a file and a version record, rather
   than being stored and reported as `accepted` with nothing to open.
+- An end-to-end test of the advertised workflow: enrol, join, pull over http
+  between two real device identities, and open the file. Nothing covered this
+  before, which is how a missing production call survived two green suites.
 - `flanner list` names each plan's owner, and sorts plans with a teammate's
   version waiting to the top.
 
