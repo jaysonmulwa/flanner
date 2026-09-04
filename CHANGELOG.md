@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- `flanner login` says what to do next. It printed one line and stopped,
+  which is silence at the moment somebody setting up a team for the first
+  time has least idea what to type. What it says depends on what the account
+  holds: an account with no workspace access is pointed at the console and
+  `whoami --refresh`, and one that holds a grant is given `init`, `join` and
+  `peer serve`.
+
 ## [0.10.0] - 2026-09-04
 
 ### Added

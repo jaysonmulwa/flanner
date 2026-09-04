@@ -3075,6 +3075,7 @@ def login(code: str, endpoint: str | None, label: str | None) -> None:
         _session_failed(e)
 
     console.print(f"OK Enrolled as {current.user_id} ({current.device_id})", style="green")
+    _what_next(current)
     _print_entitlement(current)
 
 
@@ -3364,6 +3365,35 @@ def join(
     # afresh into the workspace instead, as a root there.
     _report_adoption(adopt_into_workspace(session, project=proj, workspace_id=workspace_id))
     _report_access(proj)
+
+
+def _what_next(current: Any) -> None:
+    """After enrolling, say what to do next.
+
+    `login` printed one line and stopped. Enrolling is the middle of a
+    setup, not the end of one: the device now has an identity and no
+    project, and the next move differs depending on whether anybody has
+    granted this account a workspace yet. Somebody setting up a team for
+    the first time is exactly who has least idea what to type.
+    """
+    claims = current.status().claims
+    grants = tuple(getattr(claims, "workspace_capabilities", ()) or ()) if claims else ()
+
+    console.print()
+    if not grants:
+        tui.note("No workspace access yet, which is normal on a new account.")
+        tui.hint("Create a workspace in the console, or ask an admin for access, then:")
+        tui.hint(f"  {tui.command('flanner whoami --refresh')}   pick up the grant")
+        console.print()
+        return
+
+    where = ", ".join(sorted(f"{g.workspace_id} ({g.role})" for g in grants))
+    tui.note(f"You hold: {where}")
+    tui.hint("In the repository whose plans should sync:")
+    tui.hint(f"  {tui.command('flanner init')}                    adopt it")
+    tui.hint(f"  {tui.command('flanner join <workspace-id>')}     bind it to the team")
+    tui.hint(f"  {tui.command('flanner peer serve')}              answer teammates")
+    console.print()
 
 
 def _print_workspaces_hint() -> None:
