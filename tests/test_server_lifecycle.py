@@ -141,7 +141,11 @@ def test_a_server_that_dies_is_reported_without_waiting_out_the_timeout(home, mo
 
     assert result.exit_code == 2
     assert "did not come up" in result.output
-    assert "server.log" in result.output
+    # Rich wraps to the terminal width, so a long temp path arrives with
+    # newlines inside it — "server.log" split across two lines still names
+    # the file to a reader, and an assertion that fails on the width of the
+    # machine running it is testing the wrong thing.
+    assert "server.log" in "".join(result.output.split())
     assert not (home / "server.pid").exists(), "a pid file was left for a process that never ran"
 
 

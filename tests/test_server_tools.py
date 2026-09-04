@@ -136,8 +136,8 @@ def test_create_project_duplicate_name(project, git_repo):
     assert "already exists" in result["message"]
 
 
-def test_create_project_no_root_no_git(db, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+def test_create_project_no_root_no_git(db, outside_any_repo, monkeypatch):
+    monkeypatch.chdir(outside_any_repo)
     result = create_project_tool(name="x")
     assert result["error"] is True
     assert "Could not find git repository" in result["message"]

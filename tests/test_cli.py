@@ -168,8 +168,8 @@ def test_init_force_new_duplicate_name_errors(runner, git_repo):
     assert "already exists" in result.output
 
 
-def test_init_no_git_repo_skips_project(runner, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)  # not a git repo
+def test_init_no_git_repo_skips_project(runner, outside_any_repo, monkeypatch):
+    monkeypatch.chdir(outside_any_repo)
     result = runner.invoke(cli, ["--verbose", "init", "--skip-claude"])
     assert result.exit_code == 0
     assert "Initialized Flanner" in result.output
@@ -1501,11 +1501,9 @@ def test_join_in_an_unadopted_repo_names_init(runner, initialized, git_repo, mon
     assert "flanner init" in result.output
 
 
-def test_no_project_outside_a_repo_says_so(runner, initialized, tmp_path, monkeypatch):
+def test_no_project_outside_a_repo_says_so(runner, initialized, outside_any_repo, monkeypatch):
     """A different situation, and it used to share the same message."""
-    outside = tmp_path / "not-a-repo"
-    outside.mkdir()
-    monkeypatch.chdir(outside)
+    monkeypatch.chdir(outside_any_repo)
     result = runner.invoke(cli, ["join", "ws_abc"])
 
     assert result.exit_code == 1

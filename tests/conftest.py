@@ -1,8 +1,12 @@
+import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 import pytest
 
 from flanner.database import init_database
+from flanner.git_integration import find_git_root
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +35,35 @@ def git_repo(tmp_path):
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     return repo
+
+
+@pytest.fixture
+def outside_any_repo(tmp_path):
+    """A directory that really is not inside a git repository.
+
+    `tmp_path` was assumed to be one, and is not. Where the system temp
+    directory sits inside a checkout — somebody's actual machine, and the
+    cause of four of five failures in an outside review — every test
+    asserting "there is no repo here" was quietly asserting the opposite,
+    and the paths they exist to cover went unrun with no failure to show
+    for it.
+
+    `find_git_root` walks up looking for `.git`, so the precondition cannot
+    be faked from inside: it has to be climbed out of. Normally the loop
+    does not run at all and this is an ordinary directory under `tmp_path`.
+    """
+    anchor = Path(tmp_path)
+    while (enclosing := find_git_root(str(anchor))) is not None:
+        parent = Path(enclosing).parent
+        if parent == Path(enclosing):
+            pytest.skip("every directory on this machine is inside a git repository")
+        anchor = parent
+
+    made = Path(tempfile.mkdtemp(prefix="flanner-no-repo-", dir=anchor))
+    try:
+        yield made
+    finally:
+        shutil.rmtree(made, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

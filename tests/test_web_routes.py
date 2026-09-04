@@ -77,8 +77,8 @@ def test_create_project_invalid_git_root(client, tmp_path):
     assert "not a valid git repository" in response.text
 
 
-def test_create_project_no_root_no_git(client, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+def test_create_project_no_root_no_git(client, outside_any_repo, monkeypatch):
+    monkeypatch.chdir(outside_any_repo)
     response = client.post("/projects/new", data={"name": "x", "project_root": ""})
     assert response.status_code == 200
     assert "Could not find git repository" in response.text

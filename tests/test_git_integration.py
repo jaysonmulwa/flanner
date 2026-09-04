@@ -25,7 +25,7 @@ def _git_repo(tmp_path):
     return repo
 
 
-def test_find_git_root(tmp_path):
+def test_find_git_root(tmp_path, outside_any_repo):
     repo = _git_repo(tmp_path)
     nested = repo / "a" / "b"
     nested.mkdir(parents=True)
@@ -33,8 +33,9 @@ def test_find_git_root(tmp_path):
     assert found is not None
     assert found.replace("\\", "/").endswith("repo")
 
-    # Not a repo: temp dirs live outside any git checkout
-    assert find_git_root(str(tmp_path)) is None
+    # The other half. It used to read `tmp_path` under a comment saying temp
+    # dirs live outside any checkout, which is not true of every machine.
+    assert find_git_root(str(outside_any_repo)) is None
 
 
 def test_find_git_root_defaults_to_cwd(tmp_path, monkeypatch):
