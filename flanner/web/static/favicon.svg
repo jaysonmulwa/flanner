@@ -1,8 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="flanner">
-  <rect width="32" height="32" rx="7" fill="#235789"/>
-  <g fill="#ffffff">
-    <rect x="8" y="9" width="16" height="2.6" rx="1.3"/>
-    <rect x="8" y="14.7" width="16" height="2.6" rx="1.3"/>
-    <rect x="8" y="20.4" width="10" height="2.6" rx="1.3"/>
+<!-- flanner. Rebuilt as vector from the supplied raster so it has no
+     watermark, scales without blur, and reads at 16px. The gap between the
+     dot and the letters is tighter than the wordmark's, because at favicon
+     sizes that space is what costs legibility. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="flanner">
+  <rect width="64" height="64" rx="14" fill="#0B0E14"/>
+  <g transform="translate(4 13.8) scale(0.1677)">
+    <circle cx="66" cy="116" r="64" fill="#3FB950"/>
+    <g transform="translate(-38 0)">
+      <path d="M224 217V60C224 28 240 0 268 0h27c10 6 10 20 5 32v13h-35v172z" fill="#F8FAFC"/>
+      <rect x="200" y="65" width="101" height="20" fill="#F8FAFC"/>
+      <rect x="327" y="6" width="42" height="211" fill="#F8FAFC"/>
+    </g>
   </g>
 </svg>
