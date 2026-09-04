@@ -54,7 +54,9 @@ And open the dashboard to browse them:
 flanner web --open-browser     # http://localhost:8080
 ```
 
-`flanner init` is safe to re-run. It detects your git root, creates `.plans/`, updates `.gitignore`, registers the MCP server with Claude Code, and installs the agent integration.
+`flanner init` is safe to re-run. It detects your git root, creates `.plans/`, updates `.gitignore`, and installs the agent integration.
+
+Three agents, three different files. `init` writes a project-scoped `.mcp.json` that **Claude Code** reads, registers the server in **Claude Desktop**'s config, and adds managed blocks to `CLAUDE.md` and `AGENTS.md`. **Codex** reads `AGENTS.md` but registers MCP servers in `~/.codex/config.toml`, which flanner does not edit — `flanner setup` prints the two lines to paste. `flanner status` shows a row per agent, each checked where that agent actually looks.
 
 ## CLI commands
 
@@ -65,9 +67,16 @@ flanner list [--project NAME] [--output json]           # list projects or a pro
 flanner sync [--project NAME] [--dry-run]               # import existing .plans/ files
 flanner config NAME [--plan-dir DIR] [...]              # change project settings
 flanner web [--port 8080] [--host 127.0.0.1] [--open-browser]
-flanner register [--force] / flanner unregister         # MCP registration with Claude Code
+flanner start [--port 8765] / flanner stop              # MCP server in the background, over http
+flanner register [--force] / flanner unregister         # MCP registration with Claude Desktop
 flanner claude-info                                     # integration status
 ```
+
+Most MCP clients spawn their own copy of the server over stdio and need
+neither `start` nor `stop`. They are for a client that only speaks http, two
+editors sharing one server, or working with flanner on its own. The server
+binds `127.0.0.1` and no option widens that: every tool acts with the full
+authority of whoever started it, and nothing authenticates a caller.
 
 <details>
 <summary><b>Plan file format</b></summary>
@@ -144,9 +153,16 @@ group links to JIRA issue keys (link-only).
 
 ```bash
 flanner peer serve                                      # answer authorised peers
-flanner peer pull <device-id>                           # pull what a peer holds
+flanner peer pull <device-id> [--project NAME]          # pull what a peer holds
 flanner peer status [<device-id>]                       # how this device is reached
 ```
+
+A workspace is a team, and a team has more than one repository, so a pulled
+plan needs somewhere to land. A plan you already hold goes where it lives;
+otherwise `--project`, or the project you ran the command from, decides. Two
+local projects in one workspace with nothing to choose between them is
+reported rather than guessed at, and the next pull that names one writes what
+the first could not.
 
 `peer serve` opens no listening port. It dials out and answers on that
 connection, so it needs no port forwarding, no VPN and no administrator
